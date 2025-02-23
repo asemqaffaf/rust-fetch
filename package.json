@@ -1,0 +1,29 @@
+{
+  "name": "rust-fetch",
+  "version": "0.4.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "export": {
+    "fetch": "./wasm-module/pkg/wasm_module",
+    "server": "server.ts",
+    "client": "client.ts"
+  },
+  "scripts": {
+    "build": "cd wasm-module && tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "path": "^0.12.7",
+    "wasm-module": "file:wasm-module/pkg"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "typescript": "^5.7.3"
+  },
+  "main": "index.js",
+  "description": ""
+}
