@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "cd wasm-module && tsc",
-    "build:wasm": "cd wasm-module && wasm-pack build --target web",
+    "build:wasm": "cd wasm-module && rm -rf pkg && wasm-pack build --target web",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
