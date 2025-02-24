@@ -4,6 +4,29 @@ use wasm_bindgen::JsValue;
 use serde_json::Value;
 use reqwest::get;
 use serde_wasm_bindgen::to_value;
+// use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::future_to_promise;
+// use serde_json::Value;
+// use web_sys::Response;
+use js_sys::Promise;
+use wasm_bindgen_futures::js_sys;
+
+#[wasm_bindgen]
+pub fn fetch_wasm_json_new(url: String) -> Promise {
+    future_to_promise(async move {
+        let response = get(url)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let json: Value = response
+            .json()
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        serde_wasm_bindgen::to_value(&json)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    })
+}
 
 #[wasm_bindgen]
 pub async fn fetch_wasm_json(url: String) -> Result<JsValue, JsValue> {
