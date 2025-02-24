@@ -1,6 +1,6 @@
 {
-  "name": "rust-fetch",
-  "version": "0.7.0",
+  "name": "@asemqaffaf/rust-fetch",
+  "version": "0.2.0",
   "publishConfig": {
     "access": "public"
   },

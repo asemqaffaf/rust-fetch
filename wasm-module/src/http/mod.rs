@@ -1,8 +1,8 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 // use wasm_bindgen_futures::JsFuture;
-use serde_json::Value;
 use reqwest::get;
+use serde_json::Value;
 use serde_wasm_bindgen::to_value;
 // use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
@@ -12,7 +12,7 @@ use js_sys::Promise;
 use wasm_bindgen_futures::js_sys;
 
 #[wasm_bindgen]
-pub fn fetch_wasm_json_new(url: String) -> Promise {
+pub async fn fetch_wasm_json_new(url: String) -> Promise {
     future_to_promise(async move {
         let response = get(url)
             .await
@@ -23,8 +23,7 @@ pub fn fetch_wasm_json_new(url: String) -> Promise {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        serde_wasm_bindgen::to_value(&json)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&json).map_err(|e| JsValue::from_str(&e.to_string()))
     })
 }
 
@@ -82,5 +81,6 @@ pub async fn fetch_wasm_api() -> Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     // Ok(content)
-    Ok(to_value(&content)?)
+    // Ok(to_value(&content)?)
+    Ok(to_value::<serde_json::Value>(&content)?)
 }
