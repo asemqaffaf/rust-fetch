@@ -10,6 +10,8 @@ use crate::{
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
+use serde_wasm_bindgen::{Serializer};
+use serde::Serialize;
 
 /// Simple fetch function for JSON data
 #[wasm_bindgen]
@@ -21,7 +23,8 @@ pub async fn fetch_json(url: String) -> Result<JsValue> {
     
     match response.body {
         crate::types::ResponseBody::Json(json) => {
-            serde_wasm_bindgen::to_value(&json)
+            let serializer = Serializer::new().serialize_maps_as_objects(true);
+            json.serialize(&serializer)
                 .map_err(|e| crate::error::Error::from(e))
         }
         _ => Err(crate::error::Error::Parse {
@@ -107,7 +110,8 @@ pub async fn fetch_with_options(
     // Convert body based on type
     match response.body {
         crate::types::ResponseBody::Json(json) => {
-            let body = serde_wasm_bindgen::to_value(&json)?;
+            let serializer = Serializer::new().serialize_maps_as_objects(true);
+            let body = json.serialize(&serializer)?;
             js_sys::Reflect::set(&obj, &"body".into(), &body)?;
         }
         crate::types::ResponseBody::Text(text) => {
