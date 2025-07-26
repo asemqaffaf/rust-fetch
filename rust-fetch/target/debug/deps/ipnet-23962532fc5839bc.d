@@ -1,0 +1,11 @@
+/Users/asemqaffaf/playground/rust-fetch/wasm-module/target/debug/deps/ipnet-23962532fc5839bc.d: /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/lib.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipext.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipnet.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/parser.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/mask.rs
+
+/Users/asemqaffaf/playground/rust-fetch/wasm-module/target/debug/deps/libipnet-23962532fc5839bc.rlib: /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/lib.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipext.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipnet.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/parser.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/mask.rs
+
+/Users/asemqaffaf/playground/rust-fetch/wasm-module/target/debug/deps/libipnet-23962532fc5839bc.rmeta: /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/lib.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipext.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipnet.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/parser.rs /Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/mask.rs
+
+/Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/lib.rs:
+/Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipext.rs:
+/Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/ipnet.rs:
+/Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/parser.rs:
+/Users/asemqaffaf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ipnet-2.10.1/src/mask.rs:
