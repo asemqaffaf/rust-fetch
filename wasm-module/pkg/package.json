@@ -5,7 +5,7 @@
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
   "description": "A world-class WebAssembly HTTP client library with excellent error handling and clean API",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

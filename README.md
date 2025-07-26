@@ -41,7 +41,7 @@ How to use the imported `WasmClient` to make HTTP requests from the browser or N
 Here's how to make a simple GET request using `WasmClient`:
 
 ```javascript
-import init, { WasmClient } from 'rust-fetch/client';
+import init, { WasmClient } from 'rust-fetch';
 
 await init();
 
@@ -66,7 +66,7 @@ client.post_json('https://jsonplaceholder.typicode.com/posts', data)
 ### Using Fetch Functions
 
 ```javascript
-import init, { fetch_json, fetch_text } from 'rust-fetch/client';
+import init, { fetch_json, fetch_text } from 'rust-fetch';
 
 // Initialize WASM module
 await init();
@@ -96,7 +96,7 @@ For more control and enhanced configurations, use the `fetch_with_options` to fi
 You can specify HTTP method, headers, and body:
 
 ```javascript
-import { fetch_with_options } from 'rust-fetch/client';
+import { fetch_with_options } from 'rust-fetch';
 
 const url = 'https://jsonplaceholder.typicode.com/posts';
 const method = 'POST';
@@ -139,7 +139,7 @@ try {
 Fetches JSON data from the specified URL and returns it as a JavaScript object.
 
 ```javascript
-import { fetch_json } from 'rust-fetch/client';
+import { fetch_json } from 'rust-fetch';
 
 const data = await fetch_json('https://jsonplaceholder.typicode.com/todos/1');
 ```
@@ -148,7 +148,7 @@ const data = await fetch_json('https://jsonplaceholder.typicode.com/todos/1');
 Fetches text/HTML content from the specified URL and returns it as a string.
 
 ```javascript
-import { fetch_text } from 'rust-fetch/client';
+import { fetch_text } from 'rust-fetch';
 
 const html = await fetch_text('https://example.com');
 ```
@@ -157,7 +157,7 @@ const html = await fetch_text('https://example.com');
 Advanced fetch function with full control over the request.
 
 ```javascript
-import { fetch_with_options } from 'rust-fetch/client';
+import { fetch_with_options } from 'rust-fetch';
 
 const response = await fetch_with_options(
     'https://api.example.com/users',
