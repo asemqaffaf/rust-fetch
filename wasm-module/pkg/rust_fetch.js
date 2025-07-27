@@ -197,6 +197,12 @@ function debugString(val) {
     // TODO we could test for more things here, like `Set`s and `Map`s.
     return className;
 }
+
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_export_4.get(idx);
+    wasm.__externref_table_dealloc(idx);
+    return value;
+}
 /**
  * Simple fetch function for JSON data
  * @param {string} url
@@ -252,11 +258,6 @@ export function fetch_with_options(url, method, headers, body) {
     return ret;
 }
 
-function takeFromExternrefTable0(idx) {
-    const value = wasm.__wbindgen_export_4.get(idx);
-    wasm.__externref_table_dealloc(idx);
-    return value;
-}
 /**
  * Create a configured HTTP client (exported for advanced use)
  * @returns {WasmClient}
@@ -318,11 +319,11 @@ export function fetch_wasm_api(url) {
 }
 
 function __wbg_adapter_52(arg0, arg1, arg2) {
-    wasm.closure243_externref_shim(arg0, arg1, arg2);
+    wasm.closure260_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_159(arg0, arg1, arg2, arg3) {
-    wasm.closure265_externref_shim(arg0, arg1, arg2, arg3);
+function __wbg_adapter_164(arg0, arg1, arg2, arg3) {
+    wasm.closure282_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_RequestCredentials = ["omit", "same-origin", "include"];
@@ -389,6 +390,68 @@ export class WasmClient {
         const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmclient_post_json(this.__wbg_ptr, ptr0, len0, body);
+        return ret;
+    }
+    /**
+     * Make a PUT request with JSON body
+     * @param {string} url
+     * @param {any} body
+     * @returns {Promise<any>}
+     */
+    put_json(url, body) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_put_json(this.__wbg_ptr, ptr0, len0, body);
+        return ret;
+    }
+    /**
+     * Make a DELETE request
+     * @param {string} url
+     * @returns {Promise<any>}
+     */
+    delete(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_delete(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Make a PATCH request with JSON body
+     * @param {string} url
+     * @param {any} body
+     * @returns {Promise<any>}
+     */
+    patch_json(url, body) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_patch_json(this.__wbg_ptr, ptr0, len0, body);
+        return ret;
+    }
+    /**
+     * Make a HEAD request
+     * @param {string} url
+     * @returns {Promise<any>}
+     */
+    head(url) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_head(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Make a custom request with method, headers, and body
+     * @param {string} method
+     * @param {string} url
+     * @param {any} headers
+     * @param {any} body
+     * @returns {Promise<any>}
+     */
+    request(method, url, headers, body) {
+        const ptr0 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_request(this.__wbg_ptr, ptr0, len0, ptr1, len1, headers, body);
         return ret;
     }
 }
@@ -577,7 +640,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_159(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_164(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -753,8 +816,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper1686 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 244, __wbg_adapter_52);
+    imports.wbg.__wbindgen_closure_wrapper1733 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 261, __wbg_adapter_52);
         return ret;
     };
     imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {

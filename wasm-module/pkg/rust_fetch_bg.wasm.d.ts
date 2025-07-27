@@ -1,6 +1,15 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_wasmclient_free: (a: number, b: number) => void;
+export const wasmclient_new: () => [number, number, number];
+export const wasmclient_get: (a: number, b: number, c: number) => any;
+export const wasmclient_post_json: (a: number, b: number, c: number, d: any) => any;
+export const wasmclient_put_json: (a: number, b: number, c: number, d: any) => any;
+export const wasmclient_delete: (a: number, b: number, c: number) => any;
+export const wasmclient_patch_json: (a: number, b: number, c: number, d: any) => any;
+export const wasmclient_head: (a: number, b: number, c: number) => any;
+export const wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: any, g: any) => any;
 export const fetch_json: (a: number, b: number) => any;
 export const fetch_json_promise: (a: number, b: number) => any;
 export const fetch_text: (a: number, b: number) => any;
@@ -10,10 +19,6 @@ export const fetch_wasm_json: (a: number, b: number) => any;
 export const fetch_wasm_html: (a: number, b: number) => any;
 export const fetch_wasm_map: (a: number, b: number) => any;
 export const fetch_wasm_api: (a: number, b: number) => any;
-export const __wbg_wasmclient_free: (a: number, b: number) => void;
-export const wasmclient_new: () => [number, number, number];
-export const wasmclient_get: (a: number, b: number, c: number) => any;
-export const wasmclient_post_json: (a: number, b: number, c: number, d: any) => any;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;
@@ -21,6 +26,6 @@ export const __externref_table_alloc: () => number;
 export const __wbindgen_export_4: WebAssembly.Table;
 export const __wbindgen_export_5: WebAssembly.Table;
 export const __externref_table_dealloc: (a: number) => void;
-export const closure243_externref_shim: (a: number, b: number, c: any) => void;
-export const closure265_externref_shim: (a: number, b: number, c: any, d: any) => void;
+export const closure260_externref_shim: (a: number, b: number, c: any) => void;
+export const closure282_externref_shim: (a: number, b: number, c: any, d: any) => void;
 export const __wbindgen_start: () => void;

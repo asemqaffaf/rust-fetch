@@ -53,12 +53,41 @@ export class WasmClient {
    * Make a POST request with JSON body
    */
   post_json(url: string, body: any): Promise<any>;
+  /**
+   * Make a PUT request with JSON body
+   */
+  put_json(url: string, body: any): Promise<any>;
+  /**
+   * Make a DELETE request
+   */
+  delete(url: string): Promise<any>;
+  /**
+   * Make a PATCH request with JSON body
+   */
+  patch_json(url: string, body: any): Promise<any>;
+  /**
+   * Make a HEAD request
+   */
+  head(url: string): Promise<any>;
+  /**
+   * Make a custom request with method, headers, and body
+   */
+  request(method: string, url: string, headers: any, body: any): Promise<any>;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
+  readonly __wbg_wasmclient_free: (a: number, b: number) => void;
+  readonly wasmclient_new: () => [number, number, number];
+  readonly wasmclient_get: (a: number, b: number, c: number) => any;
+  readonly wasmclient_post_json: (a: number, b: number, c: number, d: any) => any;
+  readonly wasmclient_put_json: (a: number, b: number, c: number, d: any) => any;
+  readonly wasmclient_delete: (a: number, b: number, c: number) => any;
+  readonly wasmclient_patch_json: (a: number, b: number, c: number, d: any) => any;
+  readonly wasmclient_head: (a: number, b: number, c: number) => any;
+  readonly wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: any, g: any) => any;
   readonly fetch_json: (a: number, b: number) => any;
   readonly fetch_json_promise: (a: number, b: number) => any;
   readonly fetch_text: (a: number, b: number) => any;
@@ -68,10 +97,6 @@ export interface InitOutput {
   readonly fetch_wasm_html: (a: number, b: number) => any;
   readonly fetch_wasm_map: (a: number, b: number) => any;
   readonly fetch_wasm_api: (a: number, b: number) => any;
-  readonly __wbg_wasmclient_free: (a: number, b: number) => void;
-  readonly wasmclient_new: () => [number, number, number];
-  readonly wasmclient_get: (a: number, b: number, c: number) => any;
-  readonly wasmclient_post_json: (a: number, b: number, c: number, d: any) => any;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;
@@ -79,8 +104,8 @@ export interface InitOutput {
   readonly __wbindgen_export_4: WebAssembly.Table;
   readonly __wbindgen_export_5: WebAssembly.Table;
   readonly __externref_table_dealloc: (a: number) => void;
-  readonly closure243_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure265_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure260_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure282_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 

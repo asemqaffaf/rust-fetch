@@ -5,8 +5,8 @@
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=flat&logo=WebAssembly&logoColor=white)](https://webassembly.org/)
 [![Current Version](https://img.shields.io/badge/version-1.1.0-green.svg)](https://github.com/asemqaffaf/rust-fetch/releases)
 
-### A High-Performance HTTP Client Powered by WebAssembly
-Type-safe, fast, and reliable HTTP requests for modern JavaScript applications
+### A high-performance, world-class HTTP Client Powered by WebAssembly
+A high-performance HTTP client for JavaScript/TypeScript powered by WebAssembly. Built with Rust for blazing-fast, memory-safe HTTP operations in both browser and Node.js environments.
 
 ## Table of Contents
 - [🎉 What's New](#-whats-new-in-v110)

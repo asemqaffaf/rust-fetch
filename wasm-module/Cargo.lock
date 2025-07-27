@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "rust-fetch"
-version = "1.0.4"
+version = "1.1.0"
 dependencies = [
  "js-sys",
  "reqwest",
