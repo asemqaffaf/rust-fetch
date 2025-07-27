@@ -9,7 +9,8 @@
   },
   "scripts": {
     "build": "cd wasm-module && tsc",
-    "build:wasm": "cd wasm-module && rm -rf pkg && wasm-pack build --target web && cd pkg && rm -rf .gitignore README.md && cp ../../README.md .",
+    "wasm:build": "cd wasm-module && rm -rf pkg && wasm-pack build --target web && cd pkg && rm -rf .gitignore README.md && cp ../../README.md .",
+    "wasm:version": "cd wasm-module && cargo release ",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
