@@ -215,7 +215,7 @@ impl From<reqwest::Error> for Error {
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::Parse {
-            message: "JSON parsing failed".to_string(),
+            message: "JSON parsing error".to_string(),
             source: Some(Box::new(err)),
         }
     }
@@ -224,9 +224,8 @@ impl From<serde_json::Error> for Error {
 /// Convert from serde_wasm_bindgen errors
 impl From<serde_wasm_bindgen::Error> for Error {
     fn from(err: serde_wasm_bindgen::Error) -> Self {
-        Error::Parse {
-            message: format!("WASM binding serialization failed: {}", err),
-            source: None, // serde_wasm_bindgen::Error doesn't implement Send + Sync
+        Error::JsInterop {
+            message: format!("JavaScript serialization error: {}", err),
         }
     }
 }

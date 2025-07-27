@@ -47,9 +47,9 @@ await init();
 
 const client = new WasmClient();
 
-client.get('https://jsonplaceholder.typicode.com/posts/1')
-    .then(response => console.log(response))
-    .catch(error => console.error('Error:', error));
+const response = await client.get('https://jsonplaceholder.typicode.com/posts/1');
+console.log(response.status); // 200
+console.log(response.body);   // { userId: 1, id: 1, title: '...', body: '...' }
 ```
 
 #### POST Request with JSON
@@ -58,9 +58,54 @@ Here's how to make a POST request with a JSON body:
 ```javascript
 const data = { title: 'foo', body: 'bar', userId: 1 };
 
-client.post_json('https://jsonplaceholder.typicode.com/posts', data)
-    .then(response => console.log(response))
-    .catch(error => console.error('Error:', error));
+const response = await client.post_json('https://jsonplaceholder.typicode.com/posts', data);
+console.log(response.status); // 201
+console.log(response.body);   // { id: 101, title: 'foo', body: 'bar', userId: 1 }
+```
+
+#### PUT Request
+Update a resource with PUT:
+
+```javascript
+const updateData = { id: 1, title: 'updated', body: 'updated content', userId: 1 };
+
+const response = await client.put_json('https://jsonplaceholder.typicode.com/posts/1', updateData);
+console.log(response.status); // 200
+```
+
+#### DELETE Request
+Delete a resource:
+
+```javascript
+const response = await client.delete('https://jsonplaceholder.typicode.com/posts/1');
+console.log(response.status); // 200
+```
+
+#### PATCH Request
+Partially update a resource:
+
+```javascript
+const patchData = { title: 'patched title' };
+
+const response = await client.patch_json('https://jsonplaceholder.typicode.com/posts/1', patchData);
+console.log(response.status); // 200
+```
+
+#### Custom Request with Headers
+Make a custom request with full control over method, headers, and body:
+
+```javascript
+const headers = {
+  'Authorization': 'Bearer your-token',
+  'X-Custom-Header': 'custom-value'
+};
+
+const body = { data: 'custom request body' };
+
+const response = await client.request('POST', 'https://api.example.com/data', headers, body);
+console.log(response.status);
+console.log(response.headers);
+console.log(response.body);
 ```
 
 ### Using Fetch Functions
@@ -256,12 +301,16 @@ If you encounter path resolution issues in Node.js:
 
 ## Roadmap
 
-- [ ] Add support for POST, PUT, DELETE methods
-- [ ] Implement request headers customization
+- [x] Add support for POST, PUT, DELETE methods ✅
+- [x] Implement request headers customization ✅
+- [x] Add comprehensive test suite ✅
 - [ ] Add streaming support for large responses
-- [ ] Implement request cancellation
-- [ ] Add comprehensive test suite
+- [ ] Implement request cancellation (AbortController support)
 - [ ] Performance benchmarks against native fetch
-- [ ] Support for form data and file uploads
+- [ ] Support for multipart form data and file uploads
 - [ ] WebSocket support
 - [ ] Request/response interceptors
+- [ ] Connection pooling configuration
+- [ ] Proxy support
+- [ ] Progress tracking for uploads/downloads
+- [ ] HTTP/2 support

@@ -1,15 +1,11 @@
 {
   "name": "rust-fetch",
   "version": "1.1.0",
+  "type": "module",
   "publishConfig": {
     "access": "public"
   },
-  "export": {
-    "fetch": "./wasm-module/pkg/wasm_module"
-  },
   "scripts": {
-    "build": "cd wasm-module && tsc",
-    "build:wasm": "cd wasm-module && rm -rf pkg && wasm-pack build --target web && cd pkg && rm -rf .gitignore README.md && cp ../../README.md .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -17,11 +13,11 @@
   "license": "ISC",
   "dependencies": {
     "path": "^0.12.7",
-    "wasm-module": "file:wasm-module/pkg"
+    "rust-fetch": "file:../wasm-module/pkg"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",
     "typescript": "^5.7.3"
   },
-  "description": ""
+  "description": "example"
 }

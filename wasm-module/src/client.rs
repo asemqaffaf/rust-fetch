@@ -458,6 +458,111 @@ impl WasmClient {
                 .map_err(|e| JsValue::from(e))
         })
     }
+    
+    /// Make a PUT request with JSON body
+    #[wasm_bindgen]
+    pub fn put_json(&self, url: String, body: JsValue) -> js_sys::Promise {
+        let client = self.inner.clone();
+        future_to_promise(async move {
+            let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
+                .map_err(|e| Error::from(e))?;
+            let response = client.put(&url).json(&json)?.send().await
+                .map_err(|e| Error::from(e))?;
+            response_to_js(&response)
+                .map_err(|e| JsValue::from(e))
+        })
+    }
+    
+    /// Make a DELETE request
+    #[wasm_bindgen]
+    pub fn delete(&self, url: String) -> js_sys::Promise {
+        let client = self.inner.clone();
+        future_to_promise(async move {
+            let response = client.delete(&url).send().await
+                .map_err(|e| JsValue::from(e))?;
+            response_to_js(&response)
+                .map_err(|e| JsValue::from(e))
+        })
+    }
+    
+    /// Make a PATCH request with JSON body
+    #[wasm_bindgen]
+    pub fn patch_json(&self, url: String, body: JsValue) -> js_sys::Promise {
+        let client = self.inner.clone();
+        future_to_promise(async move {
+            let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
+                .map_err(|e| Error::from(e))?;
+            let response = client.patch(&url).json(&json)?.send().await
+                .map_err(|e| Error::from(e))?;
+            response_to_js(&response)
+                .map_err(|e| JsValue::from(e))
+        })
+    }
+    
+    /// Make a HEAD request
+    #[wasm_bindgen]
+    pub fn head(&self, url: String) -> js_sys::Promise {
+        let client = self.inner.clone();
+        future_to_promise(async move {
+            let response = client
+                .request(Method::Head, &url)
+                .send()
+                .await
+                .map_err(|e| JsValue::from(e))?;
+            response_to_js(&response)
+                .map_err(|e| JsValue::from(e))
+        })
+    }
+    
+    /// Make a custom request with method, headers, and body
+    #[wasm_bindgen]
+    pub fn request(&self, method: String, url: String, headers: JsValue, body: JsValue) -> js_sys::Promise {
+        let client = self.inner.clone();
+        future_to_promise(async move {
+            // Parse method
+            let method = Method::from_str(&method)
+                .ok_or_else(|| Error::InvalidInput {
+                    parameter: "method".to_string(),
+                    reason: format!("Invalid HTTP method: {}", method),
+                })?;
+            
+            // Create request builder
+            let mut request = client.request(method, &url);
+            
+            // Parse and add headers if provided
+            if !headers.is_null() && !headers.is_undefined() {
+                if headers.is_object() {
+                    let obj = js_sys::Object::from(headers);
+                    let headers = Headers::from_js_object(&obj)
+                        .map_err(|_| Error::JsInterop {
+                            message: "Failed to parse headers object".to_string(),
+                        })?;
+                    request = request.headers(headers);
+                }
+            }
+            
+            // Add body if provided
+            if !body.is_null() && !body.is_undefined() {
+                if body.is_string() {
+                    // Text body
+                    if let Some(text) = body.as_string() {
+                        request = request.text(text);
+                    }
+                } else if body.is_object() {
+                    // JSON body
+                    let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
+                        .map_err(|e| Error::from(e))?;
+                    request = request.json(&json)?;
+                }
+            }
+            
+            // Execute request
+            let response = request.send().await
+                .map_err(|e| Error::from(e))?;
+            response_to_js(&response)
+                .map_err(|e| JsValue::from(e))
+        })
+    }
 }
 
 /// Convert Response to JavaScript object
