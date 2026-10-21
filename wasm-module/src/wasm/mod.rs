@@ -5,6 +5,8 @@
 //! with `wasm-pack test --node` and the JS test suite in `js/test`.
 
 pub(crate) mod futures;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod transport;
 
 use self::futures::{abortable, AbortableStream};
 use crate::{
@@ -642,8 +644,10 @@ pub(crate) async fn send(
         Some(_) => return Err(invalid("signal", "must be an AbortSignal")),
         None => None,
     };
-    if let Some(callback) = prop(options, "onDownloadProgress") {
+    let progress = prop(options, "onDownloadProgress");
+    if let Some(callback) = progress.as_ref() {
         let callback: js_sys::Function = callback
+            .clone()
             .dyn_into()
             .map_err(|_| invalid("onDownloadProgress", "must be a function"))?;
         builder = with_progress(builder, callback);
@@ -653,6 +657,10 @@ pub(crate) async fn send(
     if let BodyType::Stream = body_type {
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
         return streaming_response_to_js(response, signal);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if progress.is_none() {
+        return abortable(signal, builder.send_js(body_type)).await;
     }
     let response = abortable(signal, builder.send()).await?;
     response_to_js(response, body_type)

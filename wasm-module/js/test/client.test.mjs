@@ -37,6 +37,12 @@ before(async () => {
       case '/binary':
         res.writeHead(200, { 'content-type': 'application/octet-stream' });
         return res.end(Buffer.from([0, 1, 2, 255]));
+      case '/decode':
+        res.writeHead(200, { 'content-type': url.searchParams.get('type') ?? 'text/plain' });
+        return res.end(Buffer.from(url.searchParams.get('hex') ?? '', 'hex'));
+      case '/cookies':
+        res.writeHead(200, { 'set-cookie': ['a=1; Path=/', 'b=2; Path=/'], 'content-type': 'text/plain' });
+        return res.end('cookies');
       case '/raw-json-text':
         res.writeHead(200, { 'content-type': 'text/plain' });
         return res.end('{"raw":true}');
@@ -109,6 +115,47 @@ describe('initialization', () => {
 });
 
 describe('responses', () => {
+  it('keeps buffered decoding equivalent to the incremental progress path', async () => {
+    const c = client();
+    const fixtures = [
+      ['', 'application/json'],
+      ['efbbbf', 'text/plain'],
+      ['efbbbf', 'application/json'],
+      ['efbbbf', 'application/octet-stream'],
+      ['efbbbf7b2261223a317d', 'application/json'],
+      ['6680', 'text/plain; charset=iso-8859-1'],
+      ['7b2261223a2280227d', 'application/json'],
+      ['7b', 'application/json'],
+      ['00ff0102', 'application/octet-stream'],
+    ];
+    for (const [hex, type] of fixtures) {
+      const url = server.url('/decode?' + new URLSearchParams({ hex, type }));
+      for (const responseType of ['auto', 'json', 'text', 'binary']) {
+        const outcome = async (options) => {
+          try {
+            return { body: (await c.get(url, options)).body };
+          } catch (error) {
+            return { error: error.kind };
+          }
+        };
+        const buffered = await outcome({ responseType });
+        const incremental = await outcome({ responseType, onDownloadProgress() {} });
+        assert.deepEqual(buffered, incremental, `${hex}, ${type}, ${responseType}`);
+      }
+    }
+    const bom = server.url('/decode?' + new URLSearchParams({ hex: 'efbbbf', type: 'application/json' }));
+    assert.equal((await c.get(bom)).body, '');
+    assert.equal((await rejection(c.get(bom, { responseType: 'json' }))).kind, 'ParseError');
+  });
+
+  it('keeps repeated response headers when using the buffered path', async () => {
+    const c = client();
+    const buffered = await c.get(server.url('/cookies'));
+    const incremental = await c.get(server.url('/cookies'), { onDownloadProgress() {} });
+    assert.equal(buffered.headers['set-cookie'], 'a=1; Path=/, b=2; Path=/');
+    assert.equal(buffered.headers['set-cookie'], incremental.headers['set-cookie']);
+  });
+
   it('parses JSON into plain objects, keeping big integers as numbers', async () => {
     const res = await client().get(server.url('/json'));
     assert.equal(res.status, 200);
@@ -336,6 +383,12 @@ describe('errors', () => {
 });
 
 describe('timeouts', () => {
+  it('keeps the timeout active while collecting a response body', async () => {
+    const error = await rejection(client().get(server.url('/stream'), { timeoutMs: 50 }));
+    assert.equal(error.kind, 'TimeoutError');
+    assert.equal(error.timeoutMs, 50);
+  });
+
   it('fails slow requests with a TimeoutError', async () => {
     const c = new WasmClient({ timeoutMs: 100 });
     const started = Date.now();
@@ -363,6 +416,27 @@ describe('retries', () => {
       }
       json(res, { attempt: ctx.count });
     });
+
+  it('reports truncated bodies as NetworkError and retries them when configured', async () => {
+    const s = await startServer((req, res, ctx) => {
+      if (ctx.count < 2) {
+        res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '100' });
+        res.write('incomplete');
+        setTimeout(() => res.destroy(), 10);
+      } else {
+        json(res, { complete: true });
+      }
+    });
+    try {
+      const error = await rejection(client().get(s.url()));
+      assert.equal(error.kind, 'NetworkError');
+      const c = new WasmClient({ retries: { maxRetries: 1, initialDelayMs: 1 } });
+      assert.deepEqual((await c.get(s.url())).body, { complete: true });
+      assert.equal(s.requests.length, 3);
+    } finally {
+      await s.close();
+    }
+  });
 
   it('retries retryable statuses with backoff, then succeeds', async () => {
     const s = await flaky(2);
@@ -423,6 +497,11 @@ describe('retries', () => {
 });
 
 describe('cancellation', () => {
+  it('cancels while collecting a response body after headers arrive', async () => {
+    const error = await rejection(client().get(server.url('/stream'), { signal: AbortSignal.timeout(50) }));
+    assert.equal(error.kind, 'CancelledError');
+  });
+
   it('rejects with CancelledError when the signal aborts mid-request', async () => {
     const controller = new AbortController();
     const promise = client().get(server.url('/slow?ms=3000'), { signal: controller.signal });

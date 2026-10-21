@@ -60,6 +60,12 @@ struct RawResponse {
     stream: Option<reqwest::Response>,
 }
 
+/// An attempt either succeeds or supplies an HTTP error with retry timing.
+pub(crate) enum Attempt<T> {
+    Success(T),
+    HttpError(Error, Option<Duration>),
+}
+
 /// A successful response whose body is read incrementally
 pub struct StreamingResponse {
     /// HTTP status code
@@ -190,33 +196,55 @@ impl Client {
         progress: Option<&ProgressFn>,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
+        self.execute_retrying(config.method, config.timeout, || async {
+            let raw = self.execute_once(&url, config, stream, progress).await?;
+            if (200..300).contains(&raw.status) {
+                Ok(Attempt::Success(raw))
+            } else {
+                let retry_after = raw
+                    .headers
+                    .get_first("retry-after")
+                    .and_then(parse_retry_after);
+                Ok(Attempt::HttpError(
+                    Error::Http {
+                        status: raw.status,
+                        status_text: raw.status_text,
+                        body: Some(bytes_to_text(raw.body)),
+                    },
+                    retry_after,
+                ))
+            }
+        })
+        .await
+    }
+
+    /// Shared retry/timeout policy for Rust responses and JS-native bodies.
+    async fn execute_retrying<T, F, Fut>(
+        &self,
+        method: Method,
+        timeout: Option<Duration>,
+        mut send: F,
+    ) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<Attempt<T>>>,
+    {
         let mut attempt = 0;
 
         loop {
-            let once = self.execute_once(&url, config, stream, progress);
-            let outcome = match config.timeout {
+            let once = send();
+            let outcome = match timeout {
                 Some(timeout) => runtime::timeout(timeout, once).await,
                 None => once.await,
             };
 
             let (error, retry_after) = match outcome {
-                Ok(raw) if (200..300).contains(&raw.status) => return Ok(raw),
-                Ok(raw) => {
-                    let retry_after = raw
-                        .headers
-                        .get_first("retry-after")
-                        .and_then(parse_retry_after);
-                    let error = Error::Http {
-                        status: raw.status,
-                        status_text: raw.status_text,
-                        body: Some(bytes_to_text(raw.body)),
-                    };
-                    (error, retry_after)
-                }
+                Ok(Attempt::Success(response)) => return Ok(response),
+                Ok(Attempt::HttpError(error, retry_after)) => (error, retry_after),
                 Err(error) => (error, None),
             };
 
-            match self.retry_delay(attempt, config.method, &error, retry_after) {
+            match self.retry_delay(attempt, method, &error, retry_after) {
                 Some(delay) => {
                     attempt += 1;
                     runtime::sleep(delay).await;
@@ -408,7 +436,7 @@ fn page_url() -> Option<reqwest::Url> {
 }
 
 /// Parse a `Retry-After` header given in seconds
-fn parse_retry_after(value: &str) -> Option<Duration> {
+pub(crate) fn parse_retry_after(value: &str) -> Option<Duration> {
     value.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
 
@@ -575,6 +603,26 @@ pub struct RequestBuilder {
 }
 
 impl RequestBuilder {
+    /// Keep JS response bodies outside wasm memory, retaining the shared policy.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn send_js(
+        self,
+        body_type: crate::wasm::BodyType,
+    ) -> Result<wasm_bindgen::JsValue> {
+        let url = resolve_url(
+            self.client.config.base_url.as_deref(),
+            page_url(),
+            &self.url,
+            &self.query,
+        )?;
+        let request = crate::wasm::transport::PreparedRequest::new(url.as_str(), &self.config)?;
+        self.client
+            .execute_retrying(self.config.method, self.config.timeout, || {
+                request.send(body_type)
+            })
+            .await
+    }
+
     /// Set a request header, replacing any default value for that header
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.config.headers.set(name, value);
