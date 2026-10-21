@@ -8,7 +8,7 @@
     "build": "cd wasm-module && wasm-pack build --release --target web && node ../scripts/postbuild.mjs",
     "test": "npm run test:rust && npm run test:js",
     "test:rust": "cd wasm-module && cargo test",
-    "test:js": "node --test \"wasm-module/js/test/*.test.mjs\"",
+    "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/package.test.mjs",
     "pack:check": "cd wasm-module/pkg && npm pack --dry-run",
     "bench": "node benchmarks/fetch-comparison.mjs"
   },
