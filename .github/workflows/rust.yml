@@ -34,8 +34,12 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown
       - name: Unit + integration tests with coverage
         # JS-only code (src/wasm, src/http.rs) needs a JS engine and is
-        # covered by the wasm and JS jobs below.
+        # covered by the wasm and JS jobs below. Coverage is measured
+        # unoptimized: with profile.test's opt-level = 2, inlining differs
+        # between test binaries and llvm-cov drops their "mismatched" data.
         run: cargo llvm-cov --no-report
+        env:
+          CARGO_PROFILE_TEST_OPT_LEVEL: 0
       - name: Coverage report
         run: cargo llvm-cov report --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/' --show-missing-lines
       - name: Coverage gate (100% lines and functions)
