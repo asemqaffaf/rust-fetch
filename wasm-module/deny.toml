@@ -11,10 +11,14 @@ yanked = "deny"
 # Every dependency must use one of these licenses
 allow = [
   "MIT",
+  "MIT-0",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "BSD-3-Clause",
+  "ISC",
   "Unicode-3.0",
+  # Mozilla's root certificates, bundled by rustls (native builds only)
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 
