@@ -57,6 +57,7 @@ See "Upgrading to 2.0" in the README for migration steps.
 - Invalid URLs and headers were reported as retryable network errors
 - `TRACE`/`CONNECT` failed with an opaque "builder error"; they're now rejected with a clear message
 - Retry delay calculation could panic with very large `max_delay`/`multiplier` values
+- Updated dependencies with security advisories: `bytes` (RUSTSEC-2026-0007, also in the wasm build) and `openssl` (RUSTSEC-2025-0004, RUSTSEC-2025-0022, native builds only)
 - The npm package's broken `client.js`/`server.js` wrappers and stale `types.d.ts` were removed
 
 ## [1.1.0]

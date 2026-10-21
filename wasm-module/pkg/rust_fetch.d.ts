@@ -347,10 +347,10 @@ export interface InitOutput {
     readonly wasmclient_put: (a: number, b: number, c: number, d: number) => any;
     readonly wasmclient_put_json: (a: number, b: number, c: number, d: any, e: number) => any;
     readonly wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
-    readonly wasm_bindgen__convert__closures_____invoke__h26c7adc06dc40b02: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__he1c3a6328ce3072b: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__hf26b49839082a295: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h3a97b7e9728479b2: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h39ac090089444320: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen__convert__closures_____invoke__hec13370dce1f04b2: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h4d160492c91274ae: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

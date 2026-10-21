@@ -46,6 +46,8 @@ jobs:
           npm run test:rust
           (cd wasm-module && wasm-pack test --node)
           npm run test:js
+          npm run size
+          npm run api:check
 
       - name: Choose npm dist-tag
         # Older majors (e.g. a 1.x patch after 2.0) must not become "latest"

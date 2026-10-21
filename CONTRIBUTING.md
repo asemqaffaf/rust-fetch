@@ -26,6 +26,17 @@ The [README](README.md#development) describes each test suite.
 - Update the README for user-visible changes, and add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 - Run `cargo fmt` on Rust changes.
 
+CI also enforces these gates on every PR:
+
+| Gate | Command | Fails when |
+| --- | --- | --- |
+| Dependency audit | `cd wasm-module && cargo deny check` | A dependency has a security advisory, a license not allowed in `deny.toml`, or comes from an unknown source |
+| Rust API compatibility | `cargo semver-checks --manifest-path wasm-module/Cargo.toml --baseline-rev main` | The Rust API changes in a way the version number doesn't allow |
+| TypeScript API snapshot | `npm run api:check` | The published `.d.ts` differs from `api/rust-fetch.d.ts`. If the change is intended, run `npm run api:update` and commit the snapshot. |
+| Size budget | `npm run size` | The `.wasm` or JS files outgrow the budgets in `scripts/check-size.mjs` |
+
+`api:check` and `size` need a fresh `npm run build`.
+
 ## Versioning
 
 rust-fetch follows [Semantic Versioning](https://semver.org/). These count as **breaking** and need a new major version:

@@ -10,7 +10,10 @@
     "test:rust": "cd wasm-module && cargo test",
     "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/package.test.mjs",
     "pack:check": "cd wasm-module/pkg && npm pack --dry-run",
-    "bench": "node benchmarks/fetch-comparison.mjs"
+    "bench": "node benchmarks/fetch-comparison.mjs",
+    "size": "node scripts/check-size.mjs",
+    "api:check": "node scripts/check-api.mjs",
+    "api:update": "node scripts/check-api.mjs --update"
   },
   "engines": {
     "node": ">=20"
