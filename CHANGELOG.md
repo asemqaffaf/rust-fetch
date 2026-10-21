@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Node.js requests no longer go through `fetch()`.** A lean transport on `node:http`/`node:https` with keep-alive connections makes rust-fetch as fast as or faster than Node's built-in `fetch()`: small JSON requests are 1.9× (sequential) to 2.2× (50 concurrent) faster than in 2.0.0. It follows redirects like `fetch()` (dropping credentials on cross-origin redirects), decodes gzip, deflate, brotli and (where Node supports it) zstd, and sends `accept: */*`, `accept-encoding` and `user-agent: rust-fetch` unless set. Retries, timeouts, validation and errors still come from the Rust core. Browsers keep using `fetch()`.
+- In Node.js, proxies now come from `http.globalAgent`/`https.globalAgent` instead of undici's `setGlobalDispatcher`
+- Buffered responses (everything except `responseType: 'stream'` and requests with `onDownloadProgress`) are decoded in JS without copying the body into Wasm memory
+- Binary responses are returned without an extra copy
+- Finished requests no longer create an `AbortError` each, which removed about 13% of the CPU time of a small request
+
 ## [2.0.0] - 2026-10-22
 
 ### Breaking changes

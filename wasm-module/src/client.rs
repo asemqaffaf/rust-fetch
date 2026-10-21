@@ -615,11 +615,17 @@ impl RequestBuilder {
             &self.url,
             &self.query,
         )?;
-        let request = crate::wasm::transport::PreparedRequest::new(url.as_str(), &self.config)?;
+        let request =
+            crate::wasm::transport::PreparedRequest::new(url.as_str(), &self.config, body_type)?;
+        // The Node transport runs its own timer per attempt (cheaper than a
+        // wasm-side timer); the policy and error are the same.
+        let timeout = if request.enforces_timeout() {
+            None
+        } else {
+            self.config.timeout
+        };
         self.client
-            .execute_retrying(self.config.method, self.config.timeout, || {
-                request.send(body_type)
-            })
+            .execute_retrying(self.config.method, timeout, || request.send())
             .await
     }
 

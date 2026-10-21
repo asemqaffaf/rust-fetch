@@ -105,7 +105,7 @@ await client.get('/search', { params: { q: 'rust wasm', page: 2, tag: ['a', 'b']
 await client.fetch('/users/1', { method: 'DELETE', headers: { 'X-Reason': 'cleanup' } });
 ```
 
-Relative URLs need a `baseUrl`. In a browser page without one, they resolve against the page URL. Absolute URLs always win over `baseUrl`. `TRACE` and `CONNECT` are rejected because `fetch()` forbids them.
+Relative URLs need a `baseUrl`. In a browser page without one, they resolve against the page URL. Absolute URLs always win over `baseUrl`. `TRACE` and `CONNECT` are rejected, because browsers' `fetch()` forbids them.
 
 #### Request options
 
@@ -223,7 +223,7 @@ controller.abort(); // rejects with a CancelledError
 await client.get('/report', { signal: AbortSignal.timeout(5_000) }); // total deadline, including retries
 ```
 
-Aborting cancels the underlying `fetch`, any pending retry delay, and a body being streamed.
+Aborting cancels the request in flight, any pending retry delay, and a body being streamed.
 
 ### Streaming
 
@@ -352,18 +352,20 @@ Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (
 
 ## Performance
 
-rust-fetch makes its requests through the runtime's own `fetch()`, so the network work is the same as plain `fetch`. The extra cost comes from crossing the JS ↔ Wasm boundary and copying bodies. It is **not faster than native `fetch`**. Use it for the reliability features, not for speed.
+**In Node.js, rust-fetch is as fast as or faster than the built-in `fetch()` for typical API traffic.** Node's `fetch()` implements browser semantics (WHATWG streams) on top of its sockets. rust-fetch uses its own lean transport on `node:http`/`node:https` with keep-alive. Retries, timeouts, validation and errors still come from the Rust core.
 
-`npm run bench` (Node 22.13, Apple M1 Pro, local server):
+`npm run bench` (Node 22.13, Apple M1 Pro, local server, median of 5 alternating rounds):
 
 | Scenario | native `fetch` | rust-fetch | rust-fetch / native |
 | --- | ---: | ---: | ---: |
-| Small JSON, sequential | 5,465 req/s | 4,015 req/s | 73% |
-| Small JSON, 50 concurrent | 12,155 req/s | 6,035 req/s | 50% |
-| JSON 0.6 MB | 219 req/s | 212 req/s | 97% |
-| Binary 8 MB | 189 req/s | 147 req/s | 77% |
+| Small JSON, sequential | 10,558 req/s | 10,634 req/s | **101%** |
+| Small JSON, 50 concurrent | 13,401 req/s | 13,895 req/s | **104%** |
+| JSON 0.6 MB | 219 req/s | 203 req/s | 92% |
+| Binary 8 MB | 177 req/s | 181 req/s | **102%** |
 
-The overhead per request is a fraction of a millisecond, which matters little once a request crosses a real network.
+Large JSON is dominated by `JSON.parse`, which both clients pay; the remaining gap is extra garbage collection from crossing into Wasm.
+
+**In browsers**, `fetch()` is the only way to make requests, so rust-fetch uses it and can't be faster than it. The difference is a fraction of a millisecond per request, which matters little once a request crosses a real network.
 
 ## Roadmap
 
@@ -379,9 +381,9 @@ The overhead per request is a fraction of a millisecond, which matters little on
 - [ ] Upload progress tracking: not possible on top of `fetch()`, which has no upload progress events
 - [ ] WebSocket support
 - Handled by the runtime, not by rust-fetch:
-  - **Connection pooling:** browsers and Node.js pool connections for `fetch()` themselves.
-  - **Proxies:** set them up in the runtime, e.g. with undici's `setGlobalDispatcher(new ProxyAgent(url))` in Node.js, or with system settings in browsers.
-  - **HTTP/2:** browsers negotiate it automatically; in Node.js it depends on undici's dispatcher (`allowH2`).
+  - **Connection pooling:** browsers pool connections for `fetch()`; in Node.js rust-fetch reuses connections through Node's default keep-alive agents.
+  - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
+  - **HTTP/2:** browsers negotiate it automatically; the Node.js transport uses HTTP/1.1 with keep-alive.
 
 ## Upgrading to 2.0
 

@@ -596,14 +596,15 @@ pub(crate) enum BodyMode {
     Json(JsValue),
 }
 
-/// Response body decoding requested from JS
+/// Response body decoding requested from JS. The discriminants are shared
+/// with the Node transport (`bodyType` in `js/node.js`).
 #[derive(Clone, Copy)]
 pub(crate) enum BodyType {
-    Auto,
-    Json,
-    Text,
-    Binary,
-    Stream,
+    Auto = 0,
+    Json = 1,
+    Text = 2,
+    Binary = 3,
+    Stream = 4,
 }
 
 /// Build, send and convert a request coming from JavaScript
