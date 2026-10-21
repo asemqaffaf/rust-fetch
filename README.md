@@ -43,7 +43,7 @@ const { body: user } = await api.get('/users/42');
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks.
 - **Interceptors** for requests and responses, e.g. auth headers and token refresh.
 - **TypeScript** definitions for the whole API.
-- **Tested**: 100% line coverage of the Rust core, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
+- **Tested**: 100% line coverage of the Rust core and of the Node.js transport, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
 
 ## Installation
 
@@ -422,6 +422,7 @@ npm run test:js    # JS end-to-end tests against the built package (requires a b
 npm run bench      # rust-fetch vs native fetch (requires a build)
 npm run size       # size budget for the built package
 npm run api:check  # public TypeScript API vs the committed snapshot
+npm run coverage:js  # Node.js transport coverage (100% lines and functions)
 
 cd wasm-module
 wasm-pack test --node    # wasm unit tests for the JS bindings
@@ -436,7 +437,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | JS end-to-end tests | `wasm-module/js/test/client.test.mjs` | The built package against a local server |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
-CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
 
 Releases are published by CI when a version tag is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 

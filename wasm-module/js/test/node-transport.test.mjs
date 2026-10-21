@@ -25,6 +25,17 @@ before(async () => {
         res.writeHead(status, { location: url.searchParams.get('to') ?? '/echo' });
         return res.end();
       }
+      case '/bad-location':
+        res.writeHead(302, { location: 'http://[not-a-host' });
+        return res.end();
+      case '/encoded': {
+        // An encoding we can't (or can, for zstd where Node supports it) decode
+        const encoding = url.searchParams.get('encoding');
+        const payload = Buffer.from('raw bytes');
+        const body = encoding === 'zstd' && zlib.zstdCompressSync ? zlib.zstdCompressSync(payload) : payload;
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-encoding': encoding });
+        return res.end(body);
+      }
       case '/loop':
         res.writeHead(302, { location: '/loop' });
         return res.end();
@@ -83,6 +94,12 @@ describe('Node.js transport', () => {
     assert.equal(res.body.body, 'héllo');
   });
 
+  it('rejects URLs it cannot parse (the client validates them first)', async () => {
+    const transport = globalThis[Symbol.for('rust-fetch.transport')];
+    const error = await rejection(transport({ method: 'GET', url: 'not a url', headers: {}, timeout: 1000, bodyType: 0 }));
+    assert.equal(error.code, 'ERR_INVALID_URL');
+  });
+
   it('reuses connections (keep-alive)', async () => {
     sockets.clear();
     const c = client();
@@ -128,6 +145,12 @@ describe('Node.js transport', () => {
       assert.equal(same.body.headers.authorization, 'Bearer secret');
     });
 
+    it('fails on an unparseable redirect location', async () => {
+      const error = await rejection(client().get(server.url('/bad-location')));
+      assert.equal(error.kind, 'NetworkError');
+      assert.match(error.message, /Invalid redirect location/);
+    });
+
     it('fails on redirect loops and unsupported schemes', async () => {
       const loop = await rejection(client().get(server.url('/loop')));
       assert.equal(loop.kind, 'NetworkError');
@@ -146,6 +169,13 @@ describe('Node.js transport', () => {
         assert.equal(res.body.text, 'Zoë'.repeat(100));
       });
     }
+
+    it('decodes zstd where Node supports it, and passes unknown encodings through', async () => {
+      for (const encoding of ['zstd', 'compress']) {
+        const res = await client().get(server.url('/encoded?' + new URLSearchParams({ encoding })));
+        assert.equal(Buffer.from(res.body).toString(), 'raw bytes', encoding);
+      }
+    });
 
     it('reports corrupt compressed bodies as NetworkError', async () => {
       const s = await startServer((req, res) => {

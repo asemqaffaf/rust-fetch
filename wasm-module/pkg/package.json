@@ -4,8 +4,8 @@
   "collaborators": [
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
-  "description": "A high-performance HTTP client for JavaScript/TypeScript powered by WebAssembly, for browsers and Node.js",
-  "version": "2.0.0",
+  "description": "A reliable HTTP client for JavaScript and TypeScript, written in Rust and compiled to WebAssembly: timeouts, retries, typed errors and interceptors, faster than fetch() in Node.js",
+  "version": "2.1.0",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

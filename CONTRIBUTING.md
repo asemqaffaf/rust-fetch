@@ -33,9 +33,10 @@ CI also enforces these gates on every PR:
 | Dependency audit | `cd wasm-module && cargo deny check` | A dependency has a security advisory, a license not allowed in `deny.toml`, or comes from an unknown source |
 | Rust API compatibility | `cargo semver-checks --manifest-path wasm-module/Cargo.toml --baseline-rev main` | The Rust API changes in a way the version number doesn't allow |
 | TypeScript API snapshot | `npm run api:check` | The published `.d.ts` differs from `api/rust-fetch.d.ts`. If the change is intended, run `npm run api:update` and commit the snapshot. |
+| Node transport coverage | `npm run coverage:js` | Line or function coverage of the Node.js transport (`js/node.js`) drops below 100% |
 | Size budget | `npm run size` | The `.wasm` or JS files outgrow the budgets in `scripts/check-size.mjs` |
 
-`api:check` and `size` need a fresh `npm run build`.
+`api:check`, `size` and `coverage:js` need a fresh `npm run build`.
 
 ## Versioning
 

@@ -1,7 +1,7 @@
 {
   "name": "rust-fetch-workspace",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Development workspace for the rust-fetch npm package (published from wasm-module/pkg)",
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "bench": "node benchmarks/fetch-comparison.mjs",
     "size": "node scripts/check-size.mjs",
     "api:check": "node scripts/check-api.mjs",
-    "api:update": "node scripts/check-api.mjs --update"
+    "api:update": "node scripts/check-api.mjs --update",
+    "coverage:js": "node --test --experimental-test-coverage --test-coverage-include=wasm-module/pkg/node.js --test-coverage-lines=100 --test-coverage-functions=100 wasm-module/js/test/client.test.mjs wasm-module/js/test/node-transport.test.mjs"
   },
   "engines": {
     "node": ">=20"
