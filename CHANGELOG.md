@@ -60,7 +60,7 @@ See "Upgrading to 2.0" in the README for migration steps.
 - Updated dependencies with security advisories: `bytes` (RUSTSEC-2026-0007, also in the wasm build) and `openssl` (RUSTSEC-2025-0004, RUSTSEC-2025-0022, native builds only)
 - The npm package's broken `client.js`/`server.js` wrappers and stale `types.d.ts` were removed
 
-## [1.1.0]
+## [1.1.0] - 2025-07-27
 
 ### Added
 - **Extended HTTP Methods**: Added support for PUT, DELETE, PATCH, and HEAD methods in `WasmClient`
@@ -81,14 +81,14 @@ See "Upgrading to 2.0" in the README for migration steps.
 ### Fixed
 - **Duplicate Implementation**: Removed duplicate `From` implementation for `serde_wasm_bindgen::Error`
 
-## [1.0.4] - 2024-01-27
+## [1.0.4] - 2025-07-26
 
 ### Added
 - World-class WebAssembly HTTP client library
 - Excellent error handling with detailed context
 - Clean API design with builder pattern
 
-## [1.0.2] - 2024-01-20
+## [1.0.2] - 2025-07-26
 
 ### Added
 - Basic HTTP client implementation with builder pattern
@@ -105,7 +105,7 @@ See "Upgrading to 2.0" in the README for migration steps.
 - Platform optimizations for WASM and native targets
 - Backward compatibility with legacy APIs
 
-## [0.7.2] - 2023-12-15
+## [0.7.2] - 2025-02-24
 
 ### Added
 - Initial WASM module structure
@@ -116,7 +116,7 @@ See "Upgrading to 2.0" in the README for migration steps.
 - Project structure reorganization
 - Updated dependencies
 
-## [0.1.0] - 2023-11-01
+## [0.1.0] - 2025-02-23
 
 ### Added
 - Initial release
@@ -124,8 +124,10 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v1.0.4...HEAD
-[1.0.4]: https://github.com/asemqaffaf/rust-fetch/compare/v1.0.2...v1.0.4
-[1.0.2]: https://github.com/asemqaffaf/rust-fetch/compare/v0.7.2...v1.0.2
-[0.7.2]: https://github.com/asemqaffaf/rust-fetch/compare/v0.1.0...v0.7.2
-[0.1.0]: https://github.com/asemqaffaf/rust-fetch/releases/tag/v0.1.0
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/asemqaffaf/rust-fetch/compare/v1.1.0...v2.0.0
+[1.1.0]: https://github.com/asemqaffaf/rust-fetch/tree/v1.1.0
+[1.0.4]: https://www.npmjs.com/package/rust-fetch/v/1.0.4
+[1.0.2]: https://www.npmjs.com/package/rust-fetch/v/1.0.2
+[0.7.2]: https://www.npmjs.com/package/rust-fetch/v/0.7.2
+[0.1.0]: https://www.npmjs.com/package/rust-fetch/v/0.1.0
