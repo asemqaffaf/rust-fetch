@@ -11,6 +11,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Optional: without it, npm trusted publishing (OIDC) is used
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -64,13 +67,42 @@ jobs:
           echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
           echo "Publishing $VERSION with dist-tag $tag"
 
-      - name: Publish to npm
+      - name: Check whether this version is already published
+        # Makes the workflow safe to re-run after a later step failed
+        run: |
+          if npm view "rust-fetch@$VERSION" version >/dev/null 2>&1; then
+            echo "rust-fetch@$VERSION is already on npm; skipping publish"
+            echo "ALREADY_PUBLISHED=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Use npm 11.5.1+ (required for trusted publishing)
+        run: npm install -g npm@^11.5.1
+
+      - name: Publish to npm (token)
+        if: env.ALREADY_PUBLISHED != 'true' && env.NPM_TOKEN != ''
         working-directory: wasm-module/pkg
         run: npm publish --provenance --access public --tag "$DIST_TAG"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+
+      - name: Publish to npm (trusted publishing)
+        if: env.ALREADY_PUBLISHED != 'true' && env.NPM_TOKEN == ''
+        working-directory: wasm-module/pkg
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
 
       - name: Create GitHub release
-        run: gh release create "$GITHUB_REF_NAME" --title "rust-fetch $VERSION" --generate-notes --verify-tag
+        # Release notes are this version's section of CHANGELOG.md
+        run: |
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG.md section for $VERSION" >&2
+            exit 1
+          fi
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "rust-fetch $VERSION" --notes-file release-notes.md --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}

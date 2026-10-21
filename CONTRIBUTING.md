@@ -75,4 +75,4 @@ Fixes that also apply to an older major version are made on `main` first, then c
 
    Versions from an older major (e.g. 1.x while 2.x is current) are published under the `v<major>` dist-tag, so they don't replace `latest`.
 
-Publishing needs either [trusted publishing](https://docs.npmjs.com/trusted-publishers) configured for this repository on npmjs.com, or an `NPM_TOKEN` repository secret.
+Publishing needs either [trusted publishing](https://docs.npmjs.com/trusted-publishers) configured on npmjs.com for this repository and the `release.yml` workflow (preferred: no long-lived token), or an `NPM_TOKEN` repository secret. Release notes are taken from the version's CHANGELOG section. If a run fails after publishing (e.g. creating the GitHub release), re-run it: an already-published version is skipped.
