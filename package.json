@@ -1,19 +1,20 @@
 {
   "name": "rust-fetch-workspace",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Development workspace for the rust-fetch npm package (published from wasm-module/pkg)",
   "type": "module",
   "scripts": {
     "build": "cd wasm-module && wasm-pack build --release --target web && node ../scripts/postbuild.mjs",
     "test": "npm run test:rust && npm run test:js",
     "test:rust": "cd wasm-module && cargo test",
-    "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/package.test.mjs",
+    "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/node-transport.test.mjs wasm-module/js/test/package.test.mjs",
     "pack:check": "cd wasm-module/pkg && npm pack --dry-run",
     "bench": "node benchmarks/fetch-comparison.mjs",
     "size": "node scripts/check-size.mjs",
     "api:check": "node scripts/check-api.mjs",
-    "api:update": "node scripts/check-api.mjs --update"
+    "api:update": "node scripts/check-api.mjs --update",
+    "coverage:js": "node --test --experimental-test-coverage --test-coverage-include=wasm-module/pkg/node.js --test-coverage-lines=100 --test-coverage-functions=100 wasm-module/js/test/client.test.mjs wasm-module/js/test/node-transport.test.mjs"
   },
   "engines": {
     "node": ">=20"

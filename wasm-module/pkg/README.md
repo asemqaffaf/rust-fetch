@@ -43,7 +43,7 @@ const { body: user } = await api.get('/users/42');
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks.
 - **Interceptors** for requests and responses, e.g. auth headers and token refresh.
 - **TypeScript** definitions for the whole API.
-- **Tested**: 100% line coverage of the Rust core, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
+- **Tested**: 100% line coverage of the Rust core and of the Node.js transport, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
 
 ## Installation
 
@@ -105,7 +105,7 @@ await client.get('/search', { params: { q: 'rust wasm', page: 2, tag: ['a', 'b']
 await client.fetch('/users/1', { method: 'DELETE', headers: { 'X-Reason': 'cleanup' } });
 ```
 
-Relative URLs need a `baseUrl`. In a browser page without one, they resolve against the page URL. Absolute URLs always win over `baseUrl`. `TRACE` and `CONNECT` are rejected because `fetch()` forbids them.
+Relative URLs need a `baseUrl`. In a browser page without one, they resolve against the page URL. Absolute URLs always win over `baseUrl`. `TRACE` and `CONNECT` are rejected, because browsers' `fetch()` forbids them.
 
 #### Request options
 
@@ -223,7 +223,7 @@ controller.abort(); // rejects with a CancelledError
 await client.get('/report', { signal: AbortSignal.timeout(5_000) }); // total deadline, including retries
 ```
 
-Aborting cancels the underlying `fetch`, any pending retry delay, and a body being streamed.
+Aborting cancels the request in flight, any pending retry delay, and a body being streamed.
 
 ### Streaming
 
@@ -352,18 +352,20 @@ Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (
 
 ## Performance
 
-rust-fetch makes its requests through the runtime's own `fetch()`, so the network work is the same as plain `fetch`. The extra cost comes from crossing the JS ↔ Wasm boundary and copying bodies. It is **not faster than native `fetch`**. Use it for the reliability features, not for speed.
+**In Node.js, rust-fetch is as fast as or faster than the built-in `fetch()` for typical API traffic.** Node's `fetch()` implements browser semantics (WHATWG streams) on top of its sockets. rust-fetch uses its own lean transport on `node:http`/`node:https` with keep-alive. Retries, timeouts, validation and errors still come from the Rust core.
 
-`npm run bench` (Node 22.13, Apple M1 Pro, local server):
+`npm run bench` (Node 22.13, Apple M1 Pro, local server, median of 5 alternating rounds):
 
 | Scenario | native `fetch` | rust-fetch | rust-fetch / native |
 | --- | ---: | ---: | ---: |
-| Small JSON, sequential | 5,465 req/s | 4,015 req/s | 73% |
-| Small JSON, 50 concurrent | 12,155 req/s | 6,035 req/s | 50% |
-| JSON 0.6 MB | 219 req/s | 212 req/s | 97% |
-| Binary 8 MB | 189 req/s | 147 req/s | 77% |
+| Small JSON, sequential | 10,558 req/s | 10,634 req/s | **101%** |
+| Small JSON, 50 concurrent | 13,401 req/s | 13,895 req/s | **104%** |
+| JSON 0.6 MB | 219 req/s | 203 req/s | 92% |
+| Binary 8 MB | 177 req/s | 181 req/s | **102%** |
 
-The overhead per request is a fraction of a millisecond, which matters little once a request crosses a real network.
+Large JSON is dominated by `JSON.parse`, which both clients pay; the remaining gap is extra garbage collection from crossing into Wasm.
+
+**In browsers**, `fetch()` is the only way to make requests, so rust-fetch uses it and can't be faster than it. The difference is a fraction of a millisecond per request, which matters little once a request crosses a real network.
 
 ## Roadmap
 
@@ -379,9 +381,9 @@ The overhead per request is a fraction of a millisecond, which matters little on
 - [ ] Upload progress tracking: not possible on top of `fetch()`, which has no upload progress events
 - [ ] WebSocket support
 - Handled by the runtime, not by rust-fetch:
-  - **Connection pooling:** browsers and Node.js pool connections for `fetch()` themselves.
-  - **Proxies:** set them up in the runtime, e.g. with undici's `setGlobalDispatcher(new ProxyAgent(url))` in Node.js, or with system settings in browsers.
-  - **HTTP/2:** browsers negotiate it automatically; in Node.js it depends on undici's dispatcher (`allowH2`).
+  - **Connection pooling:** browsers pool connections for `fetch()`; in Node.js rust-fetch reuses connections through Node's default keep-alive agents.
+  - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
+  - **HTTP/2:** browsers negotiate it automatically; the Node.js transport uses HTTP/1.1 with keep-alive.
 
 ## Upgrading to 2.0
 
@@ -420,6 +422,7 @@ npm run test:js    # JS end-to-end tests against the built package (requires a b
 npm run bench      # rust-fetch vs native fetch (requires a build)
 npm run size       # size budget for the built package
 npm run api:check  # public TypeScript API vs the committed snapshot
+npm run coverage:js  # Node.js transport coverage (100% lines and functions)
 
 cd wasm-module
 wasm-pack test --node    # wasm unit tests for the JS bindings
@@ -434,7 +437,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | JS end-to-end tests | `wasm-module/js/test/client.test.mjs` | The built package against a local server |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
-CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
 
 Releases are published by CI when a version tag is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 

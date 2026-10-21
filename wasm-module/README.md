@@ -1,6 +1,6 @@
 # rust-fetch (crate)
 
-The Rust crate behind the [`rust-fetch`](https://www.npmjs.com/package/rust-fetch) npm package: an HTTP client built on reqwest. It works natively (on tokio) and in WebAssembly, where it sends requests through the runtime's `fetch()`.
+The Rust crate behind the [`rust-fetch`](https://www.npmjs.com/package/rust-fetch) npm package: an HTTP client built on reqwest. It works natively (on tokio) and in WebAssembly, where the npm package sends requests through `fetch()` in browsers and a `node:http` transport in Node.js.
 
 See the [main README](../README.md) for the JavaScript API, the roadmap and how to build and test.
 
