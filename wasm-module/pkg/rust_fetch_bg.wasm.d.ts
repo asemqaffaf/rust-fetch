@@ -42,8 +42,8 @@ export const wasmclient_put_json: (a: number, b: number, c: number, d: any, e: n
 export const wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
 export const wasm_bindgen__convert__closures_____invoke__h39ac090089444320: (a: number, b: number, c: any, d: any) => void;
 export const wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9: (a: number, b: number, c: any) => [number, number];
-export const wasm_bindgen__convert__closures_____invoke__hec13370dce1f04b2: (a: number, b: number, c: any) => void;
-export const wasm_bindgen__convert__closures_____invoke__h4d160492c91274ae: (a: number, b: number) => void;
+export const wasm_bindgen__convert__closures_____invoke__hfe34282d295dccc2: (a: number, b: number, c: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__h7c6facf5d1a6a91a: (a: number, b: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;

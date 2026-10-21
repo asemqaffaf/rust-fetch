@@ -44,7 +44,7 @@ See "Upgrading to 2.0" in the README for migration steps.
 - `fetch_json` parses JSON regardless of `Content-Type`; empty bodies are `null`
 - `application/*+json` responses are parsed as JSON in auto mode; empty responses are `null`
 - Long error bodies are truncated in error messages (the full body stays on `error.body`)
-- Upgraded to reqwest 0.12
+- Upgraded to reqwest 0.13. Native (non-wasm) Rust builds now use rustls with aws-lc instead of OpenSSL for TLS; the npm package is unaffected
 
 ### Fixed
 - Timeouts were ignored in browsers and Node.js, so stuck requests could hang forever
