@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # npm provenance / trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wasm-module
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install JS dev dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+
+      - name: Check tag matches package version
+        run: |
+          version=$(node -p "require('./wasm-module/pkg/package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: |
+          npm run test:rust
+          (cd wasm-module && wasm-pack test --node)
+          npm run test:js
+
+      - name: Choose npm dist-tag
+        # Older majors (e.g. a 1.x patch after 2.0) must not become "latest"
+        run: |
+          major=${VERSION%%.*}
+          latest=$(npm view rust-fetch version 2>/dev/null || echo 0.0.0)
+          if [[ "$VERSION" == *-* ]]; then
+            tag=next
+          elif [ "$major" -lt "${latest%%.*}" ]; then
+            tag="v$major"
+          else
+            tag=latest
+          fi
+          echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
+          echo "Publishing $VERSION with dist-tag $tag"
+
+      - name: Publish to npm
+        working-directory: wasm-module/pkg
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --title "rust-fetch $VERSION" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

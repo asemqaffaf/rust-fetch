@@ -5,33 +5,11 @@
  * To run: node examples/node-example.js
  */
 
-// In Node.js, you might need to polyfill fetch or use dynamic imports
-// This example assumes ESM modules are enabled in your Node.js project
-
-import { readFile } from 'fs/promises';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-// Import rust-fetch - adjust the path based on your setup
-import init, { WasmClient, fetch_json } from '../wasm-module/pkg/rust_fetch.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-async function initializeWasm() {
-    // In Node.js, you need to manually load the WASM file
-    const wasmPath = join(__dirname, '..', 'wasm-module', 'pkg', 'rust_fetch_bg.wasm');
-    const wasmBuffer = await readFile(wasmPath);
-    
-    // Initialize with the WASM buffer
-    await init(wasmBuffer);
-}
+// In Node.js the WebAssembly module loads on import; no init() call is needed
+import { WasmClient, fetch_json } from 'rust-fetch';
 
 async function main() {
     console.log('🚀 rust-fetch Node.js example\n');
-    
-    // Initialize WASM
-    await initializeWasm();
     
     // Example 1: Fetching package info from npm registry
     console.log('1. Fetching package info from npm registry...');

@@ -1,4 +1,4 @@
-name: Rust
+name: CI
 
 on:
   push:
@@ -10,13 +10,63 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  rust:
+    name: Rust tests + coverage
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: wasm-module
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: llvm-tools-preview, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wasm-module
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Build (wasm32)
+        run: cargo build --target wasm32-unknown-unknown
+      - name: Unit + integration tests with coverage
+        # JS-only code (src/wasm, src/http.rs) needs a JS engine and is
+        # covered by the wasm and JS jobs below.
+        run: >
+          cargo llvm-cov
+          --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'
+          --fail-under-lines 100
+          --fail-under-functions 100
+
+  wasm:
+    name: Wasm + JS tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wasm-module
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install JS dev dependencies
+        run: npm ci
+      - name: Wasm unit tests (Node)
+        working-directory: wasm-module
+        run: wasm-pack test --node
+      - name: Build npm package
+        run: npm run build
+      - name: JS integration + package tests
+        run: npm run test:js
