@@ -1,0 +1,11 @@
+# Coverage of the Rust core; JS-only bindings are tested by the wasm and JS suites
+coverage:
+  status:
+    project:
+      default:
+        target: 100%
+    patch:
+      default:
+        target: 100%
+comment:
+  layout: "condensed_header, diff, files"

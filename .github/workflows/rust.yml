@@ -13,6 +13,8 @@ jobs:
   rust:
     name: Rust tests + coverage
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     defaults:
       run:
         working-directory: wasm-module
@@ -42,6 +44,17 @@ jobs:
           CARGO_PROFILE_TEST_OPT_LEVEL: 0
       - name: Coverage report
         run: cargo llvm-cov report --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/' --show-missing-lines
+      # Codecov steps are skipped until a CODECOV_TOKEN secret exists
+      - name: Export coverage for Codecov
+        if: env.CODECOV_TOKEN != ''
+        run: cargo llvm-cov report --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/' --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          files: wasm-module/lcov.info
+          token: ${{ env.CODECOV_TOKEN }}
+          fail_ci_if_error: false
       - name: Coverage gate (100% lines and functions)
         run: >
           cargo llvm-cov report
