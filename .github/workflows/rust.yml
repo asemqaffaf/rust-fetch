@@ -35,10 +35,13 @@ jobs:
       - name: Unit + integration tests with coverage
         # JS-only code (src/wasm, src/http.rs) needs a JS engine and is
         # covered by the wasm and JS jobs below.
+        run: cargo llvm-cov --no-report
+      - name: Coverage report
+        run: cargo llvm-cov report --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/' --show-missing-lines
+      - name: Coverage gate (100% lines and functions)
         run: >
-          cargo llvm-cov
+          cargo llvm-cov report
           --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'
-          --show-missing-lines
           --fail-under-lines 100
           --fail-under-functions 100
 
