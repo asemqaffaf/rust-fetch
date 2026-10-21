@@ -4,7 +4,6 @@
 //! and proper error chaining for better debugging experience.
 
 use std::fmt;
-use wasm_bindgen::prelude::*;
 
 /// Result type alias for the library
 pub type Result<T> = std::result::Result<T, Error>;
@@ -110,8 +109,14 @@ impl fmt::Display for Error {
                 body,
             } => {
                 write!(f, "HTTP error {}: {}", status, status_text)?;
-                if let Some(body) = body {
-                    write!(f, " - {}", body)?;
+                if let Some(body) = body.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                    // Keep messages readable when the server returns a full HTML page;
+                    // the complete body stays available on the error itself.
+                    const MAX_CHARS: usize = 200;
+                    match body.char_indices().nth(MAX_CHARS) {
+                        Some((end, _)) => write!(f, " - {}…", &body[..end])?,
+                        None => write!(f, " - {}", body)?,
+                    }
                 }
                 Ok(())
             }
@@ -149,48 +154,18 @@ impl std::error::Error for Error {
     }
 }
 
-/// Convert Error to JsValue for WASM boundary
-impl From<Error> for JsValue {
-    fn from(error: Error) -> Self {
-        // Create a JavaScript error object with detailed information
-        let obj = js_sys::Object::new();
-
-        // Set error properties
-        let _ = js_sys::Reflect::set(&obj, &"kind".into(), &error.kind().into());
-        let _ = js_sys::Reflect::set(&obj, &"message".into(), &error.to_string().into());
-
-        // Add additional context based on error type
-        match &error {
-            Error::Http {
-                status,
-                status_text,
-                body,
-            } => {
-                let _ = js_sys::Reflect::set(&obj, &"status".into(), &(*status as f64).into());
-                let _ = js_sys::Reflect::set(&obj, &"statusText".into(), &status_text.into());
-                if let Some(body) = body {
-                    let _ = js_sys::Reflect::set(&obj, &"body".into(), &body.into());
-                }
-            }
-            Error::Timeout { duration_ms } => {
-                let _ =
-                    js_sys::Reflect::set(&obj, &"timeoutMs".into(), &(*duration_ms as f64).into());
-            }
-            Error::InvalidInput { parameter, .. } => {
-                let _ = js_sys::Reflect::set(&obj, &"parameter".into(), &parameter.into());
-            }
-            _ => {}
-        }
-
-        obj.into()
-    }
-}
-
 /// Convert from reqwest errors
 impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() {
-            Error::Timeout { duration_ms: 30000 } // Default timeout
+        if err.is_builder() {
+            Error::InvalidInput {
+                parameter: "request".to_string(),
+                reason: error_chain(&err),
+            }
+        } else if err.is_timeout() {
+            // Timeouts are enforced by the client itself, which reports the
+            // configured duration; this only covers reqwest-internal ones.
+            Error::Timeout { duration_ms: 0 }
         } else if err.is_decode() {
             Error::Parse {
                 message: "Failed to decode response".to_string(),
@@ -211,30 +186,26 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+/// An error's message followed by its causes, e.g. "builder error: invalid header name"
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_message = cause.to_string();
+        if !message.contains(&cause_message) {
+            message = format!("{message}: {cause_message}");
+        }
+        source = cause.source();
+    }
+    message
+}
+
 /// Convert from serde_json errors
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::Parse {
             message: "JSON parsing error".to_string(),
             source: Some(Box::new(err)),
-        }
-    }
-}
-
-/// Convert from serde_wasm_bindgen errors
-impl From<serde_wasm_bindgen::Error> for Error {
-    fn from(err: serde_wasm_bindgen::Error) -> Self {
-        Error::JsInterop {
-            message: format!("JavaScript serialization error: {}", err),
-        }
-    }
-}
-
-/// Convert from JsValue for error propagation
-impl From<JsValue> for Error {
-    fn from(value: JsValue) -> Self {
-        Error::JsInterop {
-            message: format!("JavaScript error: {:?}", value),
         }
     }
 }
@@ -250,6 +221,163 @@ mod tests {
             source: None,
         };
         assert_eq!(error.to_string(), "Network error: Connection refused");
+    }
+
+    fn io_error() -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused")
+    }
+
+    fn all_variants() -> Vec<Error> {
+        vec![
+            Error::network("connect failed", io_error()),
+            Error::Http {
+                status: 404,
+                status_text: "Not Found".into(),
+                body: None,
+            },
+            Error::parse("bad json", io_error()),
+            Error::Timeout { duration_ms: 1500 },
+            Error::InvalidInput {
+                parameter: "url".into(),
+                reason: "missing scheme".into(),
+            },
+            Error::JsInterop {
+                message: "boom".into(),
+            },
+            Error::Cancelled,
+        ]
+    }
+
+    #[test]
+    fn test_display_and_kind_for_every_variant() {
+        let expected = [
+            (
+                "NetworkError",
+                "Network error: connect failed (caused by: refused)",
+            ),
+            ("HttpError", "HTTP error 404: Not Found"),
+            ("ParseError", "Parse error: bad json (caused by: refused)"),
+            ("TimeoutError", "Request timeout after 1500ms"),
+            (
+                "InvalidInputError",
+                "Invalid input for 'url': missing scheme",
+            ),
+            ("JsInteropError", "JavaScript interop error: boom"),
+            ("CancelledError", "Request was cancelled"),
+        ];
+        for (error, (kind, message)) in all_variants().iter().zip(expected) {
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), message);
+        }
+
+        let parse = Error::Parse {
+            message: "no source".into(),
+            source: None,
+        };
+        assert_eq!(parse.to_string(), "Parse error: no source");
+    }
+
+    #[test]
+    fn test_http_error_display_body() {
+        let with_body = |body: Option<&str>| {
+            Error::Http {
+                status: 400,
+                status_text: "Bad Request".into(),
+                body: body.map(String::from),
+            }
+            .to_string()
+        };
+        assert_eq!(
+            with_body(Some("  missing field  ")),
+            "HTTP error 400: Bad Request - missing field"
+        );
+        assert_eq!(with_body(Some("   ")), "HTTP error 400: Bad Request");
+        assert_eq!(with_body(None), "HTTP error 400: Bad Request");
+    }
+
+    #[test]
+    fn test_error_source() {
+        use std::error::Error as _;
+        for error in all_variants() {
+            let has_source = matches!(error, Error::Network { .. } | Error::Parse { .. });
+            assert_eq!(error.source().is_some(), has_source, "{error}");
+        }
+        let no_source = Error::Network {
+            message: String::new(),
+            source: None,
+        };
+        assert!(no_source.source().is_none());
+    }
+
+    #[test]
+    fn test_retryable_kinds() {
+        let retryable: Vec<_> = all_variants().iter().map(Error::is_retryable).collect();
+        assert_eq!(
+            retryable,
+            vec![true, false, false, true, false, false, false]
+        );
+        for status in [408, 429, 500, 599] {
+            assert!(Error::Http {
+                status,
+                status_text: String::new(),
+                body: None
+            }
+            .is_retryable());
+        }
+    }
+
+    #[test]
+    fn test_error_chain() {
+        // reqwest's Display omits the cause; the chain appends it
+        let builder = reqwest::Client::new()
+            .get("http://exa mple.com")
+            .build()
+            .unwrap_err();
+        assert_eq!(builder.to_string(), "builder error");
+        assert_eq!(
+            error_chain(&builder),
+            "builder error: invalid international domain name"
+        );
+        let error = Error::from(builder);
+        let expected = "builder error: invalid international domain name";
+        assert!(matches!(&error, Error::InvalidInput { reason, .. } if reason == expected));
+
+        // Causes already included in the message aren't repeated
+        let network = Error::network("outer", io_error());
+        assert_eq!(
+            error_chain(&network),
+            "Network error: outer (caused by: refused)"
+        );
+    }
+
+    #[test]
+    fn test_from_serde_json() {
+        let error: Error = serde_json::from_str::<serde_json::Value>("{")
+            .unwrap_err()
+            .into();
+        assert!(matches!(
+            error,
+            Error::Parse {
+                source: Some(_),
+                ..
+            }
+        ));
+        assert!(error
+            .to_string()
+            .starts_with("Parse error: JSON parsing error"));
+    }
+
+    #[test]
+    fn test_http_error_display_truncates_body() {
+        let error = Error::Http {
+            status: 500,
+            status_text: "Internal Server Error".to_string(),
+            body: Some("é".repeat(500)),
+        };
+        let message = error.to_string();
+        assert!(message.starts_with("HTTP error 500: Internal Server Error - éé"));
+        assert!(message.ends_with('…'));
+        assert!(message.chars().count() < 260);
     }
 
     #[test]

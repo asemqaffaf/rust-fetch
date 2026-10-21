@@ -9,7 +9,7 @@
 //! - Comprehensive error handling
 //! - Automatic retries with exponential backoff
 //! - Support for JSON, text, and binary responses
-//! - Platform-specific optimizations for WASM and native
+//! - Per-attempt timeouts and cancellation that work in browsers, Web Workers and Node.js
 //! - Backward compatibility with deprecated APIs
 //!
 //! # Example
@@ -47,10 +47,15 @@ pub mod types;
 
 pub mod http;
 
+mod runtime;
+mod wasm;
+
+pub use wasm::WasmClient;
+
 // Re-export commonly used types
-pub use client::{Client, ClientBuilder};
+pub use client::{Client, ClientBuilder, ProgressCallback, RequestBuilder, StreamingResponse};
 pub use error::{Error, Result};
-pub use types::{Headers, Method, Response, ResponseBody};
+pub use types::{Headers, Method, Multipart, Progress, Response, ResponseBody};
 
 // Re-export all public items from feature modules for backward compatibility
 pub use http::*;
@@ -59,9 +64,9 @@ pub use http::*;
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::{
-        client::{Client, ClientBuilder},
+        client::{Client, ClientBuilder, StreamingResponse},
         error::{Error, Result},
         http::{fetch_json, fetch_text, fetch_with_options},
-        types::{Headers, Method, Response, ResponseBody},
+        types::{Headers, Method, Multipart, Progress, Response, ResponseBody},
     };
 }

@@ -1,806 +1,443 @@
 # rust-fetch
 
 [![npm version](https://img.shields.io/npm/v/rust-fetch.svg)](https://www.npmjs.com/package/rust-fetch)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
+[![CI](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml/badge.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
+[![Coverage: 100% (enforced)](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
+[![codecov](https://codecov.io/gh/asemqaffaf/rust-fetch/branch/main/graph/badge.svg)](https://codecov.io/gh/asemqaffaf/rust-fetch)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=flat&logo=WebAssembly&logoColor=white)](https://webassembly.org/)
-[![Current Version](https://img.shields.io/badge/version-1.1.0-green.svg)](https://github.com/asemqaffaf/rust-fetch/releases)
 
-### A high-performance, world-class HTTP Client Powered by WebAssembly
-A high-performance HTTP client for JavaScript/TypeScript powered by WebAssembly. Built with Rust for blazing-fast, memory-safe HTTP operations in both browser and Node.js environments.
+**A reliable HTTP client for JavaScript and TypeScript, written in Rust and compiled to WebAssembly.**
+It runs in browsers, Web Workers and Node.js, and adds what `fetch()` leaves to you: timeouts, retries with backoff, typed errors, interceptors, multipart uploads and download progress.
 
-## Table of Contents
-- [🎉 What's New](#-whats-new-in-v110)
-- [✨ Features](#-features)
-- [📦 Installation](#-installation)
-- [🚀 Quick Start](#-quick-start)
-- [📘 API Reference](#-api-reference)
-- [🔧 Advanced Usage](#-advanced-usage)
-- [⚡ Performance](#-performance)
-- [🔍 Troubleshooting](#-troubleshooting)
-- [🤝 Contributing](#-contributing)
-- [📝 License](#-license)
-
-## 🎉 What's New in v1.1.0
-
-- **Enhanced Error Context**: Improved error handling with detailed error types and proper error chaining
-- **Advanced Request Options**: New options for timeout configuration and automatic retries
-- **Comprehensive HTTP Methods**: Full support for all HTTP methods with a modern, unified API
-- **Type-Safe Headers**: Better type safety for header manipulation
-- **Performance Improvements**: Optimized WASM operations for faster HTTP requests
-- **Backward Compatibility**: Methods like `post_json` and `post_text` are maintained for compatibility with v0.7.x
-
-> **Note**: While legacy methods (`post_json`, `post_text`, etc.) are still supported, we recommend using the new unified API for new projects. The legacy methods will be maintained but won't receive new features.
-
-## ✨ Features
-
-### Core Features
-- 🔒 **Type-Safe**: Full TypeScript support with compile-time type checking
-- ⚡ **High Performance**: Rust-powered core with WebAssembly optimization
-- 🔄 **Automatic Retries**: Built-in retry logic with exponential backoff
-- 🛡️ **Robust Error Handling**: Detailed error types with proper context
-
-### Developer Experience
-- 🎯 **Simple API**: Intuitive interface for common use cases
-- 🔧 **Flexible Configuration**: Advanced options for power users
-- 📦 **Zero Dependencies**: Minimal footprint in your application
-- 🔌 **Platform Agnostic**: Works in both browser and Node.js
-
-### Technical Capabilities
-- 📄 **Multiple Formats**: Support for JSON, text, and binary responses
-- 🌐 **Full HTTP Support**: All standard HTTP methods (GET, POST, PUT, etc.)
-- 🔍 **Header Management**: Type-safe header manipulation
-- ⏱️ **Timeout Control**: Configurable request timeouts
-- 🔁 **Interceptors**: Request/response modification pipeline
-- 🔗 **URL Handling**: Smart base URL and path combining
-
-## 📦 Installation
-
-Choose your preferred package manager:
-
-```bash
-# Using npm
-npm install rust-fetch
-
-# Using yarn
-yarn add rust-fetch
-
-# Using pnpm
-pnpm add rust-fetch
-```
-
-### Requirements
-- Node.js 14+ or modern browsers
-- WebAssembly support
-
-## � Quick Start
-
-### Basic Usage
-
-```typescript
-import init, { WasmClient } from 'rust-fetch';
-
-// Initialize WASM module
-await init();
-
-// Create a client instance
-const client = new WasmClient();
-
-// Make requests
-const data = await client.get('https://api.example.com/users');
-console.log(data);
-```
-
-### Common Patterns
-
-#### Making GET Requests
-```typescript
-// Simple GET
-const users = await client.get('/users');
-
-// With query parameters
-const activeUsers = await client.get('/users', {
-  params: { status: 'active', page: 1 }
-});
-
-// With headers
-const user = await client.get('/users/1', {
-  headers: { 'Authorization': 'Bearer token' }
-});
-```
-
-#### Working with POST Requests
-```typescript
-// Modern way to POST JSON data
-const newUser = await client.post('/users', {
-  body: { name: 'John Doe', email: 'john@example.com' },
-  type: 'json'
-});
-
-// Modern way to POST form data
-const response = await client.post('/upload', {
-  body: formData,
-  type: 'form-data',
-  headers: { 'Content-Type': 'multipart/form-data' }
-});
-
-// Legacy way (still supported for backward compatibility)
-const legacyResponse = await client.post_json('/users', {
-  name: 'John Doe',
-  email: 'john@example.com'
-});
-```
-
-#### Error Handling
-```typescript
-try {
-  const data = await client.get('/users');
-  console.log('Success:', data);
-} catch (error) {
-  if (error.status === 404) {
-    console.log('Resource not found');
-  } else if (error.name === 'NetworkError') {
-    console.log('Network issue:', error.message);
-  }
-}
-```
-
-## � Migration Guide
-
-If you're upgrading from v1.0.x to v1.1.0, here's how to migrate from legacy APIs to the modern ones:
-
-### Legacy to Modern API Examples
-
-```typescript
-// Legacy API
-import { fetch_json, fetch_text, fetch_with_options } from 'rust-fetch';
-
-// Modern API
+```js
 import { WasmClient } from 'rust-fetch';
-const client = new WasmClient();
 
-// GET requests
-const data = await fetch_json('/api/data');                    // Legacy
-const data = await client.get('/api/data', { type: 'json' }); // Modern
-
-// POST requests
-const result = await fetch_with_options(                       // Legacy
-  '/api/users',
-  'POST',
-  { 'Content-Type': 'application/json' },
-  JSON.stringify({ name: 'John' })
-);
-
-const result = await client.post('/api/users', {              // Modern
-  body: { name: 'John' },
-  type: 'json'
-});
-
-// Error handling
-try {                                                         // Legacy
-  const data = await fetch_json('/api/data');
-} catch (error) {
-  console.error('Error:', error.message);
-}
-
-try {                                                         // Modern
-  const data = await client.get('/api/data');
-} catch (error) {
-  if (error instanceof NetworkError) {
-    console.error('Network issue:', error.message);
-  } else if (error instanceof HttpError) {
-    console.error('HTTP Error:', error.status);
-  }
-}
+const api = new WasmClient({ baseUrl: 'https://api.example.com/v1', timeoutMs: 10_000, retries: 3 });
+const { body: user } = await api.get('/users/42');
 ```
 
-### Why Migrate?
+## Contents
 
-1. **Better Type Safety**: The modern API provides full TypeScript support
-2. **Enhanced Error Handling**: Detailed error types with proper context
-3. **Advanced Features**: Access to interceptors, retry logic, and streaming
-4. **Consistent Interface**: Unified API for all HTTP operations
-5. **Future Updates**: New features will only be added to the modern API
+- [Features](#features)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Guide](#guide): [client options](#client-options) · [requests](#making-requests) · [bodies](#request-bodies) · [responses](#responses) · [errors](#errors) · [timeouts](#timeouts) · [retries](#retries) · [cancellation](#cancellation) · [streaming](#streaming) · [progress](#download-progress) · [uploads](#file-uploads) · [interceptors](#interceptors) · [TypeScript](#typescript)
+- [Legacy functions](#legacy-functions)
+- [Using it from Rust](#using-it-from-rust)
+- [Performance](#performance)
+- [Roadmap](#roadmap)
+- [Upgrading to 2.0](#upgrading-to-20)
+- [Development](#development)
+- [License](#license)
 
-## �🔧 Advanced Usage
+## Features
 
-```javascript
+- **Works everywhere**: browsers (directly or through bundlers like Vite and webpack), Web Workers and Node.js 20+. In Node.js there's no setup: `import` and go.
+- **Timeouts** per attempt, covering the response body, not just the headers. The default is 30 s.
+- **Retries** with exponential backoff and jitter. `Retry-After` is honoured, and POST/PATCH aren't retried unless you opt in.
+- **Typed errors**: every rejection is a real `Error` with a `kind` (`HttpError`, `TimeoutError`, …) and details like `status` and `body`.
+- **Cancellation** with `AbortSignal`, including during retry backoff and while streaming.
+- **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams`, or JSON.
+- **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`.
+- **Streaming** responses as a `ReadableStream`, and **download progress** callbacks.
+- **Interceptors** for requests and responses, e.g. auth headers and token refresh.
+- **TypeScript** definitions for the whole API.
+- **Tested**: 100% line coverage of the Rust core, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
+
+## Installation
+
+```bash
+npm install rust-fetch
+```
+
+## Quick start
+
+**Node.js** (20+): the WebAssembly module loads on import.
+
+```js
+import { WasmClient } from 'rust-fetch';
+
+const client = new WasmClient();
+const res = await client.get('https://jsonplaceholder.typicode.com/todos/1');
+console.log(res.status, res.body.title);
+```
+
+**Browsers and bundlers**: call `init()` once before the first request. It downloads and compiles the `.wasm` file.
+
+```js
 import init, { WasmClient } from 'rust-fetch';
 
 await init();
-
 const client = new WasmClient();
-
-const response = await client.get('https://jsonplaceholder.typicode.com/posts/1');
-console.log(response.status); // 200
-console.log(response.body);   // { userId: 1, id: 1, title: '...', body: '...' }
 ```
 
-#### POST Request with JSON
-Here's how to make a POST request with a JSON body:
+`init()` is safe to call more than once, and calling it in Node.js is harmless, so shared code can always call it.
 
-```javascript
-const data = { title: 'foo', body: 'bar', userId: 1 };
+## Guide
 
-const response = await client.post_json('https://jsonplaceholder.typicode.com/posts', data);
-console.log(response.status); // 201
-console.log(response.body);   // { id: 101, title: 'foo', body: 'bar', userId: 1 }
-```
+### Client options
 
-#### PUT Request
-Update a resource with PUT:
-
-```javascript
-const updateData = { id: 1, title: 'updated', body: 'updated content', userId: 1 };
-
-const response = await client.put_json('https://jsonplaceholder.typicode.com/posts/1', updateData);
-console.log(response.status); // 200
-```
-
-#### DELETE Request
-Delete a resource:
-
-```javascript
-const response = await client.delete('https://jsonplaceholder.typicode.com/posts/1');
-console.log(response.status); // 200
-```
-
-#### PATCH Request
-Partially update a resource:
-
-```javascript
-const patchData = { title: 'patched title' };
-
-const response = await client.patch_json('https://jsonplaceholder.typicode.com/posts/1', patchData);
-console.log(response.status); // 200
-```
-
-#### Custom Request with Headers
-Make a custom request with full control over method, headers, and body:
-
-```javascript
-const headers = {
-  'Authorization': 'Bearer your-token',
-  'X-Custom-Header': 'custom-value'
-};
-
-const body = { data: 'custom request body' };
-
-const response = await client.request('POST', 'https://api.example.com/data', headers, body);
-console.log(response.status);
-console.log(response.headers);
-console.log(response.body);
-```
-
-## 🔧 Advanced Usage
-
-### Client Configuration
-
-```typescript
+```ts
 const client = new WasmClient({
-  // Base URL for all requests
-  baseUrl: 'https://api.example.com',
-  
-  // Default headers
-  headers: {
-    'Authorization': 'Bearer token',
-    'X-Api-Version': '2.0'
-  },
-  
-  // Timeout settings
-  timeout: 5000, // 5 seconds
-  
-  // Retry configuration
-  retry: {
-    attempts: 3,
-    backoff: 'exponential',
-    conditions: ['network', '5xx']
-  },
-  
-  // Response type preferences
-  responseType: 'json',
-  
-  // Custom error handling
-  errorHandler: (error) => {
-    // Custom error logging or transformation
-    console.error(`[${error.code}]`, error.message);
-    throw error;
-  }
+  baseUrl: 'https://api.example.com/v1', // relative request URLs are appended to this
+  headers: { Authorization: 'Bearer …' }, // sent with every request
+  timeoutMs: 10_000,                      // per attempt; 0 disables. Default: 30000
+  retries: 3,                             // or a RetryOptions object, see Retries
 });
 ```
 
-### Request Interceptors
+Invalid options throw an `InvalidInputError` right away, from the constructor.
 
-```typescript
-// Add request interceptors
-client.addRequestInterceptor((config) => {
-  // Modify request config
-  config.headers['X-Timestamp'] = Date.now();
-  return config;
-});
+### Making requests
 
-// Add response interceptors
-client.addResponseInterceptor(
-  (response) => {
-    // Handle successful response
-    return response.data;
-  },
-  (error) => {
-    // Handle errors
-    if (error.status === 401) {
-      return refreshTokenAndRetry(error.config);
-    }
-    throw error;
-  }
-);
+| Method | Use |
+| --- | --- |
+| `get(url, options?)`, `head(url, options?)`, `delete(url, options?)` | Requests without a body |
+| `post(url, init?)`, `put(url, init?)`, `patch(url, init?)` | `init.body` is the body; any other [request option](#request-options) can go next to it |
+| `fetch(url, init?)` | `fetch`-style, with `init.method` (default `GET`) |
+| `post_json`, `put_json`, `patch_json(url, body, options?)` | Always send `body` as JSON |
+| `request(method, url, headers?, body?, options?)` | Fully positional |
+
+```js
+await client.post('/users', { body: { name: 'Zoë' } });
+await client.get('/search', { params: { q: 'rust wasm', page: 2, tag: ['a', 'b'] } }); // ?q=rust+wasm&page=2&tag=a&tag=b
+await client.fetch('/users/1', { method: 'DELETE', headers: { 'X-Reason': 'cleanup' } });
 ```
 
-### Advanced Request Patterns
+Relative URLs need a `baseUrl`. In a browser page without one, they resolve against the page URL. Absolute URLs always win over `baseUrl`. `TRACE` and `CONNECT` are rejected because `fetch()` forbids them.
 
-```typescript
-// Concurrent requests
-const [users, posts] = await Promise.all([
-  client.get('/users'),
-  client.get('/posts')
-]);
+#### Request options
 
-// Request cancellation
-const controller = new AbortController();
-const promise = client.get('/long-operation', {
-  signal: controller.signal
-});
+| Option | Type | Description |
+| --- | --- | --- |
+| `headers` | object, `Headers`, `Map` or `[name, value][]` | Override client headers with the same name. Numbers and booleans are converted to strings. |
+| `params` | object or `URLSearchParams` | Appended to the query string. Arrays repeat the key; `null`/`undefined` are skipped. |
+| `timeoutMs` | number | Overrides the client timeout; `0` disables it |
+| `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` | See [Responses](#responses) |
+| `signal` | `AbortSignal` | See [Cancellation](#cancellation) |
+| `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](#download-progress) |
 
-// Cancel after 5 seconds
-setTimeout(() => controller.abort(), 5000);
+### Request bodies
 
-// Request streaming
-const stream = await client.get('/large-file', {
-  responseType: 'stream'
-});
-for await (const chunk of stream) {
-  // Process chunks
+The body's type decides how it's sent. A `Content-Type` header you set yourself is always kept, except for `FormData`, which needs its own boundary.
+
+| Body | Sent as | Default `Content-Type` |
+| --- | --- | --- |
+| `string` | as-is | `text/plain` |
+| `Uint8Array`, `ArrayBuffer`, `DataView`, `Buffer` | bytes | `application/octet-stream` |
+| `Blob` / `File` | bytes | the blob's `type` |
+| `FormData` | `multipart/form-data`, including files | `multipart/form-data; boundary=…` |
+| `URLSearchParams` | form-encoded | `application/x-www-form-urlencoded;charset=UTF-8` |
+| anything else (objects, arrays, numbers, booleans) | `JSON.stringify` | `application/json` |
+
+`null` and `undefined` mean no body. The `*_json` methods are the exception: they always send JSON, so `post_json(url, null)` sends `null`. `ReadableStream` request bodies aren't supported; send a `Blob` or bytes instead.
+
+### Responses
+
+Successful (2xx) requests resolve to:
+
+```ts
+interface HttpResponse<T = any> {
+  status: number;          // 200
+  statusText: string;      // "OK"
+  ok: boolean;             // always true: non-2xx responses reject with an HttpError
+  url: string;             // final URL after redirects
+  headers: Record<string, string>; // lower-cased names; repeated headers joined with ", "
+  body: T;
 }
-
-// File upload with progress
-const response = await client.post('/upload', formData, {
-  onUploadProgress: (progress) => {
-    console.log(`${progress.loaded} / ${progress.total}`);
-  }
-});
 ```
 
-### Advanced Request Configuration
+With the default `responseType: 'auto'`, `body` is:
+- **parsed JSON** for `application/json` and `application/*+json` (e.g. `problem+json`), falling back to text if it isn't valid JSON
+- **a string** for `text/*`, XML, JavaScript and form-encoded responses
+- **a `Uint8Array`** for anything else
+- **`null`** when the body is empty (e.g. `204` or `HEAD`)
 
-```javascript
-import { fetch_with_options } from 'rust-fetch';
+Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'` or `'stream'`. JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
 
-const url = 'https://jsonplaceholder.typicode.com/posts';
-const method = 'POST';
-const headers = { 'Content-Type': 'application/json' };
-const body = JSON.stringify({ userId: 1, title: 'foo', body: 'bar' });
+### Errors
 
-fetch_with_options(url, method, headers, body)
-    .then(response => console.log(response))
-    .catch(error => console.error('Error:', error));
+Every rejection is an `Error` whose `name` and `kind` are one of:
 
-// Modern equivalent using WasmClient
-const client = new WasmClient();
-const response = await client.request({
-    method: 'POST',
-    url: '/posts',
-    headers: { 'Content-Type': 'application/json' },
-    body: { userId: 1, title: 'foo', body: 'bar' }
-});
-```
+| `kind` | When | Extra fields |
+| --- | --- | --- |
+| `HttpError` | Non-2xx response | `status`, `statusText`, `body` (full response body as text) |
+| `TimeoutError` | An attempt exceeded `timeoutMs` | `timeoutMs` |
+| `NetworkError` | DNS, connection, TLS or CORS failure, or a body cut off mid-transfer | |
+| `CancelledError` | The `signal` was aborted | |
+| `InvalidInputError` | Bad URL, method, header, option or body. Rejected before anything is sent. | `parameter` |
+| `ParseError` | `responseType: 'json'` and the body isn't JSON | |
+| `JsInteropError` | Unexpected JS ↔ Wasm conversion failure | |
 
-## 🏗️ Architecture
-
-The library is organized into several modules:
-
-- **`error`**: Comprehensive error types with detailed context
-- **`types`**: Core types like `Method`, `Headers`, `Response`, etc.
-- **`client`**: The main HTTP client with builder pattern
-- **`http`**: High-level convenience functions for common use cases
-
-### Error Handling
-
-The library provides rich error types that preserve context and detailed error information:
-
-```typescript
+```js
 try {
-  const data = await client.get('https://api.example.com/users');
-  console.log('Success:', data);
+  await client.get('/users/9');
 } catch (error) {
-  if (error instanceof NetworkError) {
-    console.error('Network issue:', error.message);
-    // Access additional context
-    console.log('Attempted URL:', error.url);
-    console.log('Duration:', error.duration);
-  } else if (error instanceof HttpError) {
-    console.error('HTTP Error:', error.status, error.statusText);
-    console.log('Response body:', error.body);
-  } else if (error instanceof TimeoutError) {
-    console.error('Request timed out after:', error.durationMs, 'ms');
+  if (error.kind === 'HttpError' && error.status === 404) {
+    // not found
+  } else if (error.kind === 'TimeoutError') {
+    console.warn(`gave up after ${error.timeoutMs} ms`);
+  } else {
+    throw error;
   }
 }
 ```
 
-### TypeScript Support
+Long error bodies (such as an HTML error page) are truncated to 200 characters in `message`. `error.body` always has the full text.
 
-The library includes comprehensive TypeScript definitions for type-safe API usage:
+### Timeouts
 
-```typescript
-import { WasmClient, RequestConfig, Response } from 'rust-fetch';
+`timeoutMs` limits each attempt, from sending the request to receiving the last byte of the body. When retries are on, each attempt gets the full timeout. For `responseType: 'stream'`, the timeout covers only the wait for the headers; after that, reading the stream is up to you.
 
-interface User {
-  id: number;
-  name: string;
-  email: string;
+### Retries
+
+Retries are off by default. `retries: 3` enables them with these defaults; pass an object to change them:
+
+```ts
+new WasmClient({
+  retries: {
+    maxRetries: 3,          // retries after the first attempt
+    initialDelayMs: 100,    // first backoff
+    maxDelayMs: 10_000,     // cap for any delay, including Retry-After
+    multiplier: 2,          // exponential backoff: 100, 200, 400 … ms, each randomized to 50–100%
+    retryOn: [408, 429, 500, 502, 503, 504],
+    retryOnNetworkError: true,
+    retryOnTimeout: true,
+    retryNonIdempotent: false, // set to true to also retry POST and PATCH
+  },
+});
+```
+
+- A `Retry-After` header in seconds is honoured, capped at `maxDelayMs`.
+- POST and PATCH aren't retried by default. The server may already have acted on a failed attempt, so retrying can duplicate work.
+- `InvalidInputError`, `ParseError` and unlisted statuses are never retried.
+
+### Cancellation
+
+```js
+const controller = new AbortController();
+const promise = client.get('/report', { signal: controller.signal });
+controller.abort(); // rejects with a CancelledError
+
+await client.get('/report', { signal: AbortSignal.timeout(5_000) }); // total deadline, including retries
+```
+
+Aborting cancels the underlying `fetch`, any pending retry delay, and a body being streamed.
+
+### Streaming
+
+`responseType: 'stream'` resolves as soon as the headers arrive. `body` is then a `ReadableStream<Uint8Array>`:
+
+```js
+const res = await client.get('/export.csv', { responseType: 'stream' });
+for await (const chunk of res.body) {
+  process(chunk); // Uint8Array
 }
-
-const client = new WasmClient();
-
-// Type-safe request and response
-const user: Response<User> = await client.get<User>('/users/1');
-
-// Type-safe request body
-const newUser: User = await client.post_json<User>('/users', {
-  name: 'John Doe',
-  email: 'john@example.com'
-});
-
-// Custom request with type safety
-const config: RequestConfig<User> = {
-  method: 'POST',
-  headers: { 'X-Custom-Header': 'value' },
-  body: { name: 'John', email: 'john@example.com' }
-};
-
-const response = await client.request<User>('/users', config);
 ```
 
-## API Reference
+`for await` over a stream works in Node.js, Chrome and Firefox. Safari doesn't support it yet, so use `res.body.getReader()` there. Retries apply until the headers arrive, and error statuses still reject with an `HttpError`.
 
-### WasmClient Class
+### Download progress
 
-The `WasmClient` class provides a rich, fluent interface for making HTTP requests with full type safety and advanced configuration options.
-
-#### Creating a Client
-
-```javascript
-import init, { WasmClient } from 'rust-fetch';
-
-await init(); // Initialize WASM module
-const client = new WasmClient();
-
-// With custom configuration
-const client = new WasmClient({
-    timeout: 5000,           // 5 seconds timeout
-    retryAttempts: 3,       // Retry failed requests 3 times
-    baseUrl: 'https://api.example.com'
+```js
+await client.get('/video.mp4', {
+  responseType: 'binary',
+  onDownloadProgress: ({ loaded, total }) => {
+    console.log(total ? `${Math.round((loaded / total) * 100)}%` : `${loaded} bytes`);
+  },
 });
 ```
 
-#### HTTP Methods
+The callback runs after each chunk of a successful response, including streamed ones. `total` comes from `Content-Length` and is `null` when the server doesn't send it. Exceptions thrown by the callback are ignored.
 
-All HTTP methods support type-safe request and response handling:
+Upload progress isn't available, because `fetch()` doesn't report it.
 
-##### GET Request
-```javascript
-const response = await client.get('https://api.example.com/users');
-// With query parameters
-const response = await client.get('https://api.example.com/users', {
-    params: { page: 1, limit: 10 }
+### File uploads
+
+Pass a `FormData` and it's sent as `multipart/form-data`, files included:
+
+```js
+const form = new FormData();
+form.append('title', 'Quarterly report');
+form.append('file', fileInput.files[0]); // or new File([bytes], 'report.pdf', { type: 'application/pdf' })
+await client.post('/upload', { body: form });
+```
+
+A single `Blob` or `File` body is sent as raw bytes with the blob's type.
+
+### Interceptors
+
+```js
+// Add a header to every request (may be async)
+client.addRequestInterceptor((request) => {
+  request.headers.authorization = `Bearer ${getToken()}`;
+  // mutate in place, or return a new { method, url, headers, body }
+});
+
+// Resolve to the body instead of the whole response
+client.addResponseInterceptor((response) => response.body);
+
+// Report failures, then keep rejecting
+client.addResponseInterceptor(undefined, (error) => {
+  reportError(error);
+  throw error;
 });
 ```
 
-##### POST Request with JSON
-```javascript
-const response = await client.post_json('/users', {
-    name: 'John Doe',
-    email: 'john@example.com'
-});
+An `onRejected` handler can also recover by returning a value, for example the result of retrying the request after refreshing a token.
+
+- Request interceptors run in order before each request. They see `{ method, url, headers, body }`, where `headers` holds the per-request headers. Client default headers are added afterwards, and a request header with the same name wins.
+- Response interceptors chain like `promise.then(onFulfilled, onRejected)`. Their return values are what the call resolves to. Throw to reject.
+- `addRequestInterceptor` and `addResponseInterceptor` return an id for `ejectInterceptor(id)`. `clearInterceptors()` removes all of them.
+- A request uses the interceptors registered when it started.
+
+### TypeScript
+
+Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `FetchInit`, `RetryOptions`, `HttpResponse`, `RustFetchError`, `DownloadProgress` and `InterceptedRequest`.
+
+```ts
+import { WasmClient, type HttpResponse, type RustFetchError } from 'rust-fetch';
+
+interface User { id: number; name: string }
+
+const res: HttpResponse<User> = await client.get('/users/42');
+res.body.name; // string
+
+try {
+  await client.get('/users/9');
+} catch (e) {
+  const error = e as RustFetchError;
+  if (error.kind === 'HttpError') console.log(error.status);
+}
 ```
 
-##### PUT Request
-```javascript
-const response = await client.put_json('/users/1', {
-    name: 'John Updated',
-    email: 'john.updated@example.com'
-});
+## Legacy functions
+
+These standalone functions still work. Each call uses a default client: 30 s timeout, no retries.
+
+| Function | Resolves to |
+| --- | --- |
+| `fetch_json(url)` / `fetch_json_promise(url)` | Parsed JSON, whatever the `Content-Type`; `null` for an empty body |
+| `fetch_text(url)` | The body as a string |
+| `fetch_with_options(url, method, headers, body?)` | The full `HttpResponse` |
+| `create_client()` | `new WasmClient()` |
+| `fetch_wasm_json`, `fetch_wasm_map`, `fetch_wasm_api`, `fetch_wasm_html` | Deprecated aliases of `fetch_json` / `fetch_text` |
+
+## Using it from Rust
+
+The same client is a Rust library, for native code (on tokio) and for your own wasm crates:
+
+```rust
+use rust_fetch::{Client, Multipart, types::RetryConfig};
+use std::time::Duration;
+
+let client = Client::builder()
+    .base_url("https://api.example.com/v1")
+    .timeout(Duration::from_secs(10))
+    .retry_config(RetryConfig { max_retries: 3, ..Default::default() })
+    .build()?;
+
+let user = client.get("users/42").await?;
+println!("{}", user.json().unwrap()["name"]);
+
+let pdf: Vec<u8> = std::fs::read("report.pdf")?;
+let form = Multipart::new().text("title", "Report").file("file", "report.pdf", Some("application/pdf".into()), pdf);
+client.post("upload").multipart(&form).send().await?;
+
+let mut chunks = client.get_streaming("export.csv").await?.into_stream(); // a futures::Stream of Vec<u8>
 ```
 
-##### DELETE Request
-```javascript
-const response = await client.delete('/users/1');
-// With body
-const response = await client.delete('/users/1', {
-    body: { reason: 'Account closed' }
-});
-```
+Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (`on_download_progress`) must be `Send + Sync` on native targets.
 
-##### PATCH Request
-```javascript
-const response = await client.patch_json('/users/1', {
-    email: 'new.email@example.com'
-});
-```
+## Performance
 
-##### HEAD Request
-```javascript
-const response = await client.head('/users/1');
-console.log(response.headers);
-```
+rust-fetch makes its requests through the runtime's own `fetch()`, so the network work is the same as plain `fetch`. The extra cost comes from crossing the JS ↔ Wasm boundary and copying bodies. It is **not faster than native `fetch`**. Use it for the reliability features, not for speed.
 
-#### Advanced Usage
+`npm run bench` (Node 22.13, Apple M1 Pro, local server):
 
-##### Custom Request
-```javascript
-const response = await client.request({
-    method: 'POST',
-    url: '/data',
-    headers: {
-        'Authorization': 'Bearer token',
-        'X-Custom-Header': 'value'
-    },
-    body: { data: 'example' },
-    timeout: 10000,
-    retry: {
-        attempts: 3,
-        backoff: 'exponential'
-    }
-});
-```
+| Scenario | native `fetch` | rust-fetch | rust-fetch / native |
+| --- | ---: | ---: | ---: |
+| Small JSON, sequential | 5,465 req/s | 4,015 req/s | 73% |
+| Small JSON, 50 concurrent | 12,155 req/s | 6,035 req/s | 50% |
+| JSON 0.6 MB | 219 req/s | 212 req/s | 97% |
+| Binary 8 MB | 189 req/s | 147 req/s | 77% |
 
-### Legacy Utility Functions
-
-> **Deprecation Notice**: These standalone functions are maintained for backward compatibility with v1.0.x. For new projects, we recommend using the `WasmClient` class which provides a more robust and type-safe API.
-
-#### `fetch_json(url: string): Promise<any>` (Legacy)
-```javascript
-// Legacy way
-import { fetch_json } from 'rust-fetch';
-const data = await fetch_json('https://api.example.com/data');
-
-// Modern equivalent
-const client = new WasmClient();
-const data = await client.get('https://api.example.com/data', { type: 'json' });
-```
-
-#### `fetch_text(url: string): Promise<string>` (Legacy)
-```javascript
-// Legacy way
-import { fetch_text } from 'rust-fetch';
-const html = await fetch_text('https://example.com');
-
-// Modern equivalent
-const client = new WasmClient();
-const html = await client.get('https://example.com', { type: 'text' });
-```
-
-#### `fetch_with_options(url: string, method: string, headers: object, body?: string): Promise<object>` (Legacy)
-```javascript
-import { fetch_with_options } from 'rust-fetch';
-
-const response = await fetch_with_options(
-    'https://api.example.com/users',
-    'POST',
-    { 'Content-Type': 'application/json' },
-    JSON.stringify({ name: 'John Doe' })
-);
-```
-
-#### `client.get(url: string): Promise<object>`
-Performs a GET request.
-
-```javascript
-const response = await client.get('https://api.example.com/data');
-```
-
-#### `client.post_json(url: string, body: object): Promise<object>`
-> **Note**: This method is maintained for backward compatibility with v0.7.x. For new code, prefer using `client.post(url, { body, type: 'json' })`.
-
-Performs a POST request with JSON body.
-
-```javascript
-// Legacy way (backward compatible)
-const response = await client.post_json('https://api.example.com/users', {
-    name: 'Jane Doe',
-    email: 'jane@example.com'
-});
-
-// Recommended modern way
-const response = await client.post('https://api.example.com/users', {
-    body: { name: 'Jane Doe', email: 'jane@example.com' },
-    type: 'json'
-});
-```
-
-#### `client.put_json(url: string, body: object): Promise<object>`
-Performs a PUT request with JSON body.
-
-```javascript
-const response = await client.put_json('https://api.example.com/users/1', {
-    name: 'Jane Doe Updated',
-    email: 'jane.updated@example.com'
-});
-```
-
-#### `client.delete(url: string): Promise<object>`
-Performs a DELETE request.
-
-```javascript
-const response = await client.delete('https://api.example.com/users/1');
-```
-
-#### `client.patch_json(url: string, body: object): Promise<object>`
-Performs a PATCH request with JSON body.
-
-```javascript
-const response = await client.patch_json('https://api.example.com/users/1', {
-    email: 'newemail@example.com'
-});
-```
-
-#### `client.head(url: string): Promise<object>`
-Performs a HEAD request to check resource metadata.
-
-```javascript
-const response = await client.head('https://api.example.com/users/1');
-console.log('Headers:', response.headers);
-```
-
-#### `client.request(method: string, url: string, headers?: object, body?: string | object): Promise<object>`
-Performs a custom HTTP request with full control.
-
-```javascript
-const response = await client.request(
-    'POST',
-    'https://api.example.com/data',
-    { 'Authorization': 'Bearer token', 'X-Custom-Header': 'value' },
-    { data: 'example' }
-);
-```
-
-
-## ⚡ Performance
-
-### Benchmarks
-
-```plaintext
-Operation          Native Fetch    rust-fetch
-─────────────────────────────────────────────
-Initial Load         0ms           ~150ms
-Simple GET          324ms         298ms
-Large POST          567ms         489ms
-Concurrent (10)     890ms         612ms
-Memory Usage        ~8MB          ~4.2MB
-```
-
-### Optimization Tips
-
-- **Initial Load**: Cache the WASM module for faster subsequent loads
-- **Concurrent Requests**: Use `Promise.all` for parallel requests
-- **Memory Usage**: Enable streaming for large responses
-- **Cold Starts**: Preload the WASM module during app initialization
-
-### Browser Support
-
-| Browser | Minimum Version |
-|---------|----------------|
-| Chrome  | 57+            |
-| Firefox | 52+            |
-| Safari  | 11+           |
-| Edge    | 16+           |
-| Node.js | 14+           |
-
-## 🔍 Troubleshooting
-
-### Common Issues
-
-#### WASM Module Not Loading
-- ✅ Ensure `application/wasm` MIME type is supported
-- ✅ Verify WASM file is being served correctly
-- ✅ Check `await init()` is called before making requests
-
-```typescript
-// Correct initialization
-await init();
-const client = new WasmClient();
-
-// Incorrect - will fail
-const client = new WasmClient();
-await init();
-```
-
-#### CORS Issues
-- ✅ Verify target server allows CORS
-- ✅ Use HTTPS URLs in production
-- ✅ Consider using a proxy for non-CORS APIs
-
-```typescript
-// Using a proxy
-const client = new WasmClient({
-  baseUrl: '/api', // Local proxy endpoint
-  proxy: {
-    target: 'https://api.example.com',
-    changeOrigin: true
-  }
-});
-```
-
-#### Node.js Integration
-- ✅ Check package installation
-- ✅ Verify WASM file location
-- ✅ Set proper Node.js flags if needed
-
-```bash
-# Correct Node.js flags
-node --experimental-wasm-modules your-app.js
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how you can help:
-
-1. Fork the repository
-2. Create your feature branch
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-3. Commit your changes
-   ```bash
-   git commit -m 'Add some amazing feature'
-   ```
-4. Push to the branch
-   ```bash
-   git push origin feature/amazing-feature
-   ```
-5. Open a Pull Request
-
-### Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/asemqaffaf/rust-fetch.git
-
-# Install dependencies
-npm install
-
-# Build WASM module
-npm run build:wasm
-
-# Run tests
-npm test
-```
-
-## 📝 License
-
-This project is licensed under the ISC License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen)
-- Uses [reqwest](https://github.com/seanmonstar/reqwest)
-- Inspired by the Rust and WebAssembly community
-
-## Acknowledgments
-
-- Built with [wasm-bindgen](https://github.com/rustwasm/wasm-bindgen)
-- Uses [reqwest](https://github.com/seanmonstar/reqwest) for HTTP operations
-- Inspired by the Rust and WebAssembly community
+The overhead per request is a fraction of a millisecond, which matters little once a request crosses a real network.
 
 ## Roadmap
 
-- [x] Add support for POST, PUT, DELETE methods ✅
-- [x] Implement request headers customization ✅
-- [x] Add comprehensive test suite ✅
-- [ ] Add streaming support for large responses
-- [ ] Implement request cancellation (AbortController support)
-- [ ] Performance benchmarks against native fetch
-- [ ] Support for multipart form data and file uploads
+- [x] POST, PUT, PATCH, DELETE, HEAD, OPTIONS
+- [x] Request header customization
+- [x] Comprehensive test suite: Rust unit and integration tests (100% line coverage, enforced in CI), wasm tests, and JS end-to-end tests
+- [x] Streaming responses (`responseType: 'stream'`; `send_streaming()` in Rust)
+- [x] Request cancellation (`AbortSignal`)
+- [x] Performance benchmarks against native fetch (`npm run bench`)
+- [x] Multipart form data and file uploads
+- [x] Request/response interceptors
+- [x] Download progress tracking
+- [ ] Upload progress tracking: not possible on top of `fetch()`, which has no upload progress events
 - [ ] WebSocket support
-- [ ] Request/response interceptors
-- [ ] Connection pooling configuration
-- [ ] Proxy support
-- [ ] Progress tracking for uploads/downloads
-- [ ] HTTP/2 support
+- Handled by the runtime, not by rust-fetch:
+  - **Connection pooling:** browsers and Node.js pool connections for `fetch()` themselves.
+  - **Proxies:** set them up in the runtime, e.g. with undici's `setGlobalDispatcher(new ProxyAgent(url))` in Node.js, or with system settings in browsers.
+  - **HTTP/2:** browsers negotiate it automatically; in Node.js it depends on undici's dispatcher (`allowH2`).
+
+## Upgrading to 2.0
+
+2.0 fixes long-standing bugs, and some code may have depended on the old behaviour. Check these points:
+
+- **Timeouts are enforced** in browsers and Node.js. In 1.x the 30 s default was silently ignored, so slow requests never failed. For long downloads, set `timeoutMs` higher, or to `0` to disable it.
+- **`WasmClient` JSON bodies are plain objects**, not `Map`s: use `body.title`, not `body.get('title')`. JSON with integers above 2^53 no longer fails the request.
+- **More responses are decoded:** `application/*+json` (e.g. `problem+json`) is parsed as JSON instead of returned as bytes, and empty bodies are `null`.
+- **Errors are real `Error` objects.** `kind`, `message`, `status` and the other fields are unchanged, and `name` equals `kind`. Like any `Error`, `message` isn't enumerable, so `JSON.stringify(error)` leaves it out.
+- **Invalid `headers` values reject** with an `InvalidInputError`; they used to be dropped silently. Numbers and booleans are converted to strings.
+- **Text is decoded as UTF-8**, whatever the `charset` in `Content-Type`. Invalid bytes become `�`.
+- **The package uses an `exports` map.** Import `rust-fetch`, `rust-fetch/rust_fetch.js` or `rust-fetch/rust_fetch_bg.wasm`.
+- **Node.js 20+ is required.** In Node.js you no longer need to load the `.wasm` file yourself; `init()` is optional there.
+
+These changed too, but are unlikely to break anything:
+- POST and PATCH aren't retried by default (`retryNonIdempotent: true` re-enables it).
+- Your `Content-Type` is no longer duplicated.
+- `fetch_json` parses JSON whatever the `Content-Type`.
+- Invalid URLs, and `TRACE`/`CONNECT`, fail fast with an `InvalidInputError`.
+
+Rust crate users:
+- `RetryConfig` has a new field, so add `..Default::default()` to struct literals.
+- `Method::to_reqwest()` returns reqwest 0.12's `Method`.
+- `RequestBuilder::header()` replaces a default header with the same name instead of adding a second value.
+
+1.x keeps receiving critical fixes on the [`v1.x`](https://github.com/asemqaffaf/rust-fetch/tree/v1.x) branch (`npm install rust-fetch@1`).
+
+## Development
+
+The npm package is built from `wasm-module/` with [wasm-pack](https://rustwasm.github.io/wasm-pack/). The repository root is a private workspace.
+
+```bash
+npm run build      # wasm-pack build + package metadata (wasm-module/pkg)
+npm test           # Rust unit + integration tests, then the JS tests
+npm run test:js    # JS end-to-end tests against the built package (requires a build)
+npm run bench      # rust-fetch vs native fetch (requires a build)
+
+cd wasm-module
+wasm-pack test --node    # wasm unit tests for the JS bindings
+cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverage
+```
+
+| Suite | Where | What |
+| --- | --- | --- |
+| Rust unit tests | `wasm-module/src/**` | URL handling, retry policy, decoding, errors, multipart |
+| Rust integration tests | `wasm-module/tests/integration_tests.rs` | Real HTTP against a local server: retries, timeouts, redirects, chunked/truncated/large bodies, streaming, progress, concurrency |
+| Wasm unit tests | `wasm-module/src/wasm/tests.rs` | JS conversions, bodies, options, interceptors, timers and abort signals in Node.js |
+| JS end-to-end tests | `wasm-module/js/test/client.test.mjs` | The built package against a local server |
+| Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
+
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core drops below 100%. It also checks formatting, and runs the wasm and JS suites on Node 20, 22 and 24. The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+
+Releases are published by CI when a version tag is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
+
+## License
+
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and release process, and [SECURITY.md](SECURITY.md) to report a vulnerability.

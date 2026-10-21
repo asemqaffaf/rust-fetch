@@ -1,16 +1,21 @@
 //! HTTP client implementation with builder pattern
 //!
 //! This module provides a flexible HTTP client with support for
-//! retries, interceptors, and various configuration options.
+//! retries, timeouts, and various configuration options.
 
 use crate::{
     error::{Error, Result},
-    types::{Body, Headers, Method, RequestConfig, Response, ResponseBody, ResponseFormat, RetryConfig},
+    runtime,
+    types::{
+        is_json_content_type, is_text_content_type, Body, Headers, Method, Multipart, Progress,
+        RequestConfig, Response, ResponseBody, ResponseFormat, RetryConfig,
+    },
 };
+use futures_util::{Stream, StreamExt};
 use std::sync::Arc;
 use std::time::Duration;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::future_to_promise;
+
+pub use crate::wasm::WasmClient;
 
 /// HTTP client for making requests
 #[derive(Clone)]
@@ -23,9 +28,91 @@ pub struct Client {
 #[derive(Clone)]
 struct ClientConfig {
     default_headers: Headers,
-    timeout: Duration,
+    timeout: Option<Duration>,
     retry_config: Option<RetryConfig>,
     base_url: Option<String>,
+}
+
+/// A download progress callback. Must be `Send + Sync` on native targets so
+/// request futures stay `Send`; on WebAssembly any closure works.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait ProgressCallback: Fn(Progress) + Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Fn(Progress) + Send + Sync> ProgressCallback for T {}
+
+/// A download progress callback. Must be `Send + Sync` on native targets so
+/// request futures stay `Send`; on WebAssembly any closure works.
+#[cfg(target_arch = "wasm32")]
+pub trait ProgressCallback: Fn(Progress) {}
+#[cfg(target_arch = "wasm32")]
+impl<T: Fn(Progress)> ProgressCallback for T {}
+
+type ProgressFn = Arc<dyn ProgressCallback>;
+
+/// A response from one attempt: either fully read, or (for successful
+/// streaming requests) with the body left unread in `stream`
+struct RawResponse {
+    status: u16,
+    status_text: String,
+    url: String,
+    headers: Headers,
+    body: Vec<u8>,
+    stream: Option<reqwest::Response>,
+}
+
+/// A successful response whose body is read incrementally
+pub struct StreamingResponse {
+    /// HTTP status code
+    pub status: u16,
+    /// Status text
+    pub status_text: String,
+    /// Response headers
+    pub headers: Headers,
+    /// Request URL (after redirects)
+    pub url: String,
+    inner: reqwest::Response,
+    progress: Option<ProgressFn>,
+}
+
+impl StreamingResponse {
+    /// The expected body size from `Content-Length`, if known
+    pub fn content_length(&self) -> Option<u64> {
+        self.inner.content_length()
+    }
+
+    /// Stream the body chunk by chunk, reporting progress if a callback was set
+    pub fn into_stream(self) -> impl Stream<Item = Result<Vec<u8>>> {
+        let total = self.inner.content_length();
+        let progress = self.progress;
+        let mut loaded = 0u64;
+        self.inner.bytes_stream().map(move |chunk| {
+            let chunk = chunk.map_err(|e| Error::network("Failed to read response body", e))?;
+            loaded += chunk.len() as u64;
+            if let Some(progress) = &progress {
+                progress(Progress { loaded, total });
+            }
+            Ok(chunk.to_vec())
+        })
+    }
+
+    /// Read the remaining body into memory
+    pub async fn bytes(self) -> Result<Vec<u8>> {
+        let mut body = Vec::new();
+        let mut stream = std::pin::pin!(self.into_stream());
+        while let Some(chunk) = stream.next().await {
+            body.extend_from_slice(&chunk?);
+        }
+        Ok(body)
+    }
+}
+
+impl std::fmt::Debug for StreamingResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingResponse")
+            .field("status", &self.status)
+            .field("url", &self.url)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {
@@ -33,226 +120,352 @@ impl Client {
     pub fn builder() -> ClientBuilder {
         ClientBuilder::new()
     }
-    
+
     /// Create a new client with default configuration
     pub fn new() -> Result<Self> {
         Self::builder().build()
     }
-    
+
     /// Make a GET request
     pub async fn get(&self, url: impl AsRef<str>) -> Result<Response> {
         self.request(Method::Get, url).send().await
     }
-    
+
+    /// Make a GET request and stream the response body
+    pub async fn get_streaming(&self, url: impl AsRef<str>) -> Result<StreamingResponse> {
+        self.request(Method::Get, url).send_streaming().await
+    }
+
     /// Make a POST request
     pub fn post(&self, url: impl AsRef<str>) -> RequestBuilder {
         self.request(Method::Post, url)
     }
-    
+
     /// Make a PUT request
     pub fn put(&self, url: impl AsRef<str>) -> RequestBuilder {
         self.request(Method::Put, url)
     }
-    
+
     /// Make a DELETE request
     pub fn delete(&self, url: impl AsRef<str>) -> RequestBuilder {
         self.request(Method::Delete, url)
     }
-    
+
     /// Make a PATCH request
     pub fn patch(&self, url: impl AsRef<str>) -> RequestBuilder {
         self.request(Method::Patch, url)
     }
-    
+
     /// Create a request builder
+    ///
+    /// Relative URLs are resolved against the client's base URL (or, in a
+    /// browser, against the page URL). Absolute URLs are used as-is.
     pub fn request(&self, method: Method, url: impl AsRef<str>) -> RequestBuilder {
-        let url = if let Some(base) = &self.config.base_url {
-            format!("{}{}", base.trim_end_matches('/'), url.as_ref())
-        } else {
-            url.as_ref().to_string()
-        };
-        
         RequestBuilder {
             client: self.clone(),
             config: RequestConfig {
                 method,
                 headers: self.config.default_headers.clone(),
                 body: None,
-                timeout: Some(self.config.timeout),
+                timeout: self.config.timeout,
                 follow_redirects: true,
                 max_redirects: 10,
                 response_format: ResponseFormat::Auto,
             },
-            url,
+            url: url.as_ref().to_string(),
+            query: Vec::new(),
+            progress: None,
         }
     }
-    
-    /// Execute a request with the given configuration
-    async fn execute(&self, url: String, config: RequestConfig) -> Result<Response> {
-        let retry_config = self.config.retry_config.clone();
-        
+
+    /// Execute a request, retrying according to the client's retry configuration.
+    ///
+    /// With `stream`, a successful response's body is left unread.
+    async fn execute(
+        &self,
+        url: &str,
+        query: &[(String, String)],
+        config: &RequestConfig,
+        stream: bool,
+        progress: Option<&ProgressFn>,
+    ) -> Result<RawResponse> {
+        let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         let mut attempt = 0;
-        let mut last_error;
-        
+
         loop {
-            match self.execute_once(url.clone(), config.clone()).await {
-                Ok(response) => return Ok(response),
-                Err(err) => {
-                    last_error = err;
-                    
-                    if let Some(retry) = &retry_config {
-                        if attempt >= retry.max_retries {
-                            break;
-                        }
-                        
-                        if !last_error.is_retryable() {
-                            break;
-                        }
-                        
-                        attempt += 1;
-                        let delay = calculate_retry_delay(attempt, retry);
-                        
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            tokio::time::sleep(delay).await;
-                        }
-                        
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            let delay_ms = delay.as_millis() as i32;
-                            wasm_bindgen_futures::JsFuture::from(
-                                js_sys::Promise::new(&mut |resolve, _| {
-                                    web_sys::window()
-                                        .unwrap()
-                                        .set_timeout_with_callback_and_timeout_and_arguments_0(
-                                            &resolve,
-                                            delay_ms,
-                                        )
-                                        .unwrap();
-                                }),
-                            )
-                            .await
-                            .unwrap();
-                        }
-                    } else {
-                        break;
-                    }
+            let once = self.execute_once(&url, config, stream, progress);
+            let outcome = match config.timeout {
+                Some(timeout) => runtime::timeout(timeout, once).await,
+                None => once.await,
+            };
+
+            let (error, retry_after) = match outcome {
+                Ok(raw) if (200..300).contains(&raw.status) => return Ok(raw),
+                Ok(raw) => {
+                    let retry_after = raw
+                        .headers
+                        .get_first("retry-after")
+                        .and_then(parse_retry_after);
+                    let error = Error::Http {
+                        status: raw.status,
+                        status_text: raw.status_text,
+                        body: Some(bytes_to_text(raw.body)),
+                    };
+                    (error, retry_after)
                 }
+                Err(error) => (error, None),
+            };
+
+            match self.retry_delay(attempt, config.method, &error, retry_after) {
+                Some(delay) => {
+                    attempt += 1;
+                    runtime::sleep(delay).await;
+                }
+                None => return Err(error),
             }
         }
-        
-        Err(last_error)
     }
-    
-    /// Execute a single request attempt
-    async fn execute_once(&self, url: String, config: RequestConfig) -> Result<Response> {
-        let mut request = self.inner.request(config.method.to_reqwest(), &url);
-        
+
+    /// Decide whether a failed attempt should be retried, and after how long
+    fn retry_delay(
+        &self,
+        attempt: u32,
+        method: Method,
+        error: &Error,
+        retry_after: Option<Duration>,
+    ) -> Option<Duration> {
+        let retry = self.config.retry_config.as_ref()?;
+        if attempt >= retry.max_retries {
+            return None;
+        }
+        // The server may have acted on a non-idempotent request before failing.
+        if !method.is_idempotent() && !retry.retry_non_idempotent {
+            return None;
+        }
+        let retryable = match error {
+            Error::Network { .. } => retry.retry_on_network_error,
+            Error::Timeout { .. } => retry.retry_on_timeout,
+            Error::Http { status, .. } => retry.retry_on_status.contains(status),
+            _ => false,
+        };
+        if !retryable {
+            return None;
+        }
+
+        Some(match retry_after {
+            Some(delay) => delay.min(retry.max_delay),
+            None => with_jitter(calculate_retry_delay(attempt + 1, retry)),
+        })
+    }
+
+    /// Send a single request attempt and read its body (unless streaming a success)
+    async fn execute_once(
+        &self,
+        url: &reqwest::Url,
+        config: &RequestConfig,
+        stream: bool,
+        progress: Option<&ProgressFn>,
+    ) -> Result<RawResponse> {
+        let mut request = self.inner.request(config.method.to_reqwest(), url.clone());
+
         // Set headers
         for (name, values) in config.headers.iter() {
             for value in values {
                 request = request.header(name.as_str(), value.as_str());
             }
         }
-        
-        // Set body
-        if let Some(body) = config.body {
-            let content_type = body.content_type();
-            request = request.header("content-type", content_type);
+
+        // Set body, keeping any Content-Type the caller chose
+        if let Some(body) = &config.body {
+            if !config.headers.contains("content-type") {
+                request = request.header("content-type", body.content_type());
+            }
             request = request.body(body.to_bytes()?);
         }
-        
-        // Set timeout
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(timeout) = config.timeout {
-            request = request.timeout(timeout);
-        }
-        
-        // Execute request
+
         let response = request.send().await?;
-        
-        // Parse response
-        let status = response.status().as_u16();
-        let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
+
+        let status = response.status();
         let url = response.url().to_string();
-        
-        // Parse headers
         let mut headers = Headers::new();
         for (name, value) in response.headers() {
-            if let Ok(value_str) = value.to_str() {
-                headers.insert(name.to_string(), value_str);
-            }
+            headers.insert(name.as_str(), String::from_utf8_lossy(value.as_bytes()));
         }
-        
-        // Parse body based on format preference and content type
-        let content_type = headers.get_first("content-type").unwrap_or("");
-        let body = match config.response_format {
-            ResponseFormat::Json => {
-                let json: serde_json::Value = response.json().await
-                    .map_err(|e| Error::parse("Failed to parse JSON response", e))?;
-                ResponseBody::Json(json)
-            }
-            ResponseFormat::Text => {
-                let text = response.text().await
-                    .map_err(|e| Error::parse("Failed to read text response", e))?;
-                ResponseBody::Text(text)
-            }
-            ResponseFormat::Binary => {
-                let bytes = response.bytes().await
-                    .map_err(|e| Error::parse("Failed to read binary response", e))?;
-                ResponseBody::Binary(bytes.to_vec())
-            }
-            ResponseFormat::Auto => {
-                if content_type.contains("application/json") {
-                    let bytes = response.bytes().await
-                        .map_err(|e| Error::parse("Failed to read response bytes", e))?;
-                    match serde_json::from_slice::<serde_json::Value>(&bytes) {
-                        Ok(json) => ResponseBody::Json(json),
-                        Err(_) => {
-                            // Fallback to text if JSON parsing fails
-                            match String::from_utf8(bytes.to_vec()) {
-                                Ok(text) => ResponseBody::Text(text),
-                                Err(_) => ResponseBody::Binary(bytes.to_vec()),
-                            }
-                        }
-                    }
-                } else if content_type.contains("text/") || content_type.contains("xml") {
-                    let text = response.text().await
-                        .map_err(|e| Error::parse("Failed to read text response", e))?;
-                    ResponseBody::Text(text)
-                } else {
-                    let bytes = response.bytes().await
-                        .map_err(|e| Error::parse("Failed to read binary response", e))?;
-                    ResponseBody::Binary(bytes.to_vec())
-                }
-            }
+
+        let (body, stream) = if stream && status.is_success() {
+            (Vec::new(), Some(response))
+        } else {
+            // Only report progress for the body the caller asked for
+            let progress = progress.filter(|_| status.is_success());
+            (read_body(response, progress).await?, None)
         };
-        
-        let response = Response {
-            status,
-            status_text,
+
+        Ok(RawResponse {
+            status: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or("").to_string(),
+            url,
             headers,
             body,
-            url,
-        };
-        
-        // Check for HTTP errors
-        if !response.is_success() {
-            return Err(Error::Http {
-                status: response.status,
-                status_text: response.status_text.clone(),
-                body: response.text().map(|s| s.to_string()),
+            stream,
+        })
+    }
+}
+
+/// Resolve a request URL and append query parameters.
+///
+/// Absolute URLs are used as-is; relative ones are appended to `base`, or
+/// else resolved against `page` (the browser page URL, when there is one).
+fn resolve_url(
+    base: Option<&str>,
+    page: Option<reqwest::Url>,
+    url: &str,
+    query: &[(String, String)],
+) -> Result<reqwest::Url> {
+    let invalid = |reason: String| Error::InvalidInput {
+        parameter: "url".to_string(),
+        reason,
+    };
+
+    let mut resolved = match (reqwest::Url::parse(url), base, page) {
+        (Ok(absolute), _, _) => absolute,
+        (Err(_), Some(base), _) => {
+            let joined = join_base_url(base, url);
+            reqwest::Url::parse(&joined).map_err(|e| invalid(format!("'{joined}': {e}")))?
+        }
+        (Err(_), None, Some(page)) => page
+            .join(url)
+            .map_err(|e| invalid(format!("'{url}': {e}")))?,
+        (Err(_), None, None) => {
+            return Err(invalid(format!(
+                "'{url}' is not an absolute URL; use an absolute URL or set a base URL"
+            )))
+        }
+    };
+
+    if !matches!(resolved.scheme(), "http" | "https") {
+        return Err(invalid(format!(
+            "unsupported scheme '{}' in '{resolved}'; only http and https are supported",
+            resolved.scheme()
+        )));
+    }
+
+    if !query.is_empty() {
+        resolved.query_pairs_mut().extend_pairs(query);
+    }
+    Ok(resolved)
+}
+
+/// Read a whole body chunk by chunk, reporting progress after each chunk
+async fn read_body(response: reqwest::Response, progress: Option<&ProgressFn>) -> Result<Vec<u8>> {
+    const MAX_PREALLOCATION: u64 = 64 * 1024 * 1024;
+    let total = response.content_length();
+    let capacity = usize::try_from(total.unwrap_or(0).min(MAX_PREALLOCATION)).unwrap_or(0);
+    let mut body = Vec::with_capacity(capacity);
+
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|e| Error::network("Failed to read response body", e))?;
+        body.extend_from_slice(&chunk);
+        if let Some(progress) = progress {
+            progress(Progress {
+                loaded: body.len() as u64,
+                total,
             });
         }
-        
-        Ok(response)
+    }
+    Ok(body)
+}
+
+/// Join a base URL and a relative path with exactly one slash between them
+fn join_base_url(base: &str, path: &str) -> String {
+    if path.is_empty() || path.starts_with('?') || path.starts_with('#') {
+        format!("{base}{path}")
+    } else {
+        format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        )
+    }
+}
+
+/// The current page URL, used to resolve relative URLs in browsers
+fn page_url() -> Option<reqwest::Url> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let location = js_sys::Reflect::get(&js_sys::global(), &"location".into()).ok()?;
+        if location.is_undefined() || location.is_null() {
+            return None;
+        }
+        let href = js_sys::Reflect::get(&location, &"href".into())
+            .ok()?
+            .as_string()?;
+        reqwest::Url::parse(&href).ok()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    None
+}
+
+/// Parse a `Retry-After` header given in seconds
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+}
+
+/// Decode a response body according to the requested format
+fn decode_body(bytes: Vec<u8>, content_type: &str, format: ResponseFormat) -> Result<ResponseBody> {
+    if bytes.is_empty() {
+        return Ok(match format {
+            ResponseFormat::Text => ResponseBody::Text(String::new()),
+            ResponseFormat::Binary => ResponseBody::Binary(Vec::new()),
+            ResponseFormat::Json | ResponseFormat::Auto => ResponseBody::Empty,
+        });
+    }
+
+    Ok(match format {
+        ResponseFormat::Json => ResponseBody::Json(
+            serde_json::from_slice(strip_bom(&bytes))
+                .map_err(|e| Error::parse("Failed to parse JSON response", e))?,
+        ),
+        ResponseFormat::Text => ResponseBody::Text(bytes_to_text(bytes)),
+        ResponseFormat::Binary => ResponseBody::Binary(bytes),
+        ResponseFormat::Auto if is_json_content_type(content_type) => {
+            match serde_json::from_slice(strip_bom(&bytes)) {
+                Ok(json) => ResponseBody::Json(json),
+                // Mislabelled responses fall back to text, or bytes if not UTF-8
+                Err(_) => match String::from_utf8(bytes) {
+                    Ok(text) => ResponseBody::Text(text),
+                    Err(e) => ResponseBody::Binary(e.into_bytes()),
+                },
+            }
+        }
+        ResponseFormat::Auto if is_text_content_type(content_type) => {
+            ResponseBody::Text(bytes_to_text(bytes))
+        }
+        ResponseFormat::Auto => ResponseBody::Binary(bytes),
+    })
+}
+
+fn strip_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
+}
+
+/// Decode UTF-8 text, replacing invalid sequences instead of failing
+pub(crate) fn bytes_to_text(bytes: Vec<u8>) -> String {
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    match text.strip_prefix('\u{FEFF}') {
+        Some(stripped) => stripped.to_string(),
+        None => text,
     }
 }
 
 /// Builder for creating HTTP clients
 pub struct ClientBuilder {
     headers: Headers,
-    timeout: Duration,
+    timeout: Option<Duration>,
     retry_config: Option<RetryConfig>,
     base_url: Option<String>,
 }
@@ -262,52 +475,78 @@ impl ClientBuilder {
     pub fn new() -> Self {
         Self {
             headers: Headers::new(),
-            timeout: Duration::from_secs(30),
+            timeout: Some(Duration::from_secs(30)),
             retry_config: None,
             base_url: None,
         }
     }
-    
+
     /// Set default header
     pub fn default_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(name, value);
         self
     }
-    
+
     /// Set default headers
     pub fn default_headers(mut self, headers: Headers) -> Self {
         self.headers = headers;
         self
     }
-    
-    /// Set request timeout
+
+    /// Set the timeout for each request attempt (default: 30 seconds).
+    ///
+    /// The timeout covers sending the request and reading the whole response body.
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
     }
-    
+
+    /// Disable the default request timeout
+    pub fn no_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
     /// Enable retries with default configuration
     pub fn with_retries(mut self) -> Self {
         self.retry_config = Some(RetryConfig::default());
         self
     }
-    
+
     /// Set retry configuration
     pub fn retry_config(mut self, config: RetryConfig) -> Self {
         self.retry_config = Some(config);
         self
     }
-    
+
     /// Set base URL for all requests
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
         self
     }
-    
+
     /// Build the client
     pub fn build(self) -> Result<Client> {
-        let inner = build_reqwest_client()?;
-        
+        if let Some(base) = &self.base_url {
+            let parsed = reqwest::Url::parse(base).map_err(|e| Error::InvalidInput {
+                parameter: "baseUrl".to_string(),
+                reason: format!("'{base}' is not a valid absolute URL: {e}"),
+            })?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(Error::InvalidInput {
+                    parameter: "baseUrl".to_string(),
+                    reason: format!(
+                        "unsupported scheme '{}'; only http and https are supported",
+                        parsed.scheme()
+                    ),
+                });
+            }
+        }
+
+        let inner = reqwest::Client::builder()
+            .build()
+            .map_err(client_init_error)?;
+
         Ok(Client {
             inner,
             config: Arc::new(ClientConfig {
@@ -329,283 +568,171 @@ impl Default for ClientBuilder {
 /// Request builder for configuring individual requests
 pub struct RequestBuilder {
     client: Client,
-    config: RequestConfig,
+    pub(crate) config: RequestConfig,
     url: String,
+    query: Vec<(String, String)>,
+    progress: Option<ProgressFn>,
 }
 
 impl RequestBuilder {
-    /// Set request header
+    /// Set a request header, replacing any default value for that header
     pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.config.headers.insert(name, value);
+        self.config.headers.set(name, value);
         self
     }
-    
-    /// Set multiple headers
+
+    /// Set multiple headers, replacing any default values for those headers
     pub fn headers(mut self, headers: Headers) -> Self {
         for (name, values) in headers.iter() {
+            self.config.headers.remove(name);
             for value in values {
                 self.config.headers.insert(name.clone(), value.clone());
             }
         }
         self
     }
-    
+
+    /// Append query parameters to the URL
+    pub fn query<K: Into<String>, V: Into<String>>(
+        mut self,
+        params: impl IntoIterator<Item = (K, V)>,
+    ) -> Self {
+        self.query
+            .extend(params.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self
+    }
+
     /// Set request body as JSON
     pub fn json<T: serde::Serialize>(mut self, json: &T) -> Result<Self> {
         let value = serde_json::to_value(json)?;
         self.config.body = Some(Body::Json(value));
         Ok(self)
     }
-    
+
     /// Set request body as text
     pub fn text(mut self, text: impl Into<String>) -> Self {
         self.config.body = Some(Body::Text(text.into()));
         self
     }
-    
+
     /// Set request body as bytes
     pub fn bytes(mut self, bytes: Vec<u8>) -> Self {
         self.config.body = Some(Body::Binary(bytes));
         self
     }
-    
+
     /// Set request body as form data
     pub fn form(mut self, data: std::collections::HashMap<String, String>) -> Self {
         self.config.body = Some(Body::Form(data));
         self
     }
-    
-    /// Set request timeout
+
+    /// Set request body as `multipart/form-data` (replaces any Content-Type header)
+    pub fn multipart(mut self, form: &Multipart) -> Self {
+        self.config.headers.set("content-type", form.content_type());
+        self.config.body = Some(Body::Binary(form.to_bytes()));
+        self
+    }
+
+    /// Report download progress after each received chunk of a successful response
+    pub fn on_download_progress(mut self, callback: impl ProgressCallback + 'static) -> Self {
+        self.progress = Some(Arc::new(callback));
+        self
+    }
+
+    /// Set the timeout for each attempt of this request
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.config.timeout = Some(timeout);
         self
     }
-    
+
+    /// Disable the timeout for this request
+    pub fn no_timeout(mut self) -> Self {
+        self.config.timeout = None;
+        self
+    }
+
     /// Set response format preference
     pub fn response_format(mut self, format: ResponseFormat) -> Self {
         self.config.response_format = format;
         self
     }
-    
-    /// Execute the request
+
+    /// Execute the request and read the whole response
     pub async fn send(self) -> Result<Response> {
-        self.client.execute(self.url, self.config).await
+        let raw = self
+            .client
+            .execute(
+                &self.url,
+                &self.query,
+                &self.config,
+                false,
+                self.progress.as_ref(),
+            )
+            .await?;
+        let content_type = raw.headers.get_first("content-type").unwrap_or("");
+        let body = decode_body(raw.body, content_type, self.config.response_format)?;
+        Ok(Response {
+            status: raw.status,
+            status_text: raw.status_text,
+            headers: raw.headers,
+            body,
+            url: raw.url,
+        })
+    }
+
+    /// Execute the request and return as soon as a successful response's
+    /// headers arrive; read the body with [`StreamingResponse::into_stream`].
+    ///
+    /// Retries and the timeout apply until the headers arrive. Error
+    /// responses are read fully and returned as [`Error::Http`] as usual.
+    pub async fn send_streaming(self) -> Result<StreamingResponse> {
+        let raw = self
+            .client
+            .execute(&self.url, &self.query, &self.config, true, None)
+            .await?;
+        Ok(StreamingResponse {
+            status: raw.status,
+            status_text: raw.status_text,
+            headers: raw.headers,
+            url: raw.url,
+            inner: raw
+                .stream
+                .expect("successful streaming attempts keep their body unread"),
+            progress: self.progress,
+        })
     }
 }
 
-/// Build a reqwest client with platform-specific configuration
-fn build_reqwest_client() -> Result<reqwest::Client> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        reqwest::Client::builder()
-            .build()
-            .map_err(|e| Error::network("Failed to create HTTP client", e))
-    }
-    
-    #[cfg(target_arch = "wasm32")]
-    {
-        reqwest::Client::builder()
-            .build()
-            .map_err(|e| Error::network("Failed to create HTTP client", e))
-    }
+/// Building the underlying client only fails if TLS can't be initialized
+fn client_init_error(error: reqwest::Error) -> Error {
+    Error::network("Failed to create HTTP client", error)
 }
 
 /// Calculate retry delay with exponential backoff
 fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Duration {
-    let delay = config.initial_delay.as_millis() as f64 * config.multiplier.powi(attempt as i32 - 1);
-    let delay = delay.min(config.max_delay.as_millis() as f64) as u64;
-    Duration::from_millis(delay)
-}
-
-/// WASM bindings for the client
-#[wasm_bindgen]
-pub struct WasmClient {
-    inner: Client,
-}
-
-#[wasm_bindgen]
-impl WasmClient {
-    /// Create a new client
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Result<WasmClient> {
-        Ok(WasmClient {
-            inner: Client::new()?,
-        })
-    }
-    
-    /// Make a GET request
-    #[wasm_bindgen]
-    pub fn get(&self, url: String) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let response = client.get(&url).await
-                .map_err(|e| JsValue::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a POST request with JSON body
-    #[wasm_bindgen]
-    pub fn post_json(&self, url: String, body: JsValue) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
-                .map_err(|e| Error::from(e))?;
-            let response = client.post(&url).json(&json)?.send().await
-                .map_err(|e| Error::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a PUT request with JSON body
-    #[wasm_bindgen]
-    pub fn put_json(&self, url: String, body: JsValue) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
-                .map_err(|e| Error::from(e))?;
-            let response = client.put(&url).json(&json)?.send().await
-                .map_err(|e| Error::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a DELETE request
-    #[wasm_bindgen]
-    pub fn delete(&self, url: String) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let response = client.delete(&url).send().await
-                .map_err(|e| JsValue::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a PATCH request with JSON body
-    #[wasm_bindgen]
-    pub fn patch_json(&self, url: String, body: JsValue) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
-                .map_err(|e| Error::from(e))?;
-            let response = client.patch(&url).json(&json)?.send().await
-                .map_err(|e| Error::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a HEAD request
-    #[wasm_bindgen]
-    pub fn head(&self, url: String) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            let response = client
-                .request(Method::Head, &url)
-                .send()
-                .await
-                .map_err(|e| JsValue::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
-    }
-    
-    /// Make a custom request with method, headers, and body
-    #[wasm_bindgen]
-    pub fn request(&self, method: String, url: String, headers: JsValue, body: JsValue) -> js_sys::Promise {
-        let client = self.inner.clone();
-        future_to_promise(async move {
-            // Parse method
-            let method = Method::from_str(&method)
-                .ok_or_else(|| Error::InvalidInput {
-                    parameter: "method".to_string(),
-                    reason: format!("Invalid HTTP method: {}", method),
-                })?;
-            
-            // Create request builder
-            let mut request = client.request(method, &url);
-            
-            // Parse and add headers if provided
-            if !headers.is_null() && !headers.is_undefined() {
-                if headers.is_object() {
-                    let obj = js_sys::Object::from(headers);
-                    let headers = Headers::from_js_object(&obj)
-                        .map_err(|_| Error::JsInterop {
-                            message: "Failed to parse headers object".to_string(),
-                        })?;
-                    request = request.headers(headers);
-                }
-            }
-            
-            // Add body if provided
-            if !body.is_null() && !body.is_undefined() {
-                if body.is_string() {
-                    // Text body
-                    if let Some(text) = body.as_string() {
-                        request = request.text(text);
-                    }
-                } else if body.is_object() {
-                    // JSON body
-                    let json: serde_json::Value = serde_wasm_bindgen::from_value(body)
-                        .map_err(|e| Error::from(e))?;
-                    request = request.json(&json)?;
-                }
-            }
-            
-            // Execute request
-            let response = request.send().await
-                .map_err(|e| Error::from(e))?;
-            response_to_js(&response)
-                .map_err(|e| JsValue::from(e))
-        })
+    let exponent = i32::try_from(attempt.saturating_sub(1)).unwrap_or(i32::MAX);
+    let delay = config.initial_delay.as_secs_f64() * config.multiplier.powi(exponent);
+    let delay = delay.min(config.max_delay.as_secs_f64());
+    if delay > 0.0 {
+        // Float rounding near Duration::MAX can overflow; cap instead of panicking
+        Duration::try_from_secs_f64(delay).unwrap_or(config.max_delay)
+    } else {
+        Duration::ZERO
     }
 }
 
-/// Convert Response to JavaScript object
-fn response_to_js(response: &Response) -> Result<JsValue> {
-    let obj = js_sys::Object::new();
-    
-    js_sys::Reflect::set(&obj, &"status".into(), &(response.status as f64).into())?;
-    js_sys::Reflect::set(&obj, &"statusText".into(), &response.status_text.clone().into())?;
-    js_sys::Reflect::set(&obj, &"url".into(), &response.url.clone().into())?;
-    
-    // Convert headers
-    let headers_obj = js_sys::Object::new();
-    for (name, values) in response.headers.iter() {
-        let value = values.join(", ");
-        js_sys::Reflect::set(&headers_obj, &name.clone().into(), &value.into())?;
-    }
-    js_sys::Reflect::set(&obj, &"headers".into(), &headers_obj)?;
-    
-    // Convert body
-    match &response.body {
-        ResponseBody::Json(json) => {
-            let body = serde_wasm_bindgen::to_value(json)?;
-            js_sys::Reflect::set(&obj, &"body".into(), &body)?;
-        }
-        ResponseBody::Text(text) => {
-            js_sys::Reflect::set(&obj, &"body".into(), &text.clone().into())?;
-        }
-        ResponseBody::Binary(bytes) => {
-            let array = js_sys::Uint8Array::from(bytes.as_slice());
-            js_sys::Reflect::set(&obj, &"body".into(), &array)?;
-        }
-        ResponseBody::Empty => {
-            js_sys::Reflect::set(&obj, &"body".into(), &JsValue::NULL)?;
-        }
-    }
-    
-    Ok(obj.into())
+/// Randomize a delay to between 50% and 100% of its value, so many clients
+/// retrying at once don't hit a recovering server in lockstep
+fn with_jitter(delay: Duration) -> Duration {
+    Duration::try_from_secs_f64(delay.as_secs_f64() * (0.5 + runtime::random() * 0.5))
+        .unwrap_or(delay)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_client_builder() {
         let client = Client::builder()
@@ -613,10 +740,10 @@ mod tests {
             .base_url("https://api.example.com")
             .default_header("User-Agent", "test-client")
             .build();
-        
+
         assert!(client.is_ok());
     }
-    
+
     #[test]
     fn test_retry_delay_calculation() {
         let config = RetryConfig {
@@ -625,9 +752,408 @@ mod tests {
             multiplier: 2.0,
             ..Default::default()
         };
-        
-        assert_eq!(calculate_retry_delay(1, &config), Duration::from_millis(100));
-        assert_eq!(calculate_retry_delay(2, &config), Duration::from_millis(200));
-        assert_eq!(calculate_retry_delay(3, &config), Duration::from_millis(400));
+
+        assert_eq!(
+            calculate_retry_delay(1, &config),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            calculate_retry_delay(2, &config),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            calculate_retry_delay(3, &config),
+            Duration::from_millis(400)
+        );
+        assert_eq!(calculate_retry_delay(30, &config), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_jitter_stays_in_range() {
+        for _ in 0..100 {
+            let delay = with_jitter(Duration::from_millis(1000));
+            assert!(delay >= Duration::from_millis(500) && delay <= Duration::from_millis(1000));
+        }
+    }
+
+    /// The `parameter` of an `InvalidInput` error
+    fn invalid_parameter(error: &Error) -> Option<&str> {
+        match error {
+            Error::InvalidInput { parameter, .. } => Some(parameter),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_invalid_parameter_helper() {
+        assert_eq!(invalid_parameter(&Error::Cancelled), None);
+    }
+
+    fn http_error(status: u16) -> Error {
+        Error::Http {
+            status,
+            status_text: String::new(),
+            body: None,
+        }
+    }
+
+    fn network_error() -> Error {
+        Error::Network {
+            message: String::new(),
+            source: None,
+        }
+    }
+
+    fn client_with_retries(config: RetryConfig) -> Client {
+        Client::builder().retry_config(config).build().unwrap()
+    }
+
+    fn no_jitter_config() -> RetryConfig {
+        RetryConfig {
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(1),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_builder_defaults() {
+        let client = ClientBuilder::default().build().unwrap();
+        assert_eq!(client.config.timeout, Some(Duration::from_secs(30)));
+        assert!(client.config.retry_config.is_none());
+        assert!(client.config.base_url.is_none());
+
+        let client = Client::builder()
+            .no_timeout()
+            .with_retries()
+            .build()
+            .unwrap();
+        assert_eq!(client.config.timeout, None);
+        assert_eq!(client.config.retry_config.as_ref().unwrap().max_retries, 3);
+    }
+
+    #[test]
+    fn test_client_init_error() {
+        let source = reqwest::Client::new().get("not a url").build().unwrap_err();
+        let error = client_init_error(source);
+        assert!(error
+            .to_string()
+            .starts_with("Network error: Failed to create HTTP client (caused by:"));
+    }
+
+    #[test]
+    fn test_builder_rejects_invalid_base_url() {
+        for base in ["example.com", "not a url", "ftp://example.com"] {
+            let error = Client::builder().base_url(base).build().err().expect(base);
+            assert_eq!(invalid_parameter(&error), Some("baseUrl"));
+        }
+    }
+
+    #[test]
+    fn test_request_builder_configuration() {
+        let client = Client::builder()
+            .default_header("Accept", "text/plain")
+            .default_header("X-Default", "1")
+            .build()
+            .unwrap();
+
+        let mut extra = Headers::new();
+        extra.insert("X-Multi", "a");
+        extra.insert("X-Multi", "b");
+        let request = client
+            .request(Method::Get, "https://example.com")
+            .header("accept", "application/json")
+            .headers(extra)
+            .query([("a", "1")])
+            .query(vec![("b".to_string(), "2".to_string())])
+            .timeout(Duration::from_secs(5))
+            .response_format(ResponseFormat::Text);
+
+        assert_eq!(
+            request.config.headers.get("accept").unwrap(),
+            &vec!["application/json".to_string()]
+        );
+        assert_eq!(request.config.headers.get_first("x-default"), Some("1"));
+        assert_eq!(request.config.headers.get("x-multi").unwrap().len(), 2);
+        assert_eq!(
+            request.query,
+            vec![("a".into(), "1".into()), ("b".into(), "2".into())]
+        );
+        assert_eq!(request.config.timeout, Some(Duration::from_secs(5)));
+        assert_eq!(request.config.response_format, ResponseFormat::Text);
+        assert_eq!(request.no_timeout().config.timeout, None);
+    }
+
+    #[test]
+    fn test_request_builder_bodies() {
+        let client = Client::new().unwrap();
+        let body = |builder: RequestBuilder| builder.config.body.unwrap();
+
+        assert!(matches!(body(client.post("https://x.dev").text("t")), Body::Text(t) if t == "t"));
+        assert!(
+            matches!(body(client.post("https://x.dev").bytes(vec![1])), Body::Binary(b) if b == vec![1])
+        );
+        assert!(matches!(
+            body(client.post("https://x.dev").json(&[1, 2]).unwrap()),
+            Body::Json(_)
+        ));
+        let form = std::collections::HashMap::from([("k".to_string(), "v".to_string())]);
+        assert!(matches!(
+            body(client.post("https://x.dev").form(form)),
+            Body::Form(_)
+        ));
+        for builder in [
+            client.put("https://x.dev"),
+            client.patch("https://x.dev"),
+            client.delete("https://x.dev"),
+        ] {
+            assert!(builder.config.body.is_none());
+        }
+    }
+
+    #[test]
+    fn test_resolve_url() {
+        let page = reqwest::Url::parse("https://app.example.com/dashboard/index.html").ok();
+        let none: &[(String, String)] = &[];
+
+        let resolve = |base, page, url| resolve_url(base, page, url, none).map(|u| u.to_string());
+        assert_eq!(
+            resolve(None, None, "https://a.com/x").unwrap(),
+            "https://a.com/x"
+        );
+        assert_eq!(
+            resolve(Some("https://api.com/v1"), page.clone(), "https://a.com/x").unwrap(),
+            "https://a.com/x"
+        );
+        assert_eq!(
+            resolve(Some("https://api.com/v1"), page.clone(), "users").unwrap(),
+            "https://api.com/v1/users"
+        );
+        assert_eq!(
+            resolve(None, page.clone(), "api/items").unwrap(),
+            "https://app.example.com/dashboard/api/items"
+        );
+        assert_eq!(
+            resolve(None, page.clone(), "/api/items").unwrap(),
+            "https://app.example.com/api/items"
+        );
+
+        let query = [
+            ("q".to_string(), "a&b".to_string()),
+            ("n".to_string(), "1".to_string()),
+        ];
+        let url = resolve_url(None, None, "https://a.com/s?x=0", &query).unwrap();
+        assert_eq!(url.as_str(), "https://a.com/s?x=0&q=a%26b&n=1");
+
+        for (base, page, url) in [
+            (None, None, "/no/base"),
+            (Some("https://api.com"), None, "ftp://a.com/x"),
+            (Some("not a base"), None, "users"),
+            (
+                None,
+                Some(reqwest::Url::parse("data:text/plain,hi").unwrap()),
+                "x",
+            ),
+        ] {
+            let error = resolve_url(base, page, url, none).expect_err(url);
+            assert_eq!(invalid_parameter(&error), Some("url"));
+        }
+    }
+
+    #[test]
+    fn test_retry_delay_policy() {
+        let client = client_with_retries(no_jitter_config());
+        let get = Method::Get;
+
+        // Retryable errors on idempotent methods
+        for error in [
+            network_error(),
+            Error::Timeout { duration_ms: 1 },
+            http_error(503),
+            http_error(429),
+        ] {
+            let delay = client.retry_delay(0, get, &error, None).unwrap();
+            assert!((50..=100).contains(&delay.as_millis()));
+        }
+
+        // Not retryable: other statuses, non-transport errors, POST, exhausted retries
+        assert!(client.retry_delay(0, get, &http_error(501), None).is_none());
+        assert!(client.retry_delay(0, get, &http_error(404), None).is_none());
+        assert!(client
+            .retry_delay(0, get, &Error::Cancelled, None)
+            .is_none());
+        assert!(client
+            .retry_delay(
+                0,
+                get,
+                &Error::InvalidInput {
+                    parameter: String::new(),
+                    reason: String::new()
+                },
+                None
+            )
+            .is_none());
+        assert!(client
+            .retry_delay(0, Method::Post, &http_error(503), None)
+            .is_none());
+        assert!(client
+            .retry_delay(0, Method::Patch, &network_error(), None)
+            .is_none());
+        assert!(client.retry_delay(3, get, &http_error(503), None).is_none());
+
+        // Retry-After wins over backoff, capped at max_delay
+        assert_eq!(
+            client.retry_delay(0, get, &http_error(429), Some(Duration::from_millis(700))),
+            Some(Duration::from_millis(700))
+        );
+        assert_eq!(
+            client.retry_delay(0, get, &http_error(429), Some(Duration::from_secs(60))),
+            Some(Duration::from_secs(1))
+        );
+
+        // Flags turn individual causes off, and non-idempotent retries on
+        let client = client_with_retries(RetryConfig {
+            retry_on_network_error: false,
+            retry_on_timeout: false,
+            retry_non_idempotent: true,
+            ..no_jitter_config()
+        });
+        assert!(client.retry_delay(0, get, &network_error(), None).is_none());
+        assert!(client
+            .retry_delay(0, get, &Error::Timeout { duration_ms: 1 }, None)
+            .is_none());
+        assert!(client
+            .retry_delay(0, Method::Post, &http_error(503), None)
+            .is_some());
+
+        // No retry configuration at all
+        assert!(Client::new()
+            .unwrap()
+            .retry_delay(0, get, &http_error(503), None)
+            .is_none());
+    }
+
+    #[test]
+    fn test_retry_delay_edge_cases() {
+        let zero = RetryConfig {
+            initial_delay: Duration::ZERO,
+            ..Default::default()
+        };
+        assert_eq!(calculate_retry_delay(1, &zero), Duration::ZERO);
+        assert_eq!(
+            calculate_retry_delay(0, &RetryConfig::default()),
+            Duration::from_millis(100)
+        );
+        let huge = RetryConfig {
+            multiplier: f64::MAX,
+            max_delay: Duration::MAX,
+            ..Default::default()
+        };
+        assert_eq!(calculate_retry_delay(5, &huge), Duration::MAX);
+        assert!(with_jitter(Duration::MAX) <= Duration::MAX);
+        let nan = RetryConfig {
+            multiplier: f64::NAN,
+            ..Default::default()
+        };
+        assert_eq!(calculate_retry_delay(3, &nan), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_parse_retry_after() {
+        assert_eq!(parse_retry_after("120"), Some(Duration::from_secs(120)));
+        assert_eq!(parse_retry_after(" 3 "), Some(Duration::from_secs(3)));
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+        assert_eq!(parse_retry_after("-1"), None);
+    }
+
+    #[test]
+    fn test_bytes_to_text() {
+        assert_eq!(bytes_to_text(b"plain".to_vec()), "plain");
+        assert_eq!(bytes_to_text("\u{FEFF}bom".as_bytes().to_vec()), "bom");
+        assert_eq!(bytes_to_text(vec![b'a', 0xff, b'b']), "a\u{FFFD}b");
+    }
+
+    #[test]
+    fn test_decode_body_formats() {
+        let decode = |bytes: &[u8], content_type, format| {
+            decode_body(bytes.to_vec(), content_type, format).unwrap()
+        };
+
+        assert!(
+            matches!(decode(b"", "", ResponseFormat::Text), ResponseBody::Text(t) if t.is_empty())
+        );
+        assert!(
+            matches!(decode(b"", "", ResponseFormat::Binary), ResponseBody::Binary(b) if b.is_empty())
+        );
+        assert!(matches!(
+            decode(b"", "", ResponseFormat::Auto),
+            ResponseBody::Empty
+        ));
+        assert!(matches!(
+            decode(b"{}", "image/png", ResponseFormat::Json),
+            ResponseBody::Json(_)
+        ));
+        assert!(
+            matches!(decode(b"{}", "application/json", ResponseFormat::Text), ResponseBody::Text(t) if t == "{}")
+        );
+        assert!(matches!(
+            decode(b"{}", "application/json", ResponseFormat::Binary),
+            ResponseBody::Binary(_)
+        ));
+        assert!(
+            matches!(decode(b"<p>", "text/html", ResponseFormat::Auto), ResponseBody::Text(t) if t == "<p>")
+        );
+        assert!(matches!(
+            decode(b"<a/>", "application/xml", ResponseFormat::Auto),
+            ResponseBody::Text(_)
+        ));
+        // Invalid JSON that isn't UTF-8 either falls back to bytes
+        assert!(
+            matches!(decode(&[0xff, 0xfe], "application/json", ResponseFormat::Auto), ResponseBody::Binary(b) if b == vec![0xff, 0xfe])
+        );
+        assert!(matches!(
+            decode_body(b"{".to_vec(), "", ResponseFormat::Json),
+            Err(Error::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn test_join_base_url() {
+        assert_eq!(
+            join_base_url("https://a.com/v1", "users"),
+            "https://a.com/v1/users"
+        );
+        assert_eq!(
+            join_base_url("https://a.com/v1/", "/users"),
+            "https://a.com/v1/users"
+        );
+        assert_eq!(
+            join_base_url("https://a.com/v1", "?q=1"),
+            "https://a.com/v1?q=1"
+        );
+        assert_eq!(join_base_url("https://a.com/v1", ""), "https://a.com/v1");
+    }
+
+    #[test]
+    fn test_decode_body() {
+        let json = decode_body(
+            b"\xEF\xBB\xBF{\"a\":1}".to_vec(),
+            "application/problem+json",
+            ResponseFormat::Auto,
+        )
+        .unwrap();
+        assert!(matches!(json, ResponseBody::Json(_)));
+        let text = decode_body(
+            b"not json".to_vec(),
+            "application/json",
+            ResponseFormat::Auto,
+        )
+        .unwrap();
+        assert!(matches!(text, ResponseBody::Text(t) if t == "not json"));
+        let empty = decode_body(Vec::new(), "application/json", ResponseFormat::Json).unwrap();
+        assert!(matches!(empty, ResponseBody::Empty));
+        let bin = decode_body(vec![0xff, 0x00], "", ResponseFormat::Auto).unwrap();
+        assert!(matches!(bin, ResponseBody::Binary(_)));
+        assert!(decode_body(b"oops".to_vec(), "", ResponseFormat::Json).is_err());
     }
 }

@@ -4,8 +4,8 @@
   "collaborators": [
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
-  "description": "A world-class WebAssembly HTTP client library with excellent error handling and clean API",
-  "version": "1.1.0",
+  "description": "A high-performance HTTP client for JavaScript/TypeScript powered by WebAssembly, for browsers and Node.js",
+  "version": "2.0.0",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -13,8 +13,12 @@
   },
   "files": [
     "rust_fetch_bg.wasm",
+    "rust_fetch_bg.wasm.d.ts",
     "rust_fetch.js",
-    "rust_fetch.d.ts"
+    "rust_fetch.d.ts",
+    "node.js",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
   "main": "rust_fetch.js",
   "types": "rust_fetch.d.ts",
@@ -27,5 +31,25 @@
     "client",
     "fetch",
     "webassembly"
-  ]
+  ],
+  "exports": {
+    ".": {
+      "types": "./rust_fetch.d.ts",
+      "node": "./node.js",
+      "default": "./rust_fetch.js"
+    },
+    "./rust_fetch.js": {
+      "types": "./rust_fetch.d.ts",
+      "default": "./rust_fetch.js"
+    },
+    "./rust_fetch_bg.wasm": "./rust_fetch_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "homepage": "https://github.com/asemqaffaf/rust-fetch#readme",
+  "bugs": {
+    "url": "https://github.com/asemqaffaf/rust-fetch/issues"
+  }
 }
