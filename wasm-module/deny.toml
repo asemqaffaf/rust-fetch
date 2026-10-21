@@ -1,0 +1,28 @@
+# Dependency policy, enforced in CI with `cargo deny check`
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on any known vulnerability or unsound crate; yanked versions too
+yanked = "deny"
+
+[licenses]
+# Every dependency must use one of these licenses
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

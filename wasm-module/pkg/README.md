@@ -2,6 +2,8 @@
 
 [![npm version](https://img.shields.io/npm/v/rust-fetch.svg)](https://www.npmjs.com/package/rust-fetch)
 [![CI](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml/badge.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
+[![Coverage: 100% (enforced)](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
+[![codecov](https://codecov.io/gh/asemqaffaf/rust-fetch/branch/main/graph/badge.svg)](https://codecov.io/gh/asemqaffaf/rust-fetch)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=flat&logo=WebAssembly&logoColor=white)](https://webassembly.org/)
 
@@ -416,6 +418,8 @@ npm run build      # wasm-pack build + package metadata (wasm-module/pkg)
 npm test           # Rust unit + integration tests, then the JS tests
 npm run test:js    # JS end-to-end tests against the built package (requires a build)
 npm run bench      # rust-fetch vs native fetch (requires a build)
+npm run size       # size budget for the built package
+npm run api:check  # public TypeScript API vs the committed snapshot
 
 cd wasm-module
 wasm-pack test --node    # wasm unit tests for the JS bindings
@@ -430,7 +434,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | JS end-to-end tests | `wasm-module/js/test/client.test.mjs` | The built package against a local server |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
-CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core drops below 100%. It also checks formatting, and runs the wasm and JS suites on Node 20, 22 and 24. The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
 
 Releases are published by CI when a version tag is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
