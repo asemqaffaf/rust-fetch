@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-23
+
 ### Added
 - **Typed responses in TypeScript:** every `WasmClient` request method is generic over the response body, e.g. `client.get<User>('/users/42')` resolves to `HttpResponse<User>`. The type parameter defaults to `any`, so existing code type-checks unchanged.
 - **Upload progress:** an `onUploadProgress({ loaded, total })` request option. In Node.js the body is written in 64 KB chunks and each is reported once it's handed to the OS. In browsers these requests go through `XMLHttpRequest`, since `fetch()` has no upload progress events, with the same redirects, credentials, timeouts, retries and errors; cross-origin ones are preflighted. Without `XMLHttpRequest` (service workers), progress is reported once, when the response arrives. It can be combined with `onDownloadProgress`, but not with `responseType: 'stream'`. Requests with progress callbacks don't use the native transport.
@@ -14,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The browser bundle grows by about 16 kB brotli, from 190.9 to 206.8 kB (WebAssembly 183.1 → 197.7 kB, JS glue 7.8 → 9.1 kB), for these two features; the size budgets are now 660 kB raw / 260 kB gzip for the `.wasm`, 65 kB / 11.5 kB for `rust_fetch.js` and 17 kB / 6.5 kB for `node.js`.
 - **Native Node.js transport (not yet in the npm package).** `native/` builds a Node-API addon that moves requests off the JS thread: HTTP/1.1 on hyper and Tokio, with the same rules as the node:http transport (fetch() redirects, decompression, default headers, per-attempt timeout, cancellation, at most 256 connections per origin) and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED=0`). Retries, timeouts, validation, errors and interceptors still come from the Rust core, unchanged. When `rust-fetch-native.<platform>-<arch>.node` sits next to the package's `node.js`, it is used wherever the node:http transport would use its own pool; an agent installed as `http.globalAgent` / `https.globalAgent`, or `NODE_USE_ENV_PROXY`, keeps node:http. `RUST_FETCH_NATIVE=0` turns it off. Build it with `npm run build:native`.
 - The Node.js entry point (`node.js`) grows by about 1 kB (to 15 kB, 5.5 kB gzipped) for the native transport's loader; its size budget is now 16 kB (6 kB gzipped). Browsers don't load it.
+
+### Changed
+- npm and crate metadata: a description that lists what the client does, without the "faster than fetch()" claim (the published client is behind `fetch()` on concurrent HTTPS); more npm keywords; the package ships `llms.txt`, a concise API summary for AI assistants.
+- Development uses TypeScript 7; the published definitions are type-checked with TypeScript 7 and 5.2.
 
 ## [2.1.1] - 2026-10-22
 
@@ -147,7 +153,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/asemqaffaf/rust-fetch/compare/v1.1.0...v2.0.0
