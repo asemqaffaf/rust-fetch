@@ -76,6 +76,8 @@ The native Node.js transport against Node.js `fetch()`. Apple M1 Pro, Node.js 22
 | 50 concurrent small-JSON requests | **1.71×** throughput |
 | 8 MB binary transfers | **1.61×** throughput |
 | Offered 40,000 requests/s (overload) | **2.9×** requests delivered |
+| 50 to 500 requests in flight, independent harness | **1.6× to 1.7×** throughput, about **half the p99** at every level |
+| Event loop at 15,000 requests/s, independent harness | **1.6 ms** p95 delay against 310 ms, leaving the event loop free for your application |
 | Steady 15,000 requests/s, our harness | Kept up (14,992/s against 11,557/s), about **13× lower p99** (91 ms against 1.2 s) and about **4× less memory** (195 MB against 782 MB) |
 | Steady 15,000 requests/s, independent harness | Kept up (14,991/s against 13,026/s); p99 568 ms against 920 ms; 541 MB against 903 MB |
 | Large JSON, 0.6 MB | 1.02×, even |
@@ -176,8 +178,16 @@ Each client ran in its own process. These rows come from two different harnesses
 | Test | `fetch()` | `undici.request()` | rust-fetch, node:http | rust-fetch, native | Native vs `fetch()` |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Offered 40,000 requests/s for 20 s, delivered (our harness) | 10,081/s | 37,687/s | 16,984/s | 29,502/s | **2.9×** |
-| 500 requests in flight for 10 s ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness) | 15,960/s | not tested | 17,685/s | 27,563/s | **173%** |
 | Offered 50,000 requests/s for 60 s, delivered ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness) | 12,421/s | not tested | 17,828/s | 32,678/s | **2.6×** |
+
+**Concurrency sweep**, a constant number of requests in flight for 10 s each ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness), requests per second with p99 latency:
+
+| Requests in flight | `fetch()` | rust-fetch, node:http | rust-fetch, native | Native vs `fetch()` |
+| --- | ---: | ---: | ---: | ---: |
+| 50 | 17,041 (6.8 ms) | 18,452 (6.1 ms) | **29,198 (2.4 ms)** | **171%** |
+| 100 | 17,660 (10.2 ms) | 18,855 (9.3 ms) | **28,402 (5.1 ms)** | **161%** |
+| 200 | 16,365 (24.3 ms) | 18,624 (14.8 ms) | **28,454 (11.3 ms)** | **174%** |
+| 500 | 15,960 (47.3 ms) | 17,685 (38.7 ms) | **27,563 (24.6 ms)** | **173%** |
 
 At 40,000 requests per second, peak memory was 781 MB for `fetch()`, 244 MB for `undici.request()`, 567 MB for the node:http transport and 796 MB for the native transport, whose queued requests wait inside the addon.
 
@@ -192,11 +202,13 @@ At 40,000 requests per second, peak memory was 781 MB for `fetch()`, 244 MB for 
 
 The [aakjp/stress-test](https://github.com/aakjp/stress-test) harness (60 s, six server processes):
 
-| Client | Delivered | p50 | p95 | p99 | Peak memory |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `fetch()` | 13,026/s | 449 ms | 491 ms | 920 ms | 903 MB |
-| rust-fetch, node:http | 14,981/s | 6.3 ms | 118 ms | 565 ms | 548 MB |
-| rust-fetch, native | **14,991/s** | 3.5 ms | 4.8 ms | 568 ms | 541 MB |
+| Client | Delivered | p50 | p95 | p99 | Peak memory | JS heap after the run | Event-loop delay (p95) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `fetch()` | 13,026/s | 449 ms | 491 ms | 920 ms | 903 MB | 479 MB | 310 ms |
+| rust-fetch, node:http | 14,981/s | 6.3 ms | 118 ms | 565 ms | 548 MB | 82 MB | 9.8 ms |
+| rust-fetch, native | **14,991/s** | **3.5 ms** | **4.8 ms** | 568 ms | 541 MB | **23 MB** | **1.6 ms** |
+
+Event-loop delay is how late the harness's 10 ms scheduler ran: how long your own code would wait behind the HTTP client.
 
 In both harnesses, the native transport sustained approximately the target rate and `fetch()` didn't. In the independent harness, both rust-fetch transports still show a p99 stall of about 565 ms even though the native transport's p95 was 4.8 ms. Its cause hasn't been verified.
 
@@ -531,7 +543,7 @@ Everything that decides what happens to a request (URL handling, validation, ret
 
 In Node.js, streamed responses (`responseType: 'stream'`) and requests with `onDownloadProgress` go through Node's `fetch()` instead.
 
-**What the native transport changes.** Connection handling, TLS, HTTP parsing and decompression move from the JavaScript event loop to Tokio threads; JavaScript only builds requests and decodes their bodies. That's why it gains most with many requests in flight, and why the hand-off between threads likely contributes to its slower sequential results ([measurements](#performance-at-a-glance)).
+**What the native transport changes.** Connection handling, TLS, HTTP parsing and decompression move from the JavaScript event loop to Tokio threads; JavaScript only builds requests and decodes their bodies: at a steady 15,000 requests per second, the event loop's p95 delay was 1.6 ms with the native transport, against 9.8 ms with `node:http` and 310 ms with `fetch()`. That's why it gains most with many requests in flight, and why the hand-off between threads likely contributes to its slower sequential results ([measurements](#performance-at-a-glance)).
 
 **When it's used.** The native transport is used when `rust-fetch-native.<platform>-<arch>.node` sits next to the package's `node.js` (`npm run build:native` puts it there). It steps aside where you have installed your own `http.globalAgent` / `https.globalAgent` (for example a proxy agent) or set `NODE_USE_ENV_PROXY`, and `RUST_FETCH_NATIVE=0` turns it off.
 
