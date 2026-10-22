@@ -173,6 +173,36 @@ function ownedBytes(bytes) {
     : new Uint8Array(bytes);
 }
 
+/** Call a progress callback with `{ loaded, total }`, ignoring its exceptions */
+function report(callback, loaded, total) {
+  try {
+    callback({ loaded, total });
+  } catch {}
+}
+
+// Request bodies are written in chunks of this size when upload progress is reported
+const UPLOAD_CHUNK = 64 * 1024;
+
+/**
+ * Send the body and end the request. With `onProgress`, the body is written
+ * a chunk at a time, reporting each chunk once it has been handed to the OS.
+ */
+function writeBody(request, body, onProgress) {
+  if (!onProgress || !body) return request.end(body);
+  let loaded = 0;
+  const next = () => {
+    const chunk = body.subarray(loaded, loaded + UPLOAD_CHUNK);
+    request.write(chunk, (error) => {
+      if (error) return; // the request's 'error' event rejects
+      loaded += chunk.length;
+      report(onProgress, loaded, body.length);
+      if (loaded < body.length) next();
+      else request.end();
+    });
+  };
+  next();
+}
+
 function withoutHeaders(headers, names) {
   const copy = { ...headers };
   for (const name of names) delete copy[name];
@@ -221,10 +251,13 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     const buffer = preallocated ? new Uint8Array(expected) : undefined;
     let received = 0;
     const chunks = [];
+    const onProgress = status >= 200 && status < 300 ? state.onDownloadProgress : undefined;
+    const total = Number.isSafeInteger(expected) ? expected : null;
     response.on('data', (chunk) => {
       if (buffer && received + chunk.length <= expected) buffer.set(chunk, received);
       else chunks.push(chunk);
       received += chunk.length;
+      if (onProgress) report(onProgress, received, total);
     });
     response.on('error', reject);
     // A socket closed mid-body may emit 'close' without 'end' (a settled promise ignores this)
@@ -248,13 +281,13 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     });
   });
   request.on('error', reject);
-  request.end(body);
+  writeBody(request, body, state.onUploadProgress);
   state.request = request;
 }
 
 /**
  * One attempt, called by the Rust core with
- * `{ method, url, headers, body?, timeout?, bodyType }`. Resolves to the
+ * `{ method, url, headers, body?, timeout?, bodyType, onUploadProgress?, onDownloadProgress? }`. Resolves to the
  * finished `{ status, statusText, ok, url, headers, body }` (the core fills
  * in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
  * or any other error for network failures.
@@ -265,11 +298,15 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
  */
 function nodeTransport(request) {
   // The native transport makes its own connections, so only where the
-  // node:http transport would use its own pool too, not an installed agent
+  // node:http transport would use its own pool too, not an installed agent.
+  // Progress callbacks run on this thread, so those requests stay here.
+  const { onUploadProgress, onDownloadProgress } = request;
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
-  if (native && transport && agentFor(transport) === pools.get(transport)) return nativeTransport(request);
+  if (native && transport && !onUploadProgress && !onDownloadProgress && agentFor(transport) === pools.get(transport)) {
+    return nativeTransport(request);
+  }
 
-  const state = { cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO };
+  const state = { cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO, onUploadProgress, onDownloadProgress };
   let timer;
   const promise = new Promise((resolve, reject) => {
     if (request.timeout > 0) {

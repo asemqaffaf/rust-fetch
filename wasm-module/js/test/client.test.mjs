@@ -17,6 +17,7 @@ import init, {
 import { json, rejection, sleep, startServer } from './helpers.mjs';
 
 let server;
+const failedOnce = new Set();
 
 before(async () => {
   server = await startServer(async (req, res, ctx) => {
@@ -86,6 +87,16 @@ before(async () => {
           return res.end('token expired');
         }
         return json(res, { secret: 42 });
+      case '/fails-once': {
+        // 503 for the first request with each id, then an echo of the body length
+        const id = url.searchParams.get('id');
+        if (!failedOnce.has(id)) {
+          failedOnce.add(id);
+          res.writeHead(503, { 'content-type': 'text/plain' });
+          return res.end('try again');
+        }
+        return json(res, { received: req.body.length });
+      }
       case '/large': {
         const size = Number(url.searchParams.get('mb')) * 1024 * 1024;
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': size });
@@ -659,6 +670,59 @@ describe('uploads', () => {
     assert.equal(await parsed.get('report').text(), '%PDF-1.7 contents');
     assert.equal(parsed.get('report').name, 'report.pdf');
     assert.deepEqual([...new Uint8Array(await parsed.get('raw').arrayBuffer())], [0, 255]);
+  });
+
+  it('reports upload progress as the body is sent', async () => {
+    const size = 1024 * 1024 + 5;
+    const body = new Uint8Array(size).fill(7);
+    const events = [];
+    const res = await client().put(server.url('/echo'), { body, onUploadProgress: (p) => events.push(p) });
+    assert.equal(res.body.bytes.length, size);
+    assert.ok(events.length > 1);
+    assert.deepEqual(events.at(-1), { loaded: size, total: size });
+    assert.ok(events.every((e, i) => e.total === size && (i === 0 || e.loaded > events[i - 1].loaded)));
+  });
+
+  it('reports upload and download progress on the same request', async () => {
+    const uploads = [];
+    const downloads = [];
+    const res = await client().post(server.url('/echo'), {
+      body: 'x'.repeat(200_000),
+      onUploadProgress: (p) => uploads.push(p),
+      onDownloadProgress: (p) => downloads.push(p),
+    });
+    assert.equal(res.body.body.length, 200_000);
+    assert.deepEqual(uploads.at(-1), { loaded: 200_000, total: 200_000 });
+    assert.ok(downloads.length > 0);
+    assert.ok(downloads.at(-1).loaded > 200_000); // the JSON echo of the body
+  });
+
+  it('restarts upload progress when the request is retried', async () => {
+    const events = [];
+    const res = await new WasmClient({ retries: { maxRetries: 1, initialDelayMs: 0 } }).put(server.url('/fails-once?id=upload'), {
+      body: 'abc',
+      onUploadProgress: (p) => events.push(p),
+    });
+    assert.deepEqual(res.body, { received: 3 });
+    assert.deepEqual(events, [{ loaded: 3, total: 3 }, { loaded: 3, total: 3 }]);
+  });
+
+  it('ignores exceptions from the upload progress callback', async () => {
+    const res = await echo(client().post(server.url('/echo'), { body: 'ok', onUploadProgress: () => { throw new Error('ignored'); } }));
+    assert.equal(res.body, 'ok');
+    // No body, no progress
+    let called = false;
+    await client().get(server.url('/json'), { onUploadProgress: () => (called = true) });
+    assert.equal(called, false);
+  });
+
+  it('rejects an invalid onUploadProgress', async () => {
+    const notFunction = await rejection(client().post(server.url('/echo'), { body: 'x', onUploadProgress: 1 }));
+    assert.equal(notFunction.kind, 'InvalidInputError');
+    assert.equal(notFunction.parameter, 'onUploadProgress');
+    const streamed = await rejection(client().post(server.url('/echo'), { body: 'x', responseType: 'stream', onUploadProgress() {} }));
+    assert.equal(streamed.kind, 'InvalidInputError');
+    assert.match(streamed.message, /stream/);
   });
 
   it('sends Blob and File bodies with their type', async () => {

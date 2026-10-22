@@ -50,6 +50,12 @@ export interface DownloadProgress {
     total: number | null;
 }
 
+/** Upload progress: bytes of the request body sent so far, and the body's size. */
+export interface UploadProgress {
+    loaded: number;
+    total: number;
+}
+
 export interface RetryOptions {
     /** Maximum number of retries after the first attempt. Default: 3 */
     maxRetries?: number;
@@ -93,6 +99,12 @@ export interface RequestOptions {
     signal?: AbortSignal;
     /** Called after each received chunk of a successful response */
     onDownloadProgress?: (progress: DownloadProgress) => void;
+    /**
+     * Called as the request body is sent; starts again from 0 if the request is retried.
+     * Browsers send these requests with `XMLHttpRequest` (cross-origin ones are preflighted).
+     * Can't be combined with `responseType: 'stream'`.
+     */
+    onUploadProgress?: (progress: UploadProgress) => void;
 }
 
 export interface FetchInit extends RequestOptions {
@@ -151,6 +163,70 @@ export interface RustFetchError extends Error {
     timeoutMs?: number;
     /** InvalidInputError: the offending parameter */
     parameter?: string;
+}
+
+
+
+/** Reconnection after a connection fails or drops, with jittered exponential backoff. */
+export interface ReconnectOptions {
+    /** Reconnection attempts in a row before giving up; reset once a connection opens. Default: unlimited */
+    maxRetries?: number;
+    /** Delay before the first attempt, in ms. Default: 1000 */
+    initialDelayMs?: number;
+    /** Upper bound for any delay, in ms. Default: 30000 */
+    maxDelayMs?: number;
+    /** Exponential backoff multiplier. Default: 2 */
+    multiplier?: number;
+}
+
+/** What `send()` accepts; use `sendJson()` for other values. */
+export type WebSocketData = string | ArrayBuffer | ArrayBufferView | Blob;
+
+export type WebSocketState = 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed';
+
+export interface WebSocketCloseInfo {
+    code: number;
+    reason: string;
+    wasClean: boolean;
+}
+
+export interface WebSocketReconnectInfo {
+    /** 1 for the first attempt after a failure */
+    attempt: number;
+    delayMs: number;
+    /** Why the previous connection failed or dropped */
+    error: RustFetchError;
+}
+
+export interface WebSocketOptions {
+    /** Subprotocols to offer */
+    protocols?: string | string[];
+    params?: QueryParams;
+    /**
+     * Handshake headers, merged over the client's headers. Node.js only: browsers don't allow
+     * WebSocket headers, so there this rejects with an `InvalidInputError` (client headers are skipped).
+     */
+    headers?: HeadersLike;
+    /** Time allowed for each connection attempt, in ms. `0` disables it. Default: the client's `timeoutMs` */
+    timeoutMs?: number;
+    /**
+     * Reconnect when a connection fails or drops unexpectedly (close codes 1001, 1006, 1011-1014):
+     * `true` for the defaults, a maximum number of attempts in a row, or options. Default: off
+     */
+    reconnect?: boolean | number | ReconnectOptions;
+    /** Closes the connection and stops reconnecting when aborted */
+    signal?: AbortSignal;
+    /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */
+    messageType?: 'auto' | 'json';
+    /** Called each time a connection opens, including after reconnecting */
+    onOpen?: () => void;
+    onMessage?: (data: any) => void;
+    /** Called on every failure: a failed or timed-out attempt, an unexpected drop, a message that isn't JSON */
+    onError?: (error: RustFetchError) => void;
+    /** Called before waiting to reconnect */
+    onReconnect?: (info: WebSocketReconnectInfo) => void;
+    /** Called once, when the connection is closed for good */
+    onClose?: (info: WebSocketCloseInfo) => void;
 }
 
 
@@ -254,6 +330,58 @@ export class WasmClient {
      * Make a request with any method, headers and body
      */
     request(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Open a WebSocket connection. Relative URLs are resolved against the
+     * base URL, with `http:` and `https:` becoming `ws:` and `wss:`.
+     */
+    websocket(url: string, options?: WebSocketOptions | null): WebSocketConnection;
+}
+
+/**
+ * A WebSocket connection created by `WasmClient.websocket()`
+ */
+export class WebSocketConnection {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Close the connection and stop reconnecting. `code` is 1000 (the
+     * default) or 3000-4999; `reason` is at most 123 bytes of UTF-8.
+     */
+    close(code?: number | null, reason?: string | null): void;
+    /**
+     * Send a value as JSON text
+     */
+    sendJson(value: any): void;
+    /**
+     * Send a message. Before the connection opens (or while reconnecting),
+     * messages are queued and sent once it does.
+     */
+    send(data: WebSocketData): void;
+    /**
+     * Bytes queued by the socket but not yet sent
+     */
+    readonly bufferedAmount: number;
+    /**
+     * Resolves with the close code and reason once the connection is closed for good
+     */
+    readonly closed: Promise<WebSocketCloseInfo>;
+    /**
+     * Resolves when the first connection opens; rejects if it never does
+     */
+    readonly opened: Promise<void>;
+    /**
+     * The subprotocol the server selected, or `""`
+     */
+    readonly protocol: string;
+    /**
+     * `connecting`, `open`, `reconnecting`, `closing` or `closed`
+     */
+    readonly state: WebSocketState;
+    /**
+     * The connection URL (`ws:` or `wss:`)
+     */
+    readonly url: string;
 }
 
 /**
@@ -312,6 +440,7 @@ export interface InitOutput {
     readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
     readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
     readonly __wbg_wasmclient_free: (a: number, b: number) => void;
+    readonly __wbg_websocketconnection_free: (a: number, b: number) => void;
     readonly create_client: () => [number, number, number];
     readonly fetch_json: (a: number, b: number) => any;
     readonly fetch_json_promise: (a: number, b: number) => any;
@@ -347,10 +476,21 @@ export interface InitOutput {
     readonly wasmclient_put: (a: number, b: number, c: number, d: number) => any;
     readonly wasmclient_put_json: (a: number, b: number, c: number, d: any, e: number) => any;
     readonly wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+    readonly wasmclient_websocket: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly websocketconnection_buffered_amount: (a: number) => number;
+    readonly websocketconnection_close: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly websocketconnection_closed: (a: number) => any;
+    readonly websocketconnection_opened: (a: number) => any;
+    readonly websocketconnection_protocol: (a: number) => [number, number];
+    readonly websocketconnection_send: (a: number, b: any) => [number, number];
+    readonly websocketconnection_sendJson: (a: number, b: any) => [number, number];
+    readonly websocketconnection_state: (a: number) => any;
+    readonly websocketconnection_url: (a: number) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h39ac090089444320: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__hfe34282d295dccc2: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h7c6facf5d1a6a91a: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h1dc388a5dfa52d7a: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__hee4dc590ff76ee6a: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h5f968e02a5abe20b: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
@@ -358,6 +498,7 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

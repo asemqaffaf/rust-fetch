@@ -9,7 +9,9 @@
 //!   request to a minimum, it also enforces the per-attempt timeout and
 //!   decodes the body (with the same rules as `decode_body` below), handing
 //!   back the finished response object.
-//! - Everywhere else: the runtime's `fetch()`.
+//! - Everywhere else: the runtime's `fetch()`, or `XMLHttpRequest` for
+//!   requests with an `onUploadProgress` callback, since `fetch()` can't
+//!   report upload progress.
 
 use super::{invalid, js_error_message, set, BodyType};
 use crate::{
@@ -29,7 +31,7 @@ extern "C" {
     // js_sys::JSON::parse takes &str, which would copy a JS string into wasm
     // and then back out. Keep the decoded text in JS instead.
     #[wasm_bindgen(catch, js_namespace = JSON, js_name = parse)]
-    fn parse_native_json(text: &JsValue) -> std::result::Result<JsValue, JsValue>;
+    pub(crate) fn parse_native_json(text: &JsValue) -> std::result::Result<JsValue, JsValue>;
 
     #[wasm_bindgen(js_name = TextDecoder)]
     type NativeTextDecoder;
@@ -53,11 +55,32 @@ thread_local! {
     .and_then(|transport| transport.dyn_into().ok());
 }
 
+/// `onUploadProgress` and `onDownloadProgress` for a request sent here
+/// (requests with only `onDownloadProgress` take the reqwest path instead)
+#[derive(Default)]
+pub(crate) struct ProgressCallbacks {
+    pub(crate) upload: Option<js_sys::Function>,
+    pub(crate) download: Option<js_sys::Function>,
+}
+
 pub(crate) enum PreparedRequest {
     Fetch {
         url: String,
         init: web_sys::RequestInit,
         body_type: BodyType,
+        /// Without `XMLHttpRequest` (e.g. in a service worker), progress is
+        /// reported once each way: when the response arrives and when its
+        /// body has been read
+        progress: ProgressCallbacks,
+        body_length: u32,
+    },
+    Xhr {
+        method: String,
+        url: String,
+        headers: Vec<(String, String)>,
+        body: Option<js_sys::Uint8Array>,
+        body_type: BodyType,
+        progress: ProgressCallbacks,
     },
     Node {
         transport: js_sys::Function,
@@ -69,7 +92,12 @@ pub(crate) enum PreparedRequest {
 }
 
 impl PreparedRequest {
-    pub(crate) fn new(url: &str, config: &RequestConfig, body_type: BodyType) -> Result<Self> {
+    pub(crate) fn new(
+        url: &str,
+        config: &RequestConfig,
+        body_type: BodyType,
+        progress: ProgressCallbacks,
+    ) -> Result<Self> {
         let headers = validated_headers(config)?;
         let body = match &config.body {
             Some(body) => Some((body.content_type(), body.to_bytes()?)),
@@ -119,6 +147,12 @@ impl PreparedRequest {
                 set(&request, "timeout", &JsValue::from_f64(timeout_ms as f64))?;
             }
             set(&request, "bodyType", &JsValue::from(body_type as u8))?;
+            if let Some(callback) = &progress.upload {
+                set(&request, "onUploadProgress", callback)?;
+            }
+            if let Some(callback) = &progress.download {
+                set(&request, "onDownloadProgress", callback)?;
+            }
             return Ok(Self::Node {
                 transport,
                 request,
@@ -126,6 +160,25 @@ impl PreparedRequest {
             });
         }
 
+        if progress.upload.is_some() && has_global("XMLHttpRequest") {
+            let mut headers: Vec<(String, String)> = headers
+                .iter()
+                .map(|&(name, value)| (name.to_string(), value.to_string()))
+                .collect();
+            if let Some(content_type) = default_content_type {
+                headers.push(("content-type".to_string(), content_type.to_string()));
+            }
+            return Ok(Self::Xhr {
+                method: method.as_str().to_string(),
+                url: url.to_string(),
+                headers,
+                body,
+                body_type,
+                progress,
+            });
+        }
+
+        let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
         let js_headers = web_sys::Headers::new().map_err(invalid_request)?;
         for (name, value) in &headers {
             js_headers.append(name, value).map_err(invalid_request)?;
@@ -145,6 +198,8 @@ impl PreparedRequest {
             url: url.to_string(),
             init,
             body_type,
+            progress,
+            body_length,
         })
     }
 
@@ -159,7 +214,17 @@ impl PreparedRequest {
                 url,
                 init,
                 body_type,
-            } => send_fetch(url, init, *body_type).await,
+                progress,
+                body_length,
+            } => send_fetch(url, init, *body_type, progress, *body_length).await,
+            Self::Xhr {
+                method,
+                url,
+                headers,
+                body,
+                body_type,
+                progress,
+            } => send_xhr(method, url, headers, body.as_ref(), *body_type, progress).await,
             Self::Node {
                 transport,
                 request,
@@ -188,6 +253,8 @@ async fn send_fetch(
     url: &str,
     init: &web_sys::RequestInit,
     body_type: BodyType,
+    progress: &ProgressCallbacks,
+    body_length: u32,
 ) -> Result<Attempt<JsValue>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
@@ -200,6 +267,10 @@ async fn send_fetch(
             .unchecked_into();
     let status = response.status();
     let headers = response.headers();
+    if let (Some(callback), true) = (&progress.upload, body_length > 0) {
+        let length = f64::from(body_length);
+        report_progress(callback, length, Some(length));
+    }
     let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
         .await
         .map_err(network_error)?;
@@ -212,22 +283,191 @@ async fn send_fetch(
         return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
     }
 
+    if let Some(callback) = &progress.download {
+        let total = headers
+            .get("content-length")?
+            // Parsed as an integer: parsing floats would add ~13 kB to the module
+            .and_then(|length| length.trim().parse::<u32>().ok())
+            .map(f64::from);
+        report_progress(callback, f64::from(length), total);
+    }
     let content_type = headers.get("content-type")?.unwrap_or_default();
     let body = decode_body(&buffer, length, &content_type, body_type)?;
-    let result = js_sys::Object::new();
-    set(&result, "status", &f64::from(status).into())?;
-    set(&result, "statusText", &status_text(status).into())?;
-    set(&result, "ok", &JsValue::TRUE)?;
-    set(&result, "url", &response.url().into())?;
     let response_headers = js_sys::Object::from_entries(headers.as_ref())?;
     // Node's Headers iterator can yield separate Set-Cookie entries.
     // Preserve the existing API's comma-joined repeated header values.
     if let Some(cookies) = headers.get("set-cookie")? {
         set(&response_headers, "set-cookie", &cookies.into())?;
     }
-    set(&result, "headers", &response_headers)?;
-    set(&result, "body", &body)?;
+    success_response(status, &response.url(), &response_headers, &body)
+}
+
+/// The finished `{ status, statusText, ok, url, headers, body }` of a 2xx response
+fn success_response(
+    status: u16,
+    url: &str,
+    headers: &js_sys::Object,
+    body: &JsValue,
+) -> Result<Attempt<JsValue>> {
+    let result = js_sys::Object::new();
+    set(&result, "status", &f64::from(status).into())?;
+    set(&result, "statusText", &status_text(status).into())?;
+    set(&result, "ok", &JsValue::TRUE)?;
+    set(&result, "url", &url.into())?;
+    set(&result, "headers", headers)?;
+    set(&result, "body", body)?;
     Ok(Attempt::Success(result.into()))
+}
+
+/// One attempt through `XMLHttpRequest`, which, unlike `fetch()`, reports
+/// upload progress. Redirects, credentials and CORS work as with `fetch()`'s
+/// defaults, except that a cross-origin request with an upload listener is
+/// always preflighted.
+async fn send_xhr(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&js_sys::Uint8Array>,
+    body_type: BodyType,
+    progress: &ProgressCallbacks,
+) -> Result<Attempt<JsValue>> {
+    let xhr = web_sys::XmlHttpRequest::new().map_err(network_error)?;
+    xhr.open_with_async(method, url, true)
+        .map_err(invalid_request)?;
+    for (name, value) in headers {
+        xhr.set_request_header(name, value)
+            .map_err(invalid_request)?;
+    }
+    xhr.set_response_type(web_sys::XmlHttpRequestResponseType::Arraybuffer);
+
+    // Declared before the guard, so the guard detaches them before they're dropped
+    let total = body.map_or(0.0, |body| f64::from(body.length()));
+    let on_upload = progress.upload.clone().map(|callback| {
+        Closure::<dyn FnMut(web_sys::ProgressEvent)>::new(move |event: web_sys::ProgressEvent| {
+            report_progress(&callback, event.loaded(), Some(total));
+        })
+    });
+    let on_download = progress.download.clone().map(|callback| {
+        let xhr = xhr.clone();
+        Closure::<dyn FnMut(web_sys::ProgressEvent)>::new(move |event: web_sys::ProgressEvent| {
+            // Like the other transports, only a successful response's body
+            if (200..300).contains(&xhr.status().unwrap_or(0)) {
+                let total = event.length_computable().then(|| event.total());
+                report_progress(&callback, event.loaded(), total);
+            }
+        })
+    });
+    let upload = xhr.upload().map_err(network_error)?;
+    if let Some(listener) = &on_upload {
+        upload.set_onprogress(Some(listener.as_ref().unchecked_ref()));
+    }
+    if let Some(listener) = &on_download {
+        xhr.set_onprogress(Some(listener.as_ref().unchecked_ref()));
+    }
+    let done = js_sys::Promise::new(&mut |resolve, reject| {
+        xhr.set_onload(Some(&resolve));
+        xhr.set_onerror(Some(&reject));
+    });
+    let guard = XhrGuard {
+        xhr: xhr.clone(),
+        upload,
+        finished: false,
+    };
+    match body {
+        Some(body) => xhr.send_with_opt_buffer_source(Some(body)),
+        None => xhr.send(),
+    }
+    .map_err(network_error)?;
+    JsFuture::from(done)
+        .await
+        .map_err(|_| network_error(JsValue::from_str("XMLHttpRequest failed")))?;
+    let mut guard = guard;
+    guard.finished = true;
+    drop(guard);
+
+    let status = xhr.status().map_err(network_error)?;
+    let buffer = xhr.response().map_err(network_error)?;
+    let length = buffer
+        .dyn_ref::<js_sys::ArrayBuffer>()
+        .map_or(0, js_sys::ArrayBuffer::byte_length);
+    let headers = parse_header_block(&xhr.get_all_response_headers().map_err(network_error)?)?;
+    let header = |name: &str| {
+        js_sys::Reflect::get(&headers, &name.into())
+            .ok()
+            .and_then(|value| value.as_string())
+    };
+
+    if !(200..300).contains(&status) {
+        let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
+        return Ok(http_error(
+            status,
+            text.as_string(),
+            header("retry-after").as_deref(),
+        ));
+    }
+    let content_type = header("content-type").unwrap_or_default();
+    let body = decode_body(&buffer, length, &content_type, body_type)?;
+    success_response(status, &xhr.response_url(), &headers, &body)
+}
+
+/// Detaches an `XMLHttpRequest`'s listeners, and aborts it if it was
+/// abandoned (timeout or cancellation) before finishing
+struct XhrGuard {
+    xhr: web_sys::XmlHttpRequest,
+    upload: web_sys::XmlHttpRequestUpload,
+    finished: bool,
+}
+
+impl Drop for XhrGuard {
+    fn drop(&mut self) {
+        self.xhr.set_onload(None);
+        self.xhr.set_onerror(None);
+        self.xhr.set_onprogress(None);
+        self.upload.set_onprogress(None);
+        if !self.finished {
+            let _ = self.xhr.abort();
+        }
+    }
+}
+
+/// `getAllResponseHeaders()` as an object with lower-cased names
+fn parse_header_block(block: &str) -> Result<js_sys::Object> {
+    let headers = js_sys::Object::new();
+    for line in block.split("\r\n") {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim();
+        let value = match js_sys::Reflect::get(&headers, &name.as_str().into())?.as_string() {
+            Some(existing) => format!("{existing}, {value}"),
+            None => value.to_string(),
+        };
+        set(&headers, &name, &value.into())?;
+    }
+    Ok(headers)
+}
+
+/// Call a progress callback with `{ loaded, total }`, ignoring its exceptions
+fn report_progress(callback: &js_sys::Function, loaded: f64, total: Option<f64>) {
+    let event = js_sys::Object::new();
+    let _ = set(&event, "loaded", &loaded.into());
+    let _ = set(
+        &event,
+        "total",
+        &total.map_or(JsValue::NULL, JsValue::from_f64),
+    );
+    let _ = callback.call1(&JsValue::UNDEFINED, &event);
+}
+
+/// Whether this is the Node.js entry, which registers its own transport
+pub(crate) fn is_node() -> bool {
+    NODE_TRANSPORT.with(Option::is_some)
+}
+
+/// Whether `globalThis[name]` exists
+pub(crate) fn has_global(name: &str) -> bool {
+    js_sys::Reflect::get(&js_sys::global(), &name.into()).is_ok_and(|value| value.is_function())
 }
 
 async fn send_node(

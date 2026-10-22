@@ -7,6 +7,8 @@
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
+#[cfg(target_arch = "wasm32")]
+mod websocket;
 
 use self::futures::{abortable, AbortableStream};
 use crate::{
@@ -68,6 +70,12 @@ export interface DownloadProgress {
   total: number | null;
 }
 
+/** Upload progress: bytes of the request body sent so far, and the body's size. */
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+}
+
 export interface RetryOptions {
   /** Maximum number of retries after the first attempt. Default: 3 */
   maxRetries?: number;
@@ -111,6 +119,12 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Called after each received chunk of a successful response */
   onDownloadProgress?: (progress: DownloadProgress) => void;
+  /**
+   * Called as the request body is sent; starts again from 0 if the request is retried.
+   * Browsers send these requests with `XMLHttpRequest` (cross-origin ones are preflighted).
+   * Can't be combined with `responseType: 'stream'`.
+   */
+  onUploadProgress?: (progress: UploadProgress) => void;
 }
 
 export interface FetchInit extends RequestOptions {
@@ -645,26 +659,45 @@ pub(crate) async fn send(
         Some(_) => return Err(invalid("signal", "must be an AbortSignal")),
         None => None,
     };
-    let progress = prop(options, "onDownloadProgress");
-    if let Some(callback) = progress.as_ref() {
-        let callback: js_sys::Function = callback
-            .clone()
-            .dyn_into()
-            .map_err(|_| invalid("onDownloadProgress", "must be a function"))?;
-        builder = with_progress(builder, callback);
+    let progress = callback_option(options, "onDownloadProgress")?;
+    if let Some(callback) = &progress {
+        builder = with_progress(builder, callback.clone());
     }
+    let upload_progress = callback_option(options, "onUploadProgress")?;
 
     builder = apply_body(builder, body).await?;
     if let BodyType::Stream = body_type {
+        if upload_progress.is_some() {
+            return Err(invalid(
+                "onUploadProgress",
+                "can't be combined with responseType: 'stream'",
+            ));
+        }
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
         return streaming_response_to_js(response, signal);
     }
+    // The JS transports report upload progress; reqwest's fetch() can't
     #[cfg(target_arch = "wasm32")]
-    if progress.is_none() {
-        return abortable(signal, builder.send_js(body_type)).await;
+    if progress.is_none() || upload_progress.is_some() {
+        let callbacks = transport::ProgressCallbacks {
+            upload: upload_progress,
+            download: progress,
+        };
+        return abortable(signal, builder.send_js(body_type, callbacks)).await;
     }
     let response = abortable(signal, builder.send()).await?;
     response_to_js(response, body_type)
+}
+
+/// An optional callback option, which must be a function when set
+fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Function>> {
+    prop(options, name)
+        .map(|callback| {
+            callback
+                .dyn_into()
+                .map_err(|_| invalid(name, "must be a function"))
+        })
+        .transpose()
 }
 
 /// Report download progress to a JS callback (`{ loaded, total }`).

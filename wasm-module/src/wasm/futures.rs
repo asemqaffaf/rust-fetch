@@ -17,10 +17,10 @@ use wasm_bindgen_futures::JsFuture;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_name = setTimeout)]
-    fn set_timeout(handler: &js_sys::Function, timeout: i32) -> JsValue;
+    pub(crate) fn set_timeout(handler: &js_sys::Function, timeout: i32) -> JsValue;
 
     #[wasm_bindgen(js_name = clearTimeout)]
-    fn clear_timeout(handle: &JsValue);
+    pub(crate) fn clear_timeout(handle: &JsValue);
 }
 
 /// A `setTimeout`-based delay that clears its timer when dropped, so a
