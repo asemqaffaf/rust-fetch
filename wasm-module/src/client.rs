@@ -21,16 +21,16 @@ pub use crate::wasm::WasmClient;
 #[derive(Clone)]
 pub struct Client {
     inner: reqwest::Client,
-    config: Arc<ClientConfig>,
+    pub(crate) config: Arc<ClientConfig>,
 }
 
 /// Client configuration
 #[derive(Clone)]
-struct ClientConfig {
-    default_headers: Headers,
-    timeout: Option<Duration>,
+pub(crate) struct ClientConfig {
+    pub(crate) default_headers: Headers,
+    pub(crate) timeout: Option<Duration>,
     retry_config: Option<RetryConfig>,
-    base_url: Option<String>,
+    pub(crate) base_url: Option<String>,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -343,7 +343,7 @@ impl Client {
 ///
 /// Absolute URLs are used as-is; relative ones are appended to `base`, or
 /// else resolved against `page` (the browser page URL, when there is one).
-fn resolve_url(
+pub(crate) fn resolve_url(
     base: Option<&str>,
     page: Option<reqwest::Url>,
     url: &str,
@@ -418,7 +418,7 @@ fn join_base_url(base: &str, path: &str) -> String {
 }
 
 /// The current page URL, used to resolve relative URLs in browsers
-fn page_url() -> Option<reqwest::Url> {
+pub(crate) fn page_url() -> Option<reqwest::Url> {
     #[cfg(target_arch = "wasm32")]
     {
         let location = js_sys::Reflect::get(&js_sys::global(), &"location".into()).ok()?;
@@ -608,6 +608,7 @@ impl RequestBuilder {
     pub(crate) async fn send_js(
         self,
         body_type: crate::wasm::BodyType,
+        progress: crate::wasm::transport::ProgressCallbacks,
     ) -> Result<wasm_bindgen::JsValue> {
         let url = resolve_url(
             self.client.config.base_url.as_deref(),
@@ -615,8 +616,12 @@ impl RequestBuilder {
             &self.url,
             &self.query,
         )?;
-        let request =
-            crate::wasm::transport::PreparedRequest::new(url.as_str(), &self.config, body_type)?;
+        let request = crate::wasm::transport::PreparedRequest::new(
+            url.as_str(),
+            &self.config,
+            body_type,
+            progress,
+        )?;
         // The Node transport runs its own timer per attempt (cheaper than a
         // wasm-side timer); the policy and error are the same.
         let timeout = if request.enforces_timeout() {
@@ -764,7 +769,7 @@ fn client_init_error(error: reqwest::Error) -> Error {
 }
 
 /// Calculate retry delay with exponential backoff
-fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Duration {
+pub(crate) fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Duration {
     let exponent = i32::try_from(attempt.saturating_sub(1)).unwrap_or(i32::MAX);
     let delay = config.initial_delay.as_secs_f64() * config.multiplier.powi(exponent);
     let delay = delay.min(config.max_delay.as_secs_f64());
@@ -778,7 +783,7 @@ fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Duration {
 
 /// Randomize a delay to between 50% and 100% of its value, so many clients
 /// retrying at once don't hit a recovering server in lockstep
-fn with_jitter(delay: Duration) -> Duration {
+pub(crate) fn with_jitter(delay: Duration) -> Duration {
     Duration::try_from_secs_f64(delay.as_secs_f64() * (0.5 + runtime::random() * 0.5))
         .unwrap_or(delay)
 }
