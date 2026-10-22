@@ -123,7 +123,7 @@ describe('published package', () => {
     assert.ok(result.ms < 5000, `process took ${result.ms}ms to exit`);
   });
 
-  it('type-checks a strict TypeScript consumer without skipLibCheck', () => {
+  it('type-checks a strict TypeScript consumer without skipLibCheck, with TypeScript 7 and 5.2', () => {
     writeFileSync(
       join(project, 'consumer.ts'),
       `import init, { WasmClient, fetch_json, type HttpResponse, type RustFetchError, type ClientOptions,
@@ -156,10 +156,13 @@ describe('published package', () => {
        client.addResponseInterceptor((r) => r, async (e: RustFetchError) => { throw e; });
        await fetch_json('https://example.com');`,
     );
-    const tsc = fileURLToPath(new URL('../../../node_modules/typescript/bin/tsc', import.meta.url));
+    // The current compiler, and the oldest one the README supports
     const args = ['--noEmit', '--strict', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--lib', 'es2022,dom', 'consumer.ts'];
-    const result = spawnSync(process.execPath, [tsc, ...args], { cwd: project, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    for (const compiler of ['typescript', 'typescript-5.2']) {
+      const tsc = fileURLToPath(new URL(`../../../node_modules/${compiler}/bin/tsc`, import.meta.url));
+      const result = spawnSync(process.execPath, [tsc, ...args], { cwd: project, encoding: 'utf8' });
+      assert.equal(result.status, 0, `${compiler}: ${result.stdout}${result.stderr}`);
+    }
   });
 
   it('ships TypeScript definitions for the public API', () => {
