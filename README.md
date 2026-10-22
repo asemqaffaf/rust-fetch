@@ -421,6 +421,7 @@ In the three concurrent workloads, the native transport's p99 latency was less t
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Offered 40,000 requests/s for 20 s, delivered (our harness) | 10,081/s | 37,687/s | 16,984/s | 29,502/s | **2.9×** |
 | 500 requests in flight for 10 s ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness) | 15,960/s | not tested | 17,685/s | 27,563/s | **173%** |
+| Offered 50,000 requests/s for 60 s, delivered ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness) | 12,421/s | not tested | 17,828/s | 32,678/s | **2.6×** |
 
 At 40,000 requests per second, peak memory was 781 MB for `fetch()`, 244 MB for `undici.request()`, 567 MB for the node:http transport and 796 MB for the native transport, whose queued requests wait inside the addon.
 
