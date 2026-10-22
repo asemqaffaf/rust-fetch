@@ -6,8 +6,11 @@
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#contributing-and-license)
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=flat&logo=WebAssembly&logoColor=white)](https://webassembly.org/)
 
-**`fetch()` with the parts production code needs: timeouts, retries, typed errors and interceptors.**
-One client for browsers, Web Workers and Node.js 20+, written in Rust and compiled to WebAssembly.
+**A resilient HTTP client for JavaScript and TypeScript: `fetch()` plus the timeouts, retries, typed errors and interceptors that production code needs, from one Rust core that behaves the same in browsers, Web Workers and Node.js.**
+
+- **Failures you can handle.** Every failure rejects with a typed error carrying the status and body; timeouts cover each attempt including the body; retries back off with jitter and never repeat a POST unless you allow it.
+- **One behaviour everywhere.** The request policy is written once in Rust and compiled to WebAssembly, so a request is validated, retried and timed out the same way in a browser tab and in a Node.js service.
+- **Built for concurrency in Node.js.** The native transport, in development, delivered up to **1.95×** the throughput of Node.js `fetch()` in measured concurrent workloads, with lower tail latency and memory under sustained load ([at a glance](#performance-at-a-glance)).
 
 ```js
 import { WasmClient } from 'rust-fetch';
@@ -31,7 +34,7 @@ try {
 }
 ```
 
-> **What `npm install` gives you today:** the WebAssembly client, using `fetch()` in browsers and a `node:http` transport in Node.js. The **native Node.js transport** described under [Performance](#performance) and [Architecture](#architecture) is in development and **not in the npm package yet**.
+> **What `npm install` gives you today** (rust-fetch 2.1.1): the WebAssembly client, using `fetch()` in browsers and a `node:http` transport with a bounded connection pool in Node.js. The **native Node.js transport** behind the performance figures below is in development and **not in the npm package yet**.
 
 ## Contents
 
@@ -47,10 +50,38 @@ try {
 
 ## Why rust-fetch?
 
-- **The failure handling `fetch()` leaves to you, built in.** `fetch()` resolves on a 404 or 500, has no retries, and its timeouts are an `AbortSignal` you wire up yourself. rust-fetch rejects every failure with a typed error (`HttpError`, `TimeoutError`, `NetworkError`, …) that carries the status and body, times out each attempt including the body, and retries with backoff, without retrying POST unless you opt in.
-- **Built for load in Node.js.** In an independent benchmark of the published client (2.1.0, Apple M4 Pro) at a steady 15,000 requests per second, its p99 latency was 11 ms and its memory 202 MB, against 450 ms and 635 MB for Node's `fetch()`. The native transport, in development, delivered 1.7 to 1.9 times `fetch()`'s throughput at 50 to 500 concurrent requests in our tests, and is about 6% slower for sequential ones. Details in [Performance](#performance).
-- **One API everywhere.** The same client, options and errors in browsers, Web Workers and Node.js, and [as a Rust crate](#using-it-from-rust).
-- **Tested like infrastructure.** CI enforces 100% line and function coverage of the Rust core and of the Node.js transport, runs on Node.js 20, 22 and 24, and tests the packed npm package end to end. See [Development](#development-and-benchmarking).
+### Instead of `fetch()`
+
+`fetch()` gives you a request primitive; rust-fetch gives you the policy around it.
+
+- **Failures are explicit.** `fetch()` resolves on a 404 or 500, so every caller has to check `res.ok`. rust-fetch rejects with an `HttpError` that carries `status` and the response body, alongside `TimeoutError`, `NetworkError`, `CancelledError` and the other [error kinds](#errors), so one `catch` handles every failure.
+- **Timeouts that mean what they say.** `timeoutMs` covers each attempt from sending the request to the last byte of the body, with a 30 s default. With `fetch()`, you wire up an `AbortSignal` yourself.
+- **Retries that are safe by default.** Exponential backoff with jitter, `Retry-After` honoured, and no automatic retries of POST or PATCH, which a server may already have acted on.
+- **Interceptors** for auth headers, token refresh and error reporting, which `fetch()` doesn't have.
+- **Steadier under load, with the published client.** In an [independent benchmark](#independent-benchmark-of-rust-fetch-210) of rust-fetch 2.1.0 (Apple M4 Pro) at a steady 15,000 requests per second, its p99 latency was 11.2 ms and its peak memory 202 MB, against 450 ms and 635 MB for `fetch()`.
+- **More throughput under concurrency in Node.js** with the native transport ([at a glance](#performance-at-a-glance)).
+
+### Instead of `undici.request()`
+
+`undici.request()`, the engine under Node's `fetch()`, is a lower-level, Node.js-only API. It was faster than both rust-fetch transports for small requests over plain HTTP in our tests, so it's the better choice when raw throughput is all you need and you'll build error handling, timeouts and retries yourself. rust-fetch is the better choice when you want that policy built in and the same client in browsers. Over HTTPS, the native transport matched `undici.request()` (30,452 against 30,546 requests per second), and on 8 MB bodies it was ahead (322 against 301).
+
+### Performance at a glance
+
+The native Node.js transport against Node.js `fetch()`. Apple M1 Pro, Node.js 22.13, local server. [Performance](#performance) has the full results, including the less favourable ones, and the test conditions.
+
+| Workload | Native transport vs `fetch()` |
+| --- | --- |
+| HTTPS, 50 concurrent small-JSON requests | **1.95×** throughput |
+| 500 concurrent small-JSON requests | **1.89×** throughput |
+| 50 concurrent small-JSON requests | **1.71×** throughput |
+| 8 MB binary transfers | **1.61×** throughput |
+| Offered 40,000 requests/s (overload) | **2.9×** requests delivered |
+| Steady 15,000 requests/s, our harness | Kept up (14,992/s against 11,557/s), about **13× lower p99** (91 ms against 1.2 s) and about **4× less memory** (195 MB against 782 MB) |
+| Steady 15,000 requests/s, independent harness | Kept up (14,991/s against 13,026/s); p99 568 ms against 920 ms; 541 MB against 903 MB |
+| Large JSON, 0.6 MB | 1.02×, even |
+| Sequential small-JSON requests | 0.94×, about 6% slower |
+
+**Why concurrency is where it wins.** With the `node:http` transport, connection handling, HTTP parsing and decompression share the JavaScript event loop with your application. The native transport runs them on its own threads, leaving the event loop free to build requests and decode responses. With one request at a time there's little to overlap, and the hand-off between threads costs a little. How much you gain depends on your hardware, payloads and concurrency.
 
 ### Compared with `fetch()` and axios
 
@@ -65,11 +96,12 @@ try {
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
 | Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 190 KB, mostly WebAssembly |
 
-### When to use something else
+### When to choose something else
 
 - **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 183 KB brotli-compressed.
 - **You need upload progress.** `fetch()` can't report it, so rust-fetch can't either. axios can, through `XMLHttpRequest`.
-- **You only need raw throughput in Node.js.** `undici.request()` was faster than both rust-fetch transports on plain HTTP in our tests (see [Performance](#performance)). It also does less per request: retries, per-attempt timeouts and typed errors are left to you.
+- **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
+- **Your Node.js code makes one request at a time** and you're considering the native transport for speed: it's about 6% slower there.
 
 ## Quick start
 
@@ -100,17 +132,20 @@ const client = new WasmClient();
 
 ## Features
 
-- **Works everywhere**: browsers (directly or through bundlers like Vite and webpack), Web Workers and Node.js 20+. In Node.js there's no setup: `import` and go.
-- **Timeouts** per attempt, covering the response body, not just the headers. The default is 30 s.
-- **Retries** with exponential backoff and jitter. `Retry-After` is honoured, and POST/PATCH aren't retried unless you opt in.
-- **Typed errors**: every rejection is a real `Error` with a `kind` (`HttpError`, `TimeoutError`, …) and details like `status` and `body`.
-- **Cancellation** with `AbortSignal`, including during retry backoff and while streaming.
-- **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams`, or JSON.
-- **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`.
-- **Streaming** responses as a `ReadableStream`, and **download progress** callbacks.
-- **Interceptors** for requests and responses, e.g. auth headers and token refresh.
-- **TypeScript** definitions for the whole API.
-- **Bounded connection pool in Node.js**: up to 256 keep-alive connections per origin, so bursts queue instead of exhausting local ports. See [Architecture](#connection-pooling).
+Each of these works the same in browsers, Web Workers and Node.js 20+.
+
+- **Typed errors.** Every rejection is a real `Error` with a `kind` (`HttpError`, `TimeoutError`, `NetworkError`, …) and details like `status`, `body` and `timeoutMs`, so error handling branches on data instead of parsing messages. [Errors](#errors)
+- **Per-attempt timeouts** that cover the response body, not just the headers, so a server that stalls mid-body can't hang a request. The default is 30 s. [Timeouts](#timeouts)
+- **Retries** with exponential backoff and jitter, so clients recovering at the same time don't hit a struggling server in lockstep. `Retry-After` is honoured, and POST/PATCH aren't retried unless you opt in, so a retry can't duplicate an order or a payment. [Retries](#retries)
+- **Cancellation** with `AbortSignal`, which also stops pending retry delays and streamed bodies, so an abandoned request releases its resources. [Cancellation](#cancellation)
+- **Interceptors** for requests and responses: add auth headers, refresh tokens and report errors in one place. [Interceptors](#interceptors)
+- **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams` or JSON, with the matching `Content-Type` set for you. [Request bodies](#request-bodies)
+- **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`. [Responses](#responses)
+- **Streaming** responses as a `ReadableStream`, and **download progress** callbacks, for large downloads. [Streaming](#streaming)
+- **A bounded connection pool in Node.js**: up to 256 keep-alive connections per origin, so traffic bursts queue and reuse connections instead of exhausting local ports. [Connection pooling](#connection-pooling)
+- **A native Node.js transport** (in development, not on npm yet) that moves connection work off the event loop for more throughput under concurrency, and steps aside automatically for custom agents and proxies. [Architecture](#architecture)
+- **TypeScript** definitions for the whole API, and the same client [as a Rust library](#using-it-from-rust).
+- **Tested** with 100% line and function coverage of the Rust core and of the Node.js transport, enforced in CI on Node.js 20, 22 and 24. [Development](#development-and-benchmarking)
 
 ## Performance
 
@@ -496,7 +531,7 @@ Everything that decides what happens to a request (URL handling, validation, ret
 
 In Node.js, streamed responses (`responseType: 'stream'`) and requests with `onDownloadProgress` go through Node's `fetch()` instead.
 
-**Why the native transport matters.** With `node:http`, connection handling, HTTP parsing and decompression run on the JavaScript event loop, next to your application. The native transport does that work on its own threads, so the event loop only builds requests and decodes their bodies. That pays off when many requests are in flight. Handing each request to another thread and back also costs time, which likely contributes to its slower sequential results.
+**What the native transport changes.** Connection handling, TLS, HTTP parsing and decompression move from the JavaScript event loop to Tokio threads; JavaScript only builds requests and decodes their bodies. That's why it gains most with many requests in flight, and why the hand-off between threads likely contributes to its slower sequential results ([measurements](#performance-at-a-glance)).
 
 **When it's used.** The native transport is used when `rust-fetch-native.<platform>-<arch>.node` sits next to the package's `node.js` (`npm run build:native` puts it there). It steps aside where you have installed your own `http.globalAgent` / `https.globalAgent` (for example a proxy agent) or set `NODE_USE_ENV_PROXY`, and `RUST_FETCH_NATIVE=0` turns it off.
 
