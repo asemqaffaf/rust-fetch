@@ -4,8 +4,8 @@
   "collaborators": [
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
-  "description": "A reliable HTTP client for JavaScript and TypeScript, written in Rust and compiled to WebAssembly: timeouts, retries, typed errors and interceptors, faster than fetch() in Node.js",
-  "version": "2.1.1",
+  "description": "Resilient HTTP client for JavaScript, TypeScript and Rust: fetch() with timeouts, retries, typed errors, interceptors, upload and download progress, and WebSockets, from one Rust core compiled to WebAssembly for browsers and Node.js",
+  "version": "2.2.0",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -17,20 +17,46 @@
     "rust_fetch.js",
     "rust_fetch.d.ts",
     "node.js",
+    "llms.txt",
     "LICENSE-MIT",
     "LICENSE-APACHE"
   ],
   "main": "rust_fetch.js",
+  "homepage": "https://github.com/asemqaffaf/rust-fetch#readme",
   "types": "rust_fetch.d.ts",
   "sideEffects": [
     "./snippets/*"
   ],
   "keywords": [
-    "wasm",
     "http",
-    "client",
+    "http-client",
     "fetch",
-    "webassembly"
+    "fetch-api",
+    "request",
+    "rest",
+    "api-client",
+    "axios-alternative",
+    "retry",
+    "retries",
+    "backoff",
+    "timeout",
+    "interceptors",
+    "typed-errors",
+    "abortcontroller",
+    "upload-progress",
+    "download-progress",
+    "streaming",
+    "websocket",
+    "websockets",
+    "reconnect",
+    "typescript",
+    "nodejs",
+    "browser",
+    "isomorphic",
+    "webassembly",
+    "wasm",
+    "rust",
+    "napi"
   ],
   "exports": {
     ".": {
@@ -48,7 +74,6 @@
   "engines": {
     "node": ">=20"
   },
-  "homepage": "https://github.com/asemqaffaf/rust-fetch#readme",
   "bugs": {
     "url": "https://github.com/asemqaffaf/rust-fetch/issues"
   }

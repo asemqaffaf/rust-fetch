@@ -68,8 +68,7 @@ try {
 ```
 
 > **Release status**
-> - **On npm (2.1.1):** everything in this README, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
-> - **Next release:** [upload progress](#upload-progress) and [WebSockets](#websockets).
+> - **On npm (2.2.0):** everything in this README, including [upload progress](#upload-progress) and [WebSockets](#websockets), except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains below. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Contents
@@ -82,6 +81,7 @@ try {
 - [Architecture](#architecture)
 - [Compatibility and limitations](#compatibility-and-limitations)
 - [Development and benchmarking](#development-and-benchmarking)
+- [FAQ](#faq)
 - [Contributing and license](#contributing-and-license)
 
 ## Why rust-fetch?
@@ -97,7 +97,7 @@ try {
 | Retries with backoff | No | With a plugin (`axios-retry`) | Built in: jitter, `Retry-After`, no POST or PATCH retries unless enabled |
 | Interceptors | No | Yes | Yes |
 | Download progress | Read the stream yourself | Yes | Yes |
-| Upload progress | No | Yes | Yes (next release) |
+| Upload progress | No | Yes | Yes |
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
 | Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 207 KB: the WebAssembly module (198 KB) and its JS glue |
 
@@ -105,7 +105,7 @@ The rust-fetch column describes the JavaScript API; the Rust crate has no interc
 
 ### One client for HTTP and WebSockets
 
-Real-time features usually mean a second client with its own URL handling, timeouts and error handling. In rust-fetch (from the next release), `client.websocket()` is part of the same client: it resolves against the same `baseUrl`, uses the same timeout for each connection attempt, and fails with the same typed errors as requests. It also adds what the platform's `WebSocket` lacks: reconnection with backoff after unexpected drops, a connect timeout, `opened`/`closed` promises and JSON messages ([WebSockets](#websockets)).
+Real-time features usually mean a second client with its own URL handling, timeouts and error handling. In rust-fetch, `client.websocket()` is part of the same client: it resolves against the same `baseUrl`, uses the same timeout for each connection attempt, and fails with the same typed errors as requests. It also adds what the platform's `WebSocket` lacks: reconnection with backoff after unexpected drops, a connect timeout, `opened`/`closed` promises and JSON messages ([WebSockets](#websockets)).
 
 ### Compared with `undici.request()`
 
@@ -132,10 +132,10 @@ Unless noted, each of these works the same in browsers, Web Workers and Node.js 
 - **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams` or JSON, with the matching `Content-Type` set for you. [Request bodies](#request-bodies)
 - **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`. [Responses](#responses)
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks, for large downloads. [Streaming](#streaming)
-- **Upload progress** callbacks, for progress bars on large uploads, which `fetch()` can't report. Next release. [Upload progress](#upload-progress)
+- **Upload progress** callbacks, for progress bars on large uploads, which `fetch()` can't report. [Upload progress](#upload-progress)
 
 **Real-time**
-- **WebSockets on the same client**: the same base URL, timeouts and typed errors as your requests, plus reconnection with jittered backoff after unexpected drops. Browsers and Node.js 22+; next release. [WebSockets](#websockets)
+- **WebSockets on the same client**: the same base URL, timeouts and typed errors as your requests, plus reconnection with jittered backoff after unexpected drops. Browsers and Node.js 22+. [WebSockets](#websockets)
 
 **Node.js**
 - **A bounded connection pool**: up to 256 keep-alive connections per origin, so traffic bursts queue and reuse connections instead of exhausting local ports. [Connection pooling](#connection-pooling)
@@ -533,7 +533,7 @@ A single `Blob` or `File` body is sent as raw bytes with the blob's type.
 
 ### Upload progress
 
-*Next release.* Report how much of a request body has been sent, for example to drive a progress bar:
+Report how much of a request body has been sent, for example to drive a progress bar:
 
 ```js
 const form = new FormData();
@@ -555,7 +555,7 @@ How it's sent:
 
 ### WebSockets
 
-*Next release.* Available in browsers and in Node.js 22 and newer (Node.js 20 needs `--experimental-websocket`).
+Available in browsers and in Node.js 22 and newer (Node.js 20 needs `--experimental-websocket`).
 
 ```js
 const socket = client.websocket('/live', {     // wss://api.example.com/v1/live?room=blue
@@ -669,9 +669,9 @@ Everything that decides what happens to a request (URL handling, validation, ret
 | Transport | Where | In the npm package |
 | --- | --- | --- |
 | The platform's `fetch()` | Browsers and Web Workers | Yes |
-| `XMLHttpRequest` | Browsers, for upload progress | Next release |
+| `XMLHttpRequest` | Browsers, for upload progress | Yes |
 | `node:http` / `node:https` with keep-alive | Node.js | Yes |
-| The runtime's `WebSocket`, with the connection policy (URL, timeout, reconnection, errors) in Rust | WebSockets, everywhere | Next release |
+| The runtime's `WebSocket`, with the connection policy (URL, timeout, reconnection, errors) in Rust | WebSockets, everywhere | Yes |
 | Native addon: HTTP/1.1 on [hyper](https://hyper.rs) and Tokio threads, loaded through Node-API, with the same redirect, decompression, timeout and connection-limit rules and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`) | Node.js | Not yet: build it with `npm run build:native` |
 
 **Which transport a request uses:**
@@ -699,7 +699,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 | Browsers and Web Workers | Supported, directly or through bundlers like Vite and webpack; call `init()` first |
 | Node.js 20, 22 and 24 | Supported and tested in CI; Node.js 20 is the minimum |
 | TypeScript | Definitions included; TypeScript 5.2 or newer |
-| Upload progress, WebSockets | JavaScript API only, from the next release. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 22 and 24 |
+| Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 22 and 24 |
 | Rust | The same client as a Rust library ([usage](#using-it-from-rust)), on tokio or in your own wasm crates |
 | Native Node.js transport | In the repository, not yet in the npm package (no prebuilt binaries); build it with `npm run build:native`. Tested in CI on Linux with Node.js 20, 22 and 24, and run on macOS (Apple silicon); not tried on Windows |
 
@@ -774,8 +774,34 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 
 `npm run bench` compares rust-fetch with Node's `fetch()` on a local server. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. For sustained load and overload, the [aakjp/stress-test](https://github.com/aakjp/stress-test) harness runs against any installed version of rust-fetch.
 
+## FAQ
+
+**How do I add retries and timeouts to `fetch()`?**
+Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3 })` times out each attempt (including the body) and retries network errors, timeouts and 408/429/5xx responses with exponential backoff and jitter, honouring `Retry-After`. POST and PATCH aren't retried unless you opt in. See [Timeouts](#timeouts) and [Retries](#retries).
+
+**Is rust-fetch an alternative to axios?**
+Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 207 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
+
+**Does it work in browsers and Node.js?**
+Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](#supported-environments).
+
+**Is it faster than `fetch()`?**
+In Node.js, the published client matches `fetch()` one request at a time and is ahead with large bodies, many requests in flight and sustained load, but behind on concurrent HTTPS. The native transport, not in the npm package yet, reached up to 1.95× `fetch()`'s throughput. In browsers it uses `fetch()` itself. See [Performance](#performance).
+
+**How do I track upload progress?**
+Pass `onUploadProgress: ({ loaded, total }) => …` to `post`, `put` or `patch`. See [Upload progress](#upload-progress).
+
+**How do I reconnect a WebSocket automatically?**
+`client.websocket(url, { reconnect: true })` reconnects after failures and unexpected drops with exponential backoff, and reports failures as typed errors. See [WebSockets](#websockets).
+
+**How do I type the response body in TypeScript?**
+`client.get<User>('/users/42')` resolves to `HttpResponse<User>`. See [TypeScript](#typescript).
+
+**Do I need to know Rust?**
+No. The npm package is used from JavaScript or TypeScript like any other; Rust is only how the core is built. Rust developers can also [use the crate directly](#using-it-from-rust).
+
 ## Contributing and license
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development process and pull request checks, and [SECURITY.md](SECURITY.md) to report a vulnerability. Releases are published by CI when a version tag is pushed; see [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development process and pull request checks, and [SECURITY.md](SECURITY.md) to report a vulnerability. Releases are published by CI when a version tag is pushed; see [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Planned work is in the [roadmap](ROADMAP.md).
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

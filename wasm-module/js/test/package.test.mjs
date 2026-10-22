@@ -53,6 +53,7 @@ describe('published package', () => {
       'LICENSE-APACHE',
       'LICENSE-MIT',
       'README.md',
+      'llms.txt',
       'node.js',
       'package.json',
       'rust_fetch.d.ts',

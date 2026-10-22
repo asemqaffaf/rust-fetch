@@ -7,6 +7,7 @@ const pkgDir = new URL('wasm-module/pkg/', root);
 
 copyFileSync(new URL('wasm-module/js/node.js', root), new URL('node.js', pkgDir));
 copyFileSync(new URL('README.md', root), new URL('README.md', pkgDir));
+copyFileSync(new URL('llms.txt', root), new URL('llms.txt', pkgDir));
 for (const license of ['LICENSE-MIT', 'LICENSE-APACHE']) {
   copyFileSync(new URL(license, root), new URL(license, pkgDir));
 }
@@ -35,7 +36,7 @@ writeFileSync(typesUrl, types);
 const manifestUrl = new URL('package.json', pkgDir);
 const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8'));
 
-manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'LICENSE-MIT', 'LICENSE-APACHE'];
+manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'llms.txt', 'LICENSE-MIT', 'LICENSE-APACHE'];
 manifest.exports = {
   '.': {
     types: './rust_fetch.d.ts',
@@ -50,6 +51,13 @@ manifest.exports = {
   './package.json': './package.json',
 };
 manifest.engines = { node: '>=20' };
+// crates.io allows five keywords (Cargo.toml); npm search uses as many as are relevant
+manifest.keywords = [
+  'http', 'http-client', 'fetch', 'fetch-api', 'request', 'rest', 'api-client', 'axios-alternative',
+  'retry', 'retries', 'backoff', 'timeout', 'interceptors', 'typed-errors', 'abortcontroller',
+  'upload-progress', 'download-progress', 'streaming', 'websocket', 'websockets', 'reconnect',
+  'typescript', 'nodejs', 'browser', 'isomorphic', 'webassembly', 'wasm', 'rust', 'napi',
+];
 manifest.homepage = 'https://github.com/asemqaffaf/rust-fetch#readme';
 manifest.bugs = { url: 'https://github.com/asemqaffaf/rust-fetch/issues' };
 

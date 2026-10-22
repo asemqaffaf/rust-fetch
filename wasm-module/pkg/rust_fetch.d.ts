@@ -488,7 +488,7 @@ export interface InitOutput {
     readonly websocketconnection_url: (a: number) => [number, number];
     readonly wasm_bindgen__convert__closures_____invoke__h39ac090089444320: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__h1dc388a5dfa52d7a: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__hd0ea8bfc4af5d405: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__hee4dc590ff76ee6a: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h5f968e02a5abe20b: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
