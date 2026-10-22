@@ -1,9 +1,16 @@
-// The Node.js transport (node:http/node:https) replaces fetch() in Node.js, so
-// it must reproduce what fetch() did for us: redirects, decompression, default
-// headers and connection reuse.
+// The Node.js transports (the native addon, or node:http/node:https where it
+// isn't available) replace fetch() in Node.js, so they must reproduce what
+// fetch() did for us: redirects, decompression, default headers and connection
+// reuse. node-transport-js.test.mjs runs these tests without the addon.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile, execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { WasmClient } from '../../pkg/node.js';
 import { json, rejection, startServer } from './helpers.mjs';
@@ -73,7 +80,16 @@ after(async () => {
 
 const client = () => new WasmClient();
 
-describe('Node.js transport', () => {
+const addon = new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url);
+const nativeExpected = process.env.RUST_FETCH_NATIVE !== '0' && existsSync(addon);
+
+describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () => {
+  it(nativeExpected ? 'uses the native addon' : 'uses node:http without the native addon', async () => {
+    // node:http adds `connection: keep-alive`; the native transport doesn't need to
+    const { headers } = (await client().get(server.url('/echo'))).body;
+    assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
+  });
+
   it('is used instead of fetch() in Node.js, with fetch-like default headers', async () => {
     const { headers } = (await client().get(server.url('/echo'))).body;
     assert.equal(headers['user-agent'], 'rust-fetch');
@@ -93,6 +109,17 @@ describe('Node.js transport', () => {
     assert.equal(res.body.headers['x-multi'], 'a, b');
     assert.equal(res.body.headers['content-length'], String(Buffer.byteLength('héllo')));
     assert.equal(res.body.body, 'héllo');
+  });
+
+  it('lets the process exit as soon as requests finish', async () => {
+    const script = `import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
+      const c = new WasmClient();
+      await c.get(${JSON.stringify(server.url('/echo'))});
+      await c.get(${JSON.stringify(server.url('/echo'))}, { signal: new AbortController().signal });
+      globalThis.started = performance.now();
+      process.on('exit', () => console.log(performance.now() - globalThis.started));`;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script]);
+    assert.ok(Number(stdout) < 1000, `took ${stdout}ms to exit`);
   });
 
   it('rejects URLs it cannot parse (the client validates them first)', async () => {
@@ -125,14 +152,14 @@ describe('Node.js transport', () => {
     it('caps connections per origin and keeps them for the next burst', async () => {
       // Node's default agent opens one socket per request here and closes
       // all but 256 afterwards, which exhausts ephemeral ports under load
-      slowSockets.clear();
       const c = client();
+      const before = slow.connections();
       await burst(c, 600);
-      const first = new Set(slowSockets);
-      assert.ok(first.size <= 256, `opened ${first.size} sockets for 600 concurrent requests`);
+      const first = slow.connections() - before;
+      assert.ok(first <= 256, `opened ${first} connections for 600 concurrent requests`);
       await burst(c, 600);
-      const opened = [...slowSockets].filter((s) => !first.has(s)).length;
-      assert.equal(opened, 0, `opened ${opened} new sockets for the second burst`);
+      const opened = slow.connections() - before - first;
+      assert.equal(opened, 0, `opened ${opened} new connections for the second burst`);
     });
 
     it('uses an agent the application installed as globalAgent', async () => {
@@ -158,6 +185,63 @@ describe('Node.js transport', () => {
         http.globalAgent.destroy();
         http.globalAgent = original;
       }
+    });
+  });
+
+  describe('HTTPS', () => {
+    let secure;
+    let misnamed; // serves a certificate for example.com
+    let dir;
+    before(async () => {
+      // A self-signed certificate for 127.0.0.1, trusted by nothing by default
+      dir = mkdtempSync(join(tmpdir(), 'rust-fetch-tls-'));
+      const certificate = (name, subjectAltName) =>
+        execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+          '-subj', `/CN=${name}`, '-addext', `subjectAltName=${subjectAltName}`, '-keyout', join(dir, name), '-out', join(dir, `${name}.crt`)], { stdio: 'ignore' });
+      certificate('127.0.0.1', 'IP:127.0.0.1');
+      certificate('example.com', 'DNS:example.com');
+      const serve = (name) => https.createServer({ key: readFileSync(join(dir, name)), cert: readFileSync(join(dir, `${name}.crt`)) }, (req, res) => json(res, { headers: req.headers }));
+      secure = serve('127.0.0.1');
+      misnamed = serve('example.com');
+      await Promise.all([secure, misnamed].map((s) => new Promise((resolve) => s.listen(0, '127.0.0.1', resolve))));
+    });
+    after(() => {
+      for (const s of [secure, misnamed]) {
+        s.closeAllConnections();
+        s.close();
+      }
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    const url = (s = secure) => `https://127.0.0.1:${s.address().port}/`;
+
+    /** Request a URL from a new process (the TLS settings are read at startup) */
+    async function getInProcess(env, target = url()) {
+      const script = `import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
+        const res = await new WasmClient({ timeoutMs: 5000 }).get(${JSON.stringify(target)}).catch((e) => ({ body: { error: e.kind } }));
+        console.log(JSON.stringify(res.body.headers ?? res.body));`;
+      const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, ...env } });
+      return JSON.parse(stdout);
+    }
+
+    it('rejects a certificate that is not trusted', async () => {
+      const error = await rejection(client().get(url()));
+      assert.equal(error.kind, 'NetworkError');
+    });
+
+    it('trusts certificates from NODE_EXTRA_CA_CERTS', async () => {
+      const headers = await getInProcess({ NODE_EXTRA_CA_CERTS: join(dir, '127.0.0.1.crt') });
+      assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
+    });
+
+    it('still checks the name of a trusted certificate', async () => {
+      const result = await getInProcess({ NODE_EXTRA_CA_CERTS: join(dir, 'example.com.crt') }, url(misnamed));
+      assert.deepEqual(result, { error: 'NetworkError' });
+    });
+
+    it('skips verification with NODE_TLS_REJECT_UNAUTHORIZED=0', async () => {
+      const headers = await getInProcess({ NODE_TLS_REJECT_UNAUTHORIZED: '0' });
+      assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
     });
   });
 

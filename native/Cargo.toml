@@ -1,0 +1,39 @@
+[package]
+name = "rust-fetch-native"
+version = "2.1.1"
+edition = "2021"
+authors = ["Asem Qaffaf <asem@qaffaf.com>"]
+license = "MIT OR Apache-2.0"
+description = "Native Node.js transport for rust-fetch (HTTP/1.1 on hyper and Tokio, loaded through Node-API)"
+repository = "https://github.com/asemqaffaf/rust-fetch"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+brotli = "8"
+bytes = "1"
+flate2 = "1"
+futures-util = { version = "0.3", default-features = false }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+napi = { version = "3", default-features = false, features = ["napi9", "tokio_rt"] }
+napi-derive = "3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+url = "2"
+webpki-roots = "1"
+x509-parser = { version = "0.18", default-features = false }
+zstd = { version = "0.13", default-features = false }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

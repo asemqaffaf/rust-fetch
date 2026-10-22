@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Native Node.js transport (not yet in the npm package).** `native/` builds a Node-API addon that moves requests off the JS thread: HTTP/1.1 on hyper and Tokio, with the same rules as the node:http transport (fetch() redirects, decompression, default headers, per-attempt timeout, cancellation, at most 256 connections per origin) and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED=0`). Retries, timeouts, validation, errors and interceptors still come from the Rust core, unchanged. When `rust-fetch-native.<platform>-<arch>.node` sits next to the package's `node.js`, it is used wherever the node:http transport would use its own pool; an agent installed as `http.globalAgent` / `https.globalAgent`, or `NODE_USE_ENV_PROXY`, keeps node:http. `RUST_FETCH_NATIVE=0` turns it off. Build it with `npm run build:native`.
+- The Node.js entry point (`node.js`) grows by about 1 kB (to 15 kB, 5.5 kB gzipped) for the native transport's loader; its size budget is now 16 kB (6 kB gzipped). Browsers don't load it.
+
 ## [2.1.1] - 2026-10-22
 
 ### Fixed
