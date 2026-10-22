@@ -3,11 +3,13 @@ import http from 'node:http';
 /**
  * Start a local HTTP server. `handler(req, res, ctx)` gets the parsed request
  * (`req.body` is a Buffer) and `ctx.count`, the 0-based index of the request.
- * Every request is recorded in `server.requests`.
+ * Every request is recorded in `server.requests`; `server.connections()` is
+ * the number of connections accepted so far.
  */
 export async function startServer(handler) {
   const requests = [];
   const sockets = new Set();
+  let connections = 0;
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -24,6 +26,7 @@ export async function startServer(handler) {
     });
   });
   server.on('connection', (s) => {
+    connections++;
     sockets.add(s);
     s.on('close', () => sockets.delete(s));
   });
@@ -33,6 +36,7 @@ export async function startServer(handler) {
     base,
     url: (path = '/') => base + path,
     requests,
+    connections: () => connections,
     close: () => {
       for (const s of sockets) s.destroy();
       return new Promise((resolve) => server.close(resolve));

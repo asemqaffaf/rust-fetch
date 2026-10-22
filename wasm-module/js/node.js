@@ -9,13 +9,40 @@
 // fetch() implements browser semantics (WHATWG streams) on top of the same
 // sockets and is considerably slower; this transport only moves bytes.
 // Retries, timeouts, validation and decoding stay in the Rust core.
+//
+// Where the native addon (rust-fetch-native.<platform>-<arch>.node) loads,
+// requests go through it instead: the same rules, implemented in Rust on
+// Tokio threads, so the JS thread only builds requests and decodes bodies.
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import { createRequire } from 'node:module';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
 
 initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
+
+/**
+ * The native addon, or undefined. RUST_FETCH_NATIVE overrides its path;
+ * anything that doesn't load (e.g. `0`) keeps the node:http transport.
+ */
+function loadNative() {
+  const path = process.env.RUST_FETCH_NATIVE ?? `./rust-fetch-native.${process.platform}-${process.arch}.node`;
+  try {
+    const addon = createRequire(import.meta.url)(path);
+    const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
+    addon.configure({
+      zstd: typeof zlib.zstdDecompressSync === 'function',
+      rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0',
+      extraCaCerts: extraCaCerts ? readFileSync(extraCaCerts) : undefined,
+    });
+    return addon;
+  } catch {
+    return undefined;
+  }
+}
+
+const native = loadNative();
 
 // Node's default global agents open a socket for every request that finds no
 // idle one, but keep only 256 of them idle afterwards. Under a burst the rest
@@ -237,6 +264,11 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
  * AbortSignal into every request.
  */
 function nodeTransport(request) {
+  // The native transport makes its own connections, so only where the
+  // node:http transport would use its own pool too, not an installed agent
+  const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
+  if (native && transport && agentFor(transport) === pools.get(transport)) return nativeTransport(request);
+
   const state = { cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO };
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -254,16 +286,11 @@ function nodeTransport(request) {
       clearTimeout(timer);
       return reject(error);
     }
-    const headers = { ...request.headers };
-    headers['accept'] ??= '*/*';
-    headers['accept-encoding'] ??= ACCEPT_ENCODING;
-    headers['user-agent'] ??= 'rust-fetch';
-    if (request.body) headers['content-length'] ??= String(request.body.length);
     const settle = (fn) => (value) => {
       clearTimeout(timer);
       fn(value);
     };
-    send(state, request.method, url, headers, request.body, 0, settle(resolve), settle(reject));
+    send(state, request.method, url, withDefaultHeaders(request), request.body, 0, settle(resolve), settle(reject));
   });
   const cancel = () => {
     state.cancelled = true;
@@ -277,6 +304,46 @@ function nodeTransport(request) {
     clearTimeout(timer);
     cancel();
   };
+  return finished;
+}
+
+/** The request's headers plus fetch()-like defaults */
+function withDefaultHeaders(request) {
+  const headers = { ...request.headers };
+  headers['accept'] ??= '*/*';
+  headers['accept-encoding'] ??= ACCEPT_ENCODING;
+  headers['user-agent'] ??= 'rust-fetch';
+  if (request.body) headers['content-length'] ??= String(request.body.length);
+  return headers;
+}
+
+let nextNativeId = 0;
+
+/** `nodeTransport` through the native addon: same contract, same rules */
+function nativeTransport(request) {
+  const id = (nextNativeId = (nextNativeId + 1) >>> 0);
+  const headers = withDefaultHeaders(request);
+  // Names and values alternating; a repeated header is sent once per value
+  const pairs = [];
+  for (const name in headers) {
+    const value = headers[name];
+    if (Array.isArray(value)) for (const item of value) pairs.push(name, item);
+    else pairs.push(name, value);
+  }
+  const bodyType = request.bodyType ?? AUTO;
+  const finished = native
+    .send({ id, method: request.method, url: request.url, headers: pairs, body: request.body, timeout: request.timeout })
+    .then((response) => {
+      if (response.error != null) throw coded(new Error(response.error), response.code);
+      const headers = {};
+      const raw = response.headers;
+      for (let i = 0; i < raw.length; i += 2) {
+        const name = raw[i];
+        headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
+      }
+      return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType);
+    });
+  finished.cancel = () => native.cancel(id);
   return finished;
 }
 

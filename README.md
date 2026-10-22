@@ -417,6 +417,7 @@ The npm package is built from `wasm-module/` with [wasm-pack](https://rustwasm.g
 
 ```bash
 npm run build      # wasm-pack build + package metadata (wasm-module/pkg)
+npm run build:native  # build the native Node.js transport (native/) into wasm-module/pkg
 npm test           # Rust unit + integration tests, then the JS tests
 npm run test:js    # JS end-to-end tests against the built package (requires a build)
 npm run bench      # rust-fetch vs native fetch (requires a build)
@@ -435,9 +436,10 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | Rust integration tests | `wasm-module/tests/integration_tests.rs` | Real HTTP against a local server: retries, timeouts, redirects, chunked/truncated/large bodies, streaming, progress, concurrency |
 | Wasm unit tests | `wasm-module/src/wasm/tests.rs` | JS conversions, bodies, options, interceptors, timers and abort signals in Node.js |
 | JS end-to-end tests | `wasm-module/js/test/client.test.mjs` | The built package against a local server |
+| Node transport tests | `wasm-module/js/test/node-transport.test.mjs` | Redirects, decompression, default headers, connection pooling and HTTPS. With `client.test.mjs`, they run once per Node.js transport: native (when built) and node:http (the `*-js.test.mjs` files) |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
-CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24, and checks formatting, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node 20, 22 and 24 (against both Node.js transports), and checks formatting, lints of the native transport, dependencies (security advisories and licenses), API compatibility and the size budget. See [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests). The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
 
 Releases are published by CI when a version tag is pushed. See [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
