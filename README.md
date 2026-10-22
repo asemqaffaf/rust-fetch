@@ -696,7 +696,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 
 | Environment | Status |
 | --- | --- |
-| Browsers and Web Workers | Supported, directly or through bundlers like Vite and webpack; call `init()` first |
+| Browsers and Web Workers | Supported, directly or through bundlers like Vite and webpack; call `init()` first. Tested in CI in Chromium, Firefox and WebKit (Safari's engine) |
 | Node.js 20, 22 and 24 | Supported and tested in CI; Node.js 20 is the minimum |
 | TypeScript | Definitions included; TypeScript 5.2 or newer |
 | Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 22 and 24 |
@@ -747,6 +747,7 @@ npm run build      # wasm-pack build + package metadata (wasm-module/pkg)
 npm run build:native  # build the native Node.js transport (native/) into wasm-module/pkg
 npm test           # Rust unit + integration tests, then the JS tests
 npm run test:js    # JS end-to-end tests against the built package (requires a build)
+npm run test:browsers  # the same package in Chromium, Firefox and WebKit (requires a build and npx playwright install)
 npm run bench      # rust-fetch vs native fetch (requires a build)
 npm run size       # size budget for the built package
 npm run api:check  # public TypeScript API vs the committed snapshot
@@ -766,6 +767,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | Node transport tests | `wasm-module/js/test/node-transport.test.mjs` | Redirects, decompression, default headers, connection pooling and HTTPS. With `client.test.mjs`, they run once per Node.js transport: native (when built) and node:http (the `*-js.test.mjs` files) |
 | Browser transport tests | `wasm-module/js/test/browser-transport.test.mjs` | The browser entry without the Node.js transport: `fetch()`, and `XMLHttpRequest` (simulated over `node:http`) for upload progress |
 | WebSocket tests | `wasm-module/js/test/websocket.test.mjs` | `websocket()` against a local WebSocket server: URLs, headers, messages, timeouts, reconnection, closing |
+| Real-browser tests | `wasm-module/js/test/browsers.test.mjs` | The browser entry in Chromium, Firefox and WebKit (Playwright): requests and typed errors, timeouts, retries, cancellation, streaming, download progress, upload progress with a cross-origin preflight, WebSockets. `npm run test:browsers` after `npx playwright install` |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
 CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node.js 20, 22 and 24 (against both Node.js transports), and checks formatting, lints of the native transport, dependencies (security advisories and licenses), API compatibility and the size budget. The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.

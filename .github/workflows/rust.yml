@@ -168,3 +168,29 @@ jobs:
       - name: TypeScript API unchanged (or snapshot updated)
         if: matrix.node == 22
         run: npm run api:check
+
+  browsers:
+    name: Browsers (Chromium, Firefox, WebKit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: wasm-module
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install JS dev dependencies
+        run: npm ci
+      - name: Build npm package
+        run: npm run build
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Browser tests
+        run: npm run test:browsers
