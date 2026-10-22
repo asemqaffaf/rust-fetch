@@ -44,9 +44,9 @@ static TRANSPORT: OnceLock<Transport> = OnceLock::new();
 pub struct Options {
     /// Decode zstd (only where Node's zlib can, so both transports agree)
     pub zstd: bool,
-    /// `false` when NODE_TLS_REJECT_UNAUTHORIZED=0
+    /// `false` when `NODE_TLS_REJECT_UNAUTHORIZED=0`
     pub reject_unauthorized: bool,
-    /// The PEM bundle from NODE_EXTRA_CA_CERTS
+    /// The PEM bundle from `NODE_EXTRA_CA_CERTS`
     pub extra_ca_certs: Option<Buffer>,
 }
 
@@ -332,11 +332,11 @@ fn read_all(mut reader: impl Read) -> Result<Vec<u8>, String> {
 
 fn header_map(pairs: &[String]) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::with_capacity(pairs.len() / 2);
-    for pair in pairs.chunks_exact(2) {
-        let name = HeaderName::from_bytes(pair[0].as_bytes())
-            .map_err(|e| format!("Invalid header name '{}': {e}", pair[0]))?;
-        let value = HeaderValue::from_str(&pair[1])
-            .map_err(|e| format!("Invalid value for header '{}': {e}", pair[0]))?;
+    for [name, value] in pairs.as_chunks::<2>().0 {
+        let value = HeaderValue::from_str(value)
+            .map_err(|e| format!("Invalid value for header '{name}': {e}"))?;
+        let name = HeaderName::from_bytes(name.as_bytes())
+            .map_err(|e| format!("Invalid header name '{name}': {e}"))?;
         headers.append(name, value);
     }
     Ok(headers)
