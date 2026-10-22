@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-22
+
 ### Fixed
 - **Node.js: bursts of requests no longer exhaust ephemeral ports.** Node's default global agents open a new socket for every request that finds no idle one and keep only 256 afterwards; the rest were closed into TIME_WAIT, and under sustained overload every connect failed with `EADDRNOTAVAIL` (50,000 req/s against a local server: 2.7k req/s delivered, 43.5k errors). rust-fetch now uses its own pool of up to 256 keep-alive connections per origin and queues further requests (same test: 18.9k req/s, no errors). Throughput below saturation is unchanged. An agent you install as `http.globalAgent` / `https.globalAgent` (e.g. a proxy), or Node's own agent with a `maxSockets` limit you set, is still used as before.
 
@@ -137,7 +139,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/asemqaffaf/rust-fetch/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/asemqaffaf/rust-fetch/tree/v1.1.0
