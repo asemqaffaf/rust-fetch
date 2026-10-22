@@ -35,6 +35,7 @@ try {
 
 - **The failure handling `fetch()` leaves to you, built in.** `fetch()` resolves on a 404 or 500, has no retries, and its timeouts are an `AbortSignal` you wire up yourself. rust-fetch rejects every failure with a typed error (`HttpError`, `TimeoutError`, `NetworkError`, …) that carries the status and body, times out each attempt including the body, and retries with backoff, without retrying POST unless you opt in.
 - **Lean under sustained load in Node.js.** In an [independent benchmark](#performance) of rust-fetch 2.1.0 on an Apple M4 Pro, at a steady 15,000 requests per second, it kept its p99 latency at 11 ms and its memory at 202 MB, where Node's `fetch()` reached 450 ms and 635 MB, and axios in its default configuration failed.
+- **Much higher concurrent throughput with the native transport (not in the npm package yet).** In the measured concurrent workloads, rust-fetch's [native transport](#how-it-works) substantially improves throughput over Node.js `fetch()`, particularly under high concurrency and sustained load: 1.7 to 1.9 times the small-JSON throughput at 50 to 500 concurrent requests, and 2.9 times the delivered rate at an offered 40,000 requests per second (Apple M1 Pro, Node.js 22.13). It is about 6% slower for sequential requests. See [Native Node.js transport](#native-nodejs-transport).
 - **One API everywhere.** The same client, options and errors in browsers, Web Workers and Node.js, and [as a Rust crate](#using-it-from-rust).
 - **Tested like infrastructure.** CI enforces 100% line and function coverage of the Rust core and of the Node.js transport, runs on Node 20, 22 and 24, and tests the packed npm package end to end.
 
@@ -55,7 +56,7 @@ try {
 
 - **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 183 KB brotli-compressed.
 - **You need upload progress.** `fetch()` can't report it, so rust-fetch can't either. axios can, through `XMLHttpRequest`.
-- **You only need raw throughput in Node.js.** `undici.request()`, the engine under Node's `fetch()`, handled 1.4 to 2.2 times as many small JSON requests per second as rust-fetch 2.1.1 in our measurements (Apple M1 Pro, Node 22.13, median of 7 rounds). It leaves retries, per-attempt timeouts and typed errors to you.
+- **You only need raw throughput in Node.js.** `undici.request()`, the engine under Node's `fetch()`, handled 1.4 to 2.2 times as many small JSON requests per second as rust-fetch's node:http transport (the one in the npm package), and 1.3 to 1.6 times as many as the native transport over plain HTTP; over HTTPS, the native transport matched it (Apple M1 Pro, Node.js 22.13, median of 7 rounds). It also does less per request: retries, per-attempt timeouts and typed errors are left to you.
 
 ## Features
 
@@ -69,13 +70,32 @@ try {
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks.
 - **Interceptors** for requests and responses, e.g. auth headers and token refresh.
 - **TypeScript** definitions for the whole API.
-- **Tested**: 100% line and function coverage of the Rust core and of the Node.js transport, plus wasm tests and end-to-end tests of the packed npm package. See [Development](#development).
+- **Two Node.js transports** with the same behaviour: a lean one on `node:http`/`node:https` (in the npm package), and a native one that handles connections on its own threads (built from source for now). See [How it works](#how-it-works).
+- **Tested**: 100% line and function coverage of the Rust core and of the Node.js transport, plus wasm tests and end-to-end tests of the packed npm package, run against both Node.js transports. See [Development](#development).
+
+### How it works
+
+Everything that decides what happens to a request (URL handling, validation, retries and backoff, per-attempt timeouts, typed errors, interceptors) is Rust compiled to WebAssembly, so it behaves the same in every runtime. Underneath, a transport only moves bytes:
+
+| Where | Transport |
+| --- | --- |
+| Browsers and Web Workers | The platform's `fetch()` |
+| Node.js, npm package | `node:http` / `node:https` with keep-alive and at most 256 connections per origin |
+| Node.js, with the native addon | HTTP/1.1 on [hyper](https://hyper.rs) and Tokio threads, loaded through Node-API, with the same redirect, decompression, timeout and connection-limit rules and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`) |
+
+In Node.js, streamed responses (`responseType: 'stream'`) and requests with `onDownloadProgress` go through Node's `fetch()` instead.
+
+Why the native transport matters: with `node:http`, connection handling, HTTP parsing and decompression run on the JavaScript event loop, next to your application. The native transport does that work on its own threads, so the event loop only builds requests and decodes their bodies. That pays off when many requests are in flight. Handing each request to another thread and back also costs time, which likely contributes to its slower sequential results.
+
+The native transport is used when `rust-fetch-native.<platform>-<arch>.node` sits next to the package's `node.js` (`npm run build:native` puts it there). It steps aside where you have installed your own `http.globalAgent` / `https.globalAgent` (for example a proxy agent) or set `NODE_USE_ENV_PROXY`, and `RUST_FETCH_NATIVE=0` turns it off.
 
 ## Installation
 
 ```bash
 npm install rust-fetch
 ```
+
+Requires Node.js 20 or newer. The npm package uses the `node:http` transport in Node.js; the [native transport](#how-it-works) isn't published yet, so trying it means building from source (see [Development](#development)).
 
 ## Quick start
 
@@ -378,6 +398,59 @@ Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (
 
 ## Performance
 
+Two sets of results follow: our measurements of the native transport (with the `node:http` transport from the npm package next to it), and an independent benchmark of rust-fetch 2.1.0. Percentages are relative throughput, not latency.
+
+### Native Node.js transport
+
+Measured on an Apple M1 Pro with Node.js 22.13, against a local server in a separate process (HTTP/1.1, and HTTPS where noted). All four clients ran in the same rounds, in rotating order; the figures are requests per second, median of 7 rounds.
+
+| Workload | `fetch()` | `undici.request()` | rust-fetch, node:http | rust-fetch, native | Native vs `fetch()` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Small JSON, sequential | 10,468 | 15,346 | 10,691 | 9,857 | 94% (6% slower) |
+| Small JSON, 50 concurrent | 18,019 | 42,260 | 18,916 | 30,874 | **171%** |
+| Small JSON, 500 concurrent | 15,419 | 38,171 | 17,285 | 29,209 | **189%** |
+| HTTPS small JSON, 50 concurrent | 15,639 | 30,546 | 14,444 | 30,452 | **195%** |
+| Large JSON, 0.6 MB | 299 | 325 | 283 | 304 | 102% |
+| Binary, 8 MB | 201 | 301 | 267 | 322 | **161%** |
+
+In the three concurrent workloads, the native transport's p99 latency was less than half of `fetch()`'s (50 concurrent: 2.41 ms against 5.38 ms; 500 concurrent: 23.45 ms against 58.64 ms; HTTPS: 2.44 ms against 6.46 ms). For large JSON it was higher (8.76 ms against 5.39 ms).
+
+**Under load.** Each client ran in its own process. These rows come from two different harnesses and aren't comparable with each other:
+
+| Test | `fetch()` | `undici.request()` | rust-fetch, node:http | rust-fetch, native | Native vs `fetch()` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Offered 40,000 requests/s for 20 s, delivered (our harness) | 10,081/s | 37,687/s | 16,984/s | 29,502/s | **2.9×** |
+| 500 requests in flight for 10 s ([aakjp/stress-test](https://github.com/aakjp/stress-test) harness) | 15,960/s | not tested | 17,685/s | 27,563/s | **173%** |
+
+At 40,000 requests per second, peak memory was 781 MB for `fetch()`, 244 MB for `undici.request()`, 567 MB for the node:http transport and 796 MB for the native transport, whose queued requests wait inside the addon.
+
+**A steady 15,000 requests per second**, sent on a fixed schedule whether or not the client keeps up. No client had errors. Our harness (20 s, one server process):
+
+| Client | Delivered | p50 | p95 | p99 | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `fetch()` | 11,557/s | 477 ms | 779 ms | 1.2 s | 782 MB |
+| `undici.request()` | 14,992/s | 2.4 ms | 11 ms | 31 ms | 135 MB |
+| rust-fetch, node:http | 12,955/s | 404 ms | 1.1 s | 1.6 s | 541 MB |
+| rust-fetch, native | **14,992/s** | 4.1 ms | 46 ms | **91 ms** | **195 MB** |
+
+The [aakjp/stress-test](https://github.com/aakjp/stress-test) harness (60 s, six server processes):
+
+| Client | Delivered | p50 | p95 | p99 | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `fetch()` | 13,026/s | 449 ms | 491 ms | 920 ms | 903 MB |
+| rust-fetch, node:http | 14,981/s | 6.3 ms | 118 ms | 565 ms | 548 MB |
+| rust-fetch, native | **14,991/s** | 3.5 ms | 4.8 ms | 568 ms | 541 MB |
+
+In both harnesses, the native transport sustained approximately the target rate and `fetch()` didn't. In the independent harness, both rust-fetch transports still show a p99 stall of about 565 ms even though the native transport's p95 was 4.8 ms. Its cause hasn't been verified.
+
+What these results show:
+
+- **Where the native transport wins:** concurrent requests, HTTPS, large binary bodies and sustained load, in throughput and in tail latency.
+- **Where it doesn't:** sequential requests are about 6% slower than with `fetch()` (and than with the node:http transport); large JSON is effectively even (304 against 299 requests per second), and both parse the JSON in JavaScript; and under heavy overload it used about as much memory as `fetch()` (796 MB against 781 MB).
+- **Throughput, latency and memory are separate questions.** A client can deliver more requests per second with a worse tail, or the reverse; memory is the peak resident size of the client process.
+- **`fetch()`, `undici.request()` and rust-fetch do different amounts of work.** Node's `fetch()` implements the browser `fetch()` API on top of undici. `undici.request()` is undici's lower-level API, without WHATWG streams. rust-fetch adds retries, per-attempt timeouts, validation, typed errors and interceptors to every request. So `undici.request()` isn't an identical workload, and it was fastest on plain HTTP in these tests.
+- **Results vary** with hardware, Node.js version, payload size, concurrency and the server setup. The node:http transport delivered 12,955 requests per second at an offered 15,000 in one harness and 14,981 in the other.
+
 ### Independent benchmark in Node.js
 
 [aakjp/stress-test](https://github.com/aakjp/stress-test/blob/main/BENCHMARK.md) compared rust-fetch 2.1.0 with Node's built-in `fetch()` and axios 1.20. It ran on an Apple M4 Pro with Node 22.15, against a local HTTP/1.1 server without TLS or compression, so it measures each client's own overhead rather than network performance. The full report has its method and raw data. Highlights:
@@ -422,13 +495,14 @@ The report tested three clients on one machine over loopback, so read it as a co
 
 ### On your machine
 
-`npm run bench` compares rust-fetch with Node's `fetch()` on a local server. See [Development](#development).
+`npm run bench` compares rust-fetch with Node's `fetch()` on a local server. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. See [Development](#development).
 
 ## Limitations and roadmap
 
 - **Upload progress** isn't available: `fetch()` has no upload progress events.
-- **HTTP/2:** browsers negotiate it automatically; the Node.js transport uses HTTP/1.1 with keep-alive.
-- **Connection pooling:** browsers pool connections for `fetch()`. In Node.js, rust-fetch keeps up to 256 keep-alive connections per origin and queues further requests until one is free. If you install your own `http.globalAgent` / `https.globalAgent`, or set limits on Node's, that agent is used instead.
+- **Native transport:** not in the npm package yet, so it has to be built from source for each platform. It's about 6% slower than `fetch()` for sequential requests, it isn't used for streamed responses or requests with download progress, and its p99 stall in the independent harness is unexplained. CI tests it on Linux with Node.js 20, 22 and 24; it has also been run on macOS (Apple silicon), but not on Windows.
+- **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
+- **Connection pooling:** browsers pool connections for `fetch()`. In Node.js, both transports keep up to 256 keep-alive connections per origin and queues further requests until one is free. If you install your own `http.globalAgent` / `https.globalAgent`, or set limits on Node's, that agent is used instead.
 - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
 - **Planned:** WebSocket support.
 
