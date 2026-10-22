@@ -53,6 +53,7 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           files: wasm-module/lcov.info
+          flags: rust
           token: ${{ env.CODECOV_TOKEN }}
           fail_ci_if_error: false
       - name: Coverage gate (100% lines and functions)
@@ -87,6 +88,8 @@ jobs:
   wasm:
     name: Wasm + JS tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -117,6 +120,18 @@ jobs:
       - name: Node transport coverage (100% lines and functions)
         if: matrix.node == 22
         run: npm run coverage:js
+      # Coverage is measured on the built copy in pkg/; report it against the source
+      - name: Map Node transport coverage to its source
+        if: matrix.node == 22 && env.CODECOV_TOKEN != ''
+        run: sed -i 's#^SF:wasm-module/pkg/node.js$#SF:wasm-module/js/node.js#' lcov-js.info
+      - name: Upload Node transport coverage to Codecov
+        if: matrix.node == 22 && env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v7
+        with:
+          files: lcov-js.info
+          flags: js
+          token: ${{ env.CODECOV_TOKEN }}
+          fail_ci_if_error: false
       - name: Size budget
         if: matrix.node == 22
         run: npm run size

@@ -14,7 +14,7 @@
     "size": "node scripts/check-size.mjs",
     "api:check": "node scripts/check-api.mjs",
     "api:update": "node scripts/check-api.mjs --update",
-    "coverage:js": "node --test --experimental-test-coverage --test-coverage-include=wasm-module/pkg/node.js --test-coverage-lines=100 --test-coverage-functions=100 wasm-module/js/test/client.test.mjs wasm-module/js/test/node-transport.test.mjs"
+    "coverage:js": "node --test --experimental-test-coverage --test-coverage-include=wasm-module/pkg/node.js --test-coverage-lines=100 --test-coverage-functions=100 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=lcov-js.info wasm-module/js/test/client.test.mjs wasm-module/js/test/node-transport.test.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,4 +1,6 @@
-# Coverage of the Rust core; JS-only bindings are tested by the wasm and JS suites
+# Coverage of the Rust core (flag `rust`) and of the Node.js transport, wasm-module/js/node.js
+# (flag `js`). The wasm bindings in src/wasm need a JS engine and are tested by the wasm and JS
+# suites instead. CI also enforces 100% line and function coverage of both on its own.
 coverage:
   status:
     project:
