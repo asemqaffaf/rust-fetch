@@ -28,8 +28,9 @@ const pools = new Map([
   [http, new http.Agent(POOL_OPTIONS)],
   [https, new https.Agent(POOL_OPTIONS)],
 ]);
-// The options Node's own global agents are created with
-const NODE_AGENT_OPTIONS = new Set(['keepAlive', 'scheduling', 'timeout', 'noDelay', 'path']);
+// The options Node's own global agents are created with. Newer versions also
+// list unset ones (e.g. `proxyEnv: undefined` unless NODE_USE_ENV_PROXY is on).
+const NODE_AGENT_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, noDelay: true, defaultPort: 443, protocol: 'https:' };
 
 /**
  * The bounded pool while `globalAgent` is still Node's unbounded default;
@@ -41,7 +42,7 @@ function agentFor(transport) {
   const isNodeDefault =
     global.constructor === transport.Agent &&
     global.maxSockets === Infinity &&
-    Object.keys(global.options).every((key) => NODE_AGENT_OPTIONS.has(key));
+    Object.entries(global.options).every(([key, value]) => value == null || NODE_AGENT_OPTIONS[key] === value);
   return isNodeDefault ? pools.get(transport) : global;
 }
 
