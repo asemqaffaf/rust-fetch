@@ -17,6 +17,34 @@ import { initSync } from './rust_fetch.js';
 
 initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
 
+// Node's default global agents open a socket for every request that finds no
+// idle one, but keep only 256 of them idle afterwards. Under a burst the rest
+// are closed and sit in TIME_WAIT, and once the ephemeral port range is used
+// up every connect fails with EADDRNOTAVAIL. A bounded pool that keeps all of
+// its sockets queues requests instead, reusing the same connections.
+const MAX_SOCKETS = 256;
+const POOL_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, maxSockets: MAX_SOCKETS, maxFreeSockets: MAX_SOCKETS };
+const pools = new Map([
+  [http, new http.Agent(POOL_OPTIONS)],
+  [https, new https.Agent(POOL_OPTIONS)],
+]);
+// The options Node's own global agents are created with
+const NODE_AGENT_OPTIONS = new Set(['keepAlive', 'scheduling', 'timeout', 'noDelay', 'path']);
+
+/**
+ * The bounded pool while `globalAgent` is still Node's unbounded default;
+ * an agent the application installed (a proxy, TLS options, its own limits)
+ * is used as is.
+ */
+function agentFor(transport) {
+  const global = transport.globalAgent;
+  const isNodeDefault =
+    global.constructor === transport.Agent &&
+    global.maxSockets === Infinity &&
+    Object.keys(global.options).every((key) => NODE_AGENT_OPTIONS.has(key));
+  return isNodeDefault ? pools.get(transport) : global;
+}
+
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const ACCEPT_ENCODING = typeof zlib.zstdDecompressSync === 'function' ? 'gzip, deflate, br, zstd' : 'gzip, deflate, br';
@@ -126,7 +154,7 @@ function withoutHeaders(headers, names) {
 function send(state, method, url, headers, body, redirects, resolve, reject) {
   if (state.cancelled) return;
   const transport = url.protocol === 'https:' ? https : http;
-  const request = transport.request(url, { method, headers }, (response) => {
+  const request = transport.request(url, { method, headers, agent: agentFor(transport) }, (response) => {
     const status = response.statusCode;
     const location = response.headers.location;
 

@@ -3,6 +3,7 @@
 // headers and connection reuse.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import zlib from 'node:zlib';
 import { WasmClient } from '../../pkg/node.js';
 import { json, rejection, startServer } from './helpers.mjs';
@@ -105,6 +106,59 @@ describe('Node.js transport', () => {
     const c = client();
     for (let i = 0; i < 30; i++) await c.get(server.url('/echo'));
     assert.ok(sockets.size <= 2, `used ${sockets.size} sockets for 30 sequential requests`);
+  });
+
+  describe('connection pool', () => {
+    let slow;
+    const slowSockets = new Set();
+    before(async () => {
+      slow = await startServer(async (req, res) => {
+        slowSockets.add(req.socket);
+        await new Promise((r) => setTimeout(r, 20));
+        json(res, {});
+      });
+    });
+    after(() => slow.close());
+
+    const burst = (c, n) => Promise.all(Array.from({ length: n }, () => c.get(slow.url())));
+
+    it('caps connections per origin and keeps them for the next burst', async () => {
+      // Node's default agent opens one socket per request here and closes
+      // all but 256 afterwards, which exhausts ephemeral ports under load
+      slowSockets.clear();
+      const c = client();
+      await burst(c, 600);
+      const first = new Set(slowSockets);
+      assert.ok(first.size <= 256, `opened ${first.size} sockets for 600 concurrent requests`);
+      await burst(c, 600);
+      const opened = [...slowSockets].filter((s) => !first.has(s)).length;
+      assert.equal(opened, 0, `opened ${opened} new sockets for the second burst`);
+    });
+
+    it('uses an agent the application installed as globalAgent', async () => {
+      const original = http.globalAgent;
+      let used = 0;
+      class ProxyAgent extends http.Agent {
+        addRequest(...args) {
+          used++;
+          return super.addRequest(...args);
+        }
+      }
+      try {
+        http.globalAgent = new ProxyAgent({ keepAlive: true });
+        await client().get(slow.url());
+        assert.equal(used, 1);
+
+        // A plain Agent with its own limit is respected too
+        http.globalAgent = new http.Agent({ keepAlive: true, maxSockets: 2 });
+        slowSockets.clear();
+        await burst(client(), 20);
+        assert.ok(slowSockets.size <= 2, `opened ${slowSockets.size} sockets with maxSockets: 2`);
+      } finally {
+        http.globalAgent.destroy();
+        http.globalAgent = original;
+      }
+    });
   });
 
   describe('redirects', () => {

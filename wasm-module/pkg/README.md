@@ -381,7 +381,7 @@ Large JSON is dominated by `JSON.parse`, which both clients pay; the remaining g
 - [ ] Upload progress tracking: not possible on top of `fetch()`, which has no upload progress events
 - [ ] WebSocket support
 - Handled by the runtime, not by rust-fetch:
-  - **Connection pooling:** browsers pool connections for `fetch()`; in Node.js rust-fetch reuses connections through Node's default keep-alive agents.
+  - **Connection pooling:** browsers pool connections for `fetch()`; in Node.js rust-fetch keeps up to 256 keep-alive connections per origin and queues further requests until one is free. If you install your own `http.globalAgent` / `https.globalAgent`, or set limits on Node's, that agent is used instead.
   - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
   - **HTTP/2:** browsers negotiate it automatically; the Node.js transport uses HTTP/1.1 with keep-alive.
 
