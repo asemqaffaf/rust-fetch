@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Real-browser tests in CI: the browser entry runs in Chromium, Firefox and WebKit (Playwright), covering requests, typed errors, timeouts, retries, cancellation, streaming, download and upload progress (with a cross-origin preflight) and WebSockets (`npm run test:browsers`).
+
 ## [2.2.0] - 2026-10-23
 
 ### Added
