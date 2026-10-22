@@ -12,6 +12,7 @@ You need:
 
 ```bash
 npm run build      # build the npm package into wasm-module/pkg
+npm run build:native  # build the native Node.js transport next to it (optional)
 npm test           # Rust unit + integration tests, then the JS tests
 cd wasm-module && wasm-pack test --node   # wasm tests for the JS bindings
 ```
@@ -30,13 +31,14 @@ CI also enforces these gates on every PR:
 
 | Gate | Command | Fails when |
 | --- | --- | --- |
-| Dependency audit | `cd wasm-module && cargo deny check` | A dependency has a security advisory, a license not allowed in `deny.toml`, or comes from an unknown source |
+| Dependency audit | `cd wasm-module && cargo deny check`, and `cargo deny --manifest-path native/Cargo.toml --config wasm-module/deny.toml check` | A dependency has a security advisory, a license not allowed in `deny.toml`, or comes from an unknown source |
+| Native transport lints | `cd native && cargo fmt --check && cargo clippy --release -- -D warnings` | The native transport isn't formatted or has a clippy warning |
 | Rust API compatibility | `cargo semver-checks --manifest-path wasm-module/Cargo.toml --baseline-rev main` | The Rust API changes in a way the version number doesn't allow |
 | TypeScript API snapshot | `npm run api:check` | The published `.d.ts` differs from `api/rust-fetch.d.ts`. If the change is intended, run `npm run api:update` and commit the snapshot. |
 | Node transport coverage | `npm run coverage:js` | Line or function coverage of the Node.js transport (`js/node.js`) drops below 100% |
 | Size budget | `npm run size` | The `.wasm` or JS files outgrow the budgets in `scripts/check-size.mjs` |
 
-`api:check`, `size` and `coverage:js` need a fresh `npm run build`.
+`api:check`, `size` and `coverage:js` need a fresh `npm run build`. The JS tests run against the native transport too when `npm run build:native` has been run; without it they test the node:http transport only.
 
 ## Versioning
 
