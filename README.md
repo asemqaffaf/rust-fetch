@@ -600,6 +600,8 @@ Failures are typed like request errors: a refused or failed connection is a `Net
 
 Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `FetchInit`, `RetryOptions`, `HttpResponse`, `RustFetchError`, `DownloadProgress`, `UploadProgress` and `InterceptedRequest`, and for WebSockets `WebSocketConnection`, `WebSocketOptions`, `ReconnectOptions`, `WebSocketCloseInfo`, `WebSocketReconnectInfo`, `WebSocketState` and `WebSocketData`.
 
+Every request method takes the response body's type as a type parameter, defaulting to `any`:
+
 ```ts
 import { WasmClient, type HttpResponse, type RustFetchError } from 'rust-fetch';
 
@@ -607,8 +609,10 @@ const client = new WasmClient({ baseUrl: 'https://api.example.com/v1' });
 
 interface User { id: number; name: string }
 
-const res: HttpResponse<User> = await client.get('/users/42');
+const res = await client.get<User>('/users/42'); // HttpResponse<User>
 res.body.name; // string
+
+const created: HttpResponse<User> = await client.post<User>('/users', { body: { name: 'Zoë' } });
 
 try {
   await client.get('/users/9');
@@ -617,6 +621,8 @@ try {
   if (error.kind === 'HttpError') console.log(error.status);
 }
 ```
+
+The type parameter describes what you expect; rust-fetch doesn't check the JSON against it. Validate untrusted responses with a schema library if you need to.
 
 ### Legacy functions
 

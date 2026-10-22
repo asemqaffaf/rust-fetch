@@ -15,11 +15,22 @@ rmSync(new URL('.gitignore', pkgDir), { force: true });
 // wasm-bindgen declares `[Symbol.dispose]()` on exported classes; pull in the
 // lib that defines it so consumers type-check without `skipLibCheck` (TS 5.2+)
 const typesUrl = new URL('rust_fetch.d.ts', pkgDir);
-const types = readFileSync(typesUrl, 'utf8');
+let types = readFileSync(typesUrl, 'utf8');
 const disposable = '/// <reference lib="esnext.disposable" />\n';
 if (types.includes('Symbol.dispose') && !types.startsWith(disposable)) {
-  writeFileSync(typesUrl, disposable + types);
+  types = disposable + types;
 }
+
+// wasm-bindgen can't declare generic methods, so its request methods resolve to
+// `HttpResponse` (with `body: any`). Make them generic, `get<User>(…)` style;
+// the `any` default keeps untyped calls as they were.
+const generic = /^(\s+\w+)\((.*)\): Promise<HttpResponse>;$/gm;
+const typedMethods = types.match(generic)?.length ?? 0;
+if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
+  throw new Error('postbuild: no WasmClient request methods found to make generic');
+}
+types = types.replace(generic, '$1<T = any>($2): Promise<HttpResponse<T>>;');
+writeFileSync(typesUrl, types);
 
 const manifestUrl = new URL('package.json', pkgDir);
 const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8'));

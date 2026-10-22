@@ -281,7 +281,7 @@ export class WasmClient {
     /**
      * Make a DELETE request
      */
-    delete(url: string, options?: RequestOptions | null): Promise<HttpResponse>;
+    delete<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Remove an interceptor; returns whether it was registered
      */
@@ -289,15 +289,15 @@ export class WasmClient {
     /**
      * Make a request described by a `fetch`-style init object
      */
-    fetch(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    fetch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a GET request
      */
-    get(url: string, options?: RequestOptions | null): Promise<HttpResponse>;
+    get<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a HEAD request
      */
-    head(url: string, options?: RequestOptions | null): Promise<HttpResponse>;
+    head<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Create a new client
      */
@@ -305,31 +305,31 @@ export class WasmClient {
     /**
      * Make a PATCH request; the body is taken from `init.body`
      */
-    patch(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    patch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PATCH request with a JSON body
      */
-    patch_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    patch_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request; the body is taken from `init.body`
      */
-    post(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    post<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request with a JSON body
      */
-    post_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    post_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request; the body is taken from `init.body`
      */
-    put(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    put<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request with a JSON body
      */
-    put_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    put_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a request with any method, headers and body
      */
-    request(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse>;
+    request<T = any>(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Open a WebSocket connection. Relative URLs are resolved against the
      * base URL, with `http:` and `https:` becoming `ws:` and `wss:`.
