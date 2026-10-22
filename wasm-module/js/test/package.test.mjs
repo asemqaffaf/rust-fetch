@@ -134,6 +134,19 @@ describe('published package', () => {
        const client = new WasmClient(options);
        const res: HttpResponse<User> = await client.get('/users/1');
        const name: string = res.body.name;
+       // Request methods are generic over the body type; untyped calls stay \`any\`
+       const typed = await client.get<User>('/users/1');
+       const id: number = typed.body.id;
+       // @ts-expect-error the body is a User, not a string
+       const wrong: string = typed.body;
+       const created = await client.post<User>('/users', { body: { name } });
+       const createdName: string = created.body.name;
+       const viaFetch: HttpResponse<User[]> = await client.fetch<User[]>('/users');
+       const untyped = await client.get('/anything');
+       const anything: number = untyped.body;
+       const socket = client.websocket('/live', { reconnect: true, messageType: 'json', onMessage: (m: unknown) => m });
+       const state: 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed' = socket.state;
+       await client.post('/upload', { body: new Blob(['x']), onUploadProgress: ({ loaded, total }) => loaded / total });
        const requestOptions: RequestOptions = { params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),
          onDownloadProgress: (p: DownloadProgress) => p.loaded };
        const init2: FetchInit = { method: 'POST', body: new FormData() };
@@ -159,7 +172,7 @@ describe('published package', () => {
       'export interface RustFetchError',
       'export class WasmClient',
       'constructor(options?: ClientOptions | null)',
-      'get(url: string, options?: RequestOptions | null): Promise<HttpResponse>',
+      'get<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>',
       'export function fetch_json(url: string): Promise<any>',
     ]) {
       assert.ok(types.includes(name), `missing: ${name}`);
