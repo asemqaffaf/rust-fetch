@@ -743,7 +743,10 @@ async fn absolute_urls_can_be_kept_from_replacing_the_base_url() {
             "{error}"
         );
     }
-    assert!(other.requests().is_empty(), "nothing reaches the other host");
+    assert!(
+        other.requests().is_empty(),
+        "nothing reaches the other host"
+    );
 
     // Paths, including protocol-relative-looking ones, stay under the base URL
     for path in ["/items", "//other.example/x"] {
@@ -758,7 +761,10 @@ async fn absolute_urls_can_be_kept_from_replacing_the_base_url() {
         .unwrap();
     assert_eq!(response.bytes(), Some(&b"other"[..]));
     // Without a base URL there's nothing to replace
-    let plain = Client::builder().allow_absolute_urls(false).build().unwrap();
+    let plain = Client::builder()
+        .allow_absolute_urls(false)
+        .build()
+        .unwrap();
     assert!(plain.get(other.url("/")).await.is_ok());
 }
 
