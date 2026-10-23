@@ -28,6 +28,7 @@ const client = new WasmClient({
 - Bodies: string, `Uint8Array`/`ArrayBuffer`/`DataView`, `Blob`/`File`, `FormData` (multipart), `URLSearchParams`, or any value sent as JSON
 - Options: `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
 - WebSockets through a proxy (Node.js): `client.websocket(url, { dispatcher: new ProxyAgent(proxyUrl) })` with `ProxyAgent` from the `undici` package
+- Security: credentials are dropped on cross-origin redirects; CR/LF in headers rejected; only http(s); set `allowAbsoluteUrls: false` with a `baseUrl` so user-supplied paths can't redirect requests (and the client's `Authorization`) to another host
 - Node.js proxies (client option): `proxy: 'env'` (`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`; also on with `NODE_USE_ENV_PROXY=1`) or `proxy: 'http://user:pass@host:3128'`; HTTPS via CONNECT tunnels
 - Browser `fetch()` options (client or per request; ignored in Node.js): `credentials`, `mode` (`'no-cors'` resolves with an opaque `status: 0` response), `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity`
 - Redirects (client or per request): `redirect: 'follow'` (default, up to `maxRedirects`, default 20), `'manual'` (resolves with the 3xx and its `location` header, `ok: false`; in browsers an opaque response with `status: 0`), `'error'` (rejects with a `NetworkError`)

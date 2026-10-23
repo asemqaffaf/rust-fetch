@@ -77,6 +77,7 @@ try {
 - [Features](#features)
 - [Performance](#performance)
 - [Usage and configuration](#usage-and-configuration): [client options](#client-options) · [requests](#making-requests) · [bodies](#request-bodies) · [responses](#responses) · [errors](#errors) · [timeouts](#timeouts) · [retries](#retries) · [cancellation](#cancellation) · [interceptors](#interceptors) · [streaming](#streaming) · [Server-Sent Events](#server-sent-events) · [download progress](#download-progress) · [uploads](#file-uploads) · [upload progress](#upload-progress) · [WebSockets](#websockets) · [TypeScript](#typescript) · [legacy functions](#legacy-functions)
+- [Security](#security)
 - [Using it from Rust](#using-it-from-rust)
 - [Architecture](#architecture)
 - [Compatibility and limitations](#compatibility-and-limitations)
@@ -373,6 +374,7 @@ const client = new WasmClient({
   redirect: 'follow',                     // or 'manual' / 'error', see Redirects. Default: 'follow'
   maxRedirects: 20,                       // Node.js; browsers apply their own limit. Default: 20
   proxy: 'env',                           // Node.js: HTTPS_PROXY / HTTP_PROXY / NO_PROXY, or a proxy URL; see Proxies
+  allowAbsoluteUrls: false,               // reject absolute URLs instead of letting them replace baseUrl; see Security. Default: true
 });
 ```
 
@@ -801,6 +803,36 @@ These standalone functions still work. Each call uses a default client: 30 s tim
 | `fetch_with_options(url, method, headers, body?)` | The full `HttpResponse` |
 | `create_client()` | `new WasmClient()` |
 | `fetch_wasm_json`, `fetch_wasm_map`, `fetch_wasm_api`, `fetch_wasm_html` | Deprecated aliases of `fetch_json` / `fetch_text` |
+
+## Security
+
+What the client does for you, each behaviour covered by tests:
+
+- **Credentials stay with their origin on redirects.** When a redirect leaves the origin (another host, port or scheme, including `https:` to `http:`), the Node.js transports drop `Authorization`, `Cookie` and `Proxy-Authorization`. This is the class of bug behind CVEs in node-fetch, follow-redirects and undici. Browsers apply their own, equivalent rules.
+- **No header injection.** A header name or value containing CR or LF rejects with an `InvalidInputError` before anything is sent.
+- **Only `http:` and `https:`.** Request URLs, `baseUrl`, and redirect targets with any other scheme (`file:`, `data:`, …) are rejected.
+- **Paths stay under `baseUrl`.** Relative paths, including tricks like `//other.host/x` or `/\other.host`, resolve under the base URL (the class of axios CVE-2024-39338).
+- **Proxy credentials go only to the proxy.** They're sent as `Proxy-Authorization` to the proxy, never to the origin.
+- **No runtime dependencies.** The npm package has none, and every release is published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Rust dependencies are audited in CI (`cargo-deny`: advisories, licenses, sources).
+
+### Absolute URLs and `baseUrl`
+
+By default, as in axios, an absolute URL passed to a client with a `baseUrl` replaces the base URL, **and receives the client's headers**, such as `Authorization`. If any part of a request URL comes from user input, an attacker can send it to their own server along with your credentials (the class of axios CVE-2025-27152). Turn it off:
+
+```js
+const api = new WasmClient({
+  baseUrl: 'https://api.example.com/v1',
+  headers: { authorization: `Bearer ${token}` },
+  allowAbsoluteUrls: false,
+});
+await api.get(`/users/${userInput}`);   // stays on api.example.com
+await api.get('https://evil.example/'); // rejects with InvalidInputError (parameter: 'url'); nothing is sent
+await api.get('https://partner.example/data', { allowAbsoluteUrls: true }); // per request, deliberately
+```
+
+`allowAbsoluteUrls` applies to requests, `client.events()` and `client.websocket()`, and can be set per request. In Rust, it's `ClientBuilder::allow_absolute_urls(false)`.
+
+Not covered yet, and planned for 2.5.0: limits on decompressed and total response size ([#76](https://github.com/asemqaffaf/rust-fetch/issues/76), [#77](https://github.com/asemqaffaf/rust-fetch/issues/77)), and SSRF protection for servers that fetch user-supplied URLs ([#78](https://github.com/asemqaffaf/rust-fetch/issues/78)).
 
 ## Using it from Rust
 

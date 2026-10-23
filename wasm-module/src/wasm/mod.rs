@@ -147,6 +147,12 @@ export interface ClientOptions extends BrowserRequestOptions {
    * Browsers use the system's proxy settings. Default: none
    */
   proxy?: 'env' | (string & {});
+  /**
+   * With a `baseUrl`, whether an absolute request URL may replace it. An absolute URL also receives the
+   * client's headers (e.g. `Authorization`), so set `false` when paths come from user input: absolute URLs
+   * then reject with an `InvalidInputError`. Default: `true`
+   */
+  allowAbsoluteUrls?: boolean;
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
@@ -160,6 +166,8 @@ export interface RequestOptions extends BrowserRequestOptions {
   redirect?: RedirectMode;
   /** Overrides the client's `maxRedirects` */
   maxRedirects?: number;
+  /** Overrides the client's `allowAbsoluteUrls` */
+  allowAbsoluteUrls?: boolean;
   /**
    * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
    * For `responseType: 'stream'` it also errors the body stream.
@@ -325,6 +333,9 @@ impl WasmClient {
             #[cfg(target_arch = "wasm32")]
             {
                 builder = builder.fetch_options(parse_fetch_options(options, None)?);
+                if let Some(allow) = prop(options, "allowAbsoluteUrls") {
+                    builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+                }
                 if let Some(proxy) = prop(options, "proxy") {
                     builder = builder.proxy(Some(parse_proxy(&proxy)?));
                 }
@@ -776,6 +787,9 @@ pub(crate) fn request_builder(
 
     if let Some(params) = prop(options, "params") {
         builder = builder.query(parse_params(&params)?);
+    }
+    if let Some(allow) = prop(options, "allowAbsoluteUrls") {
+        builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
     }
     if let Some(timeout) = prop(options, "timeoutMs") {
         builder = match parse_timeout(&timeout)? {

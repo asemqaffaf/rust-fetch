@@ -77,6 +77,8 @@ export interface WebSocketOptions {
    * `true` for the defaults, a maximum number of attempts in a row, or options. Default: off
    */
   reconnect?: boolean | number | ReconnectOptions;
+  /** Overrides the client's `allowAbsoluteUrls` */
+  allowAbsoluteUrls?: boolean;
   /** Closes the connection and stops reconnecting when aborted */
   signal?: AbortSignal;
   /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */
@@ -457,6 +459,11 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         .map(|params| parse_params(&params))
         .transpose()?
         .unwrap_or_default();
+    let allow_absolute = match prop(options, "allowAbsoluteUrls") {
+        Some(value) => super::parse_bool(&value, "allowAbsoluteUrls")?,
+        None => config.allow_absolute_urls,
+    };
+    crate::client::check_absolute_url(config.base_url.as_deref(), url, allow_absolute)?;
     let url = websocket_url(config.base_url.as_deref(), url, &params)?;
 
     let protocols = js_sys::Array::new();

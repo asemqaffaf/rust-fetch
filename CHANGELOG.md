@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`allowAbsoluteUrls`** (client and per request, also for `events()` and `websocket()`): with `false`, an absolute URL on a client with a `baseUrl` rejects with an `InvalidInputError` instead of replacing the base URL, and so the client's headers such as `Authorization` can't be sent to a host taken from user input (the class of axios CVE-2025-27152). Default `true`, as before. Rust: `allow_absolute_urls()` on `ClientBuilder` and `RequestBuilder`.
+- README *Security* section: what the client protects against, and what's planned.
+
 ## [2.4.1] - 2026-10-23
 
 ### Fixed

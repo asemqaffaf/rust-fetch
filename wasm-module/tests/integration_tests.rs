@@ -719,6 +719,50 @@ async fn max_redirects_limits_redirects_per_client_and_request() {
 }
 
 #[tokio::test]
+async fn absolute_urls_can_be_kept_from_replacing_the_base_url() {
+    let api = TestServer::start(|_, _| Reply::new(200, "api"));
+    let other = TestServer::start(|_, _| Reply::new(200, "other"));
+    let client = Client::builder()
+        .base_url(api.url("/v1"))
+        .default_header("authorization", "Bearer SECRET")
+        .allow_absolute_urls(false)
+        .build()
+        .unwrap();
+
+    for result in [
+        client.get(other.url("/steal")).await.map(|_| ()),
+        client
+            .request(Method::Get, other.url("/steal"))
+            .send_streaming()
+            .await
+            .map(|_| ()),
+    ] {
+        let error = result.unwrap_err();
+        assert!(
+            matches!(&error, Error::InvalidInput { parameter, .. } if parameter == "url"),
+            "{error}"
+        );
+    }
+    assert!(other.requests().is_empty(), "nothing reaches the other host");
+
+    // Paths, including protocol-relative-looking ones, stay under the base URL
+    for path in ["/items", "//other.example/x"] {
+        assert_eq!(client.get(path).await.unwrap().bytes(), Some(&b"api"[..]));
+    }
+    // A request can still opt in
+    let response = client
+        .request(Method::Get, other.url("/"))
+        .allow_absolute_urls(true)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.bytes(), Some(&b"other"[..]));
+    // Without a base URL there's nothing to replace
+    let plain = Client::builder().allow_absolute_urls(false).build().unwrap();
+    assert!(plain.get(other.url("/")).await.is_ok());
+}
+
+#[tokio::test]
 async fn chunked_responses_are_reassembled() {
     let server = TestServer::start(|_, _| {
         Reply::raw(vec![
