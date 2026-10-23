@@ -216,9 +216,13 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     const status = response.statusCode;
     const location = response.headers.location;
 
-    if (REDIRECT_STATUSES.has(status) && location) {
+    if (REDIRECT_STATUSES.has(status) && location && !state.manual) {
       response.resume();
-      if (redirects >= MAX_REDIRECTS) return reject(new TypeError(`Too many redirects (more than ${MAX_REDIRECTS})`));
+      if (redirects >= state.maxRedirects) {
+        return reject(
+          new TypeError(state.maxRedirects === 0 ? `Redirect not allowed: ${status} to ${location}` : `Too many redirects (more than ${state.maxRedirects})`),
+        );
+      }
       let next;
       try {
         next = new URL(location, url);
@@ -286,10 +290,11 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 }
 
 /**
- * One attempt, called by the Rust core with
- * `{ method, url, headers, body?, timeout?, bodyType, onUploadProgress?, onDownloadProgress? }`. Resolves to the
- * finished `{ status, statusText, ok, url, headers, body }` (the core fills
- * in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
+ * One attempt, called by the Rust core with `{ method, url, headers, body?,
+ * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
+ * maxRedirects? }` (`redirect` is only ever `'manual'`; `maxRedirects: 0`
+ * fails on any redirect). Resolves to the finished `{ status, statusText,
+ * ok, url, headers, body }` (the core fills in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
  * or any other error for network failures.
  *
  * The promise has a `cancel()` method, which the core calls only when it
@@ -306,7 +311,15 @@ function nodeTransport(request) {
     return nativeTransport(request);
   }
 
-  const state = { cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO, onUploadProgress, onDownloadProgress };
+  const state = {
+    cancelled: false,
+    request: undefined,
+    bodyType: request.bodyType ?? AUTO,
+    onUploadProgress,
+    onDownloadProgress,
+    manual: request.redirect === 'manual',
+    maxRedirects: request.maxRedirects ?? MAX_REDIRECTS,
+  };
   let timer;
   const promise = new Promise((resolve, reject) => {
     if (request.timeout > 0) {
@@ -336,7 +349,7 @@ function nodeTransport(request) {
   // Decode only after the socket's event handlers have returned: decoding
   // inside them keeps the raw chunks and stream state alive during
   // JSON.parse, which costs several times more garbage collection.
-  const finished = promise.then((response) => finishResponse(response, state.bodyType));
+  const finished = promise.then((response) => finishResponse(response, state.bodyType, state.manual));
   finished.cancel = () => {
     clearTimeout(timer);
     cancel();
@@ -368,8 +381,18 @@ function nativeTransport(request) {
     else pairs.push(name, value);
   }
   const bodyType = request.bodyType ?? AUTO;
+  const manual = request.redirect === 'manual';
   const finished = native
-    .send({ id, method: request.method, url: request.url, headers: pairs, body: request.body, timeout: request.timeout })
+    .send({
+      id,
+      method: request.method,
+      url: request.url,
+      headers: pairs,
+      body: request.body,
+      timeout: request.timeout,
+      manual,
+      maxRedirects: request.maxRedirects,
+    })
     .then((response) => {
       if (response.error != null) throw coded(new Error(response.error), response.code);
       const headers = {};
@@ -378,17 +401,21 @@ function nativeTransport(request) {
         const name = raw[i];
         headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
       }
-      return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType);
+      return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
     });
   finished.cancel = () => native.cancel(id);
   return finished;
 }
 
-/** The response object handed to the Rust core (which fills in statusText) */
-function finishResponse({ status, url, headers, body }, bodyType) {
+/**
+ * The response object handed to the Rust core (which fills in statusText).
+ * With `manual`, a redirect is decoded like a successful response.
+ */
+function finishResponse({ status, url, headers, body }, bodyType, manual) {
   const ok = status >= 200 && status < 300;
+  const success = ok || (manual && REDIRECT_STATUSES.has(status));
   // Error statuses carry their body as text (for HttpError.body)
-  const decoded = ok ? decodeBody(body, headers['content-type'], bodyType) : decodeBody(body, '', TEXT);
+  const decoded = success ? decodeBody(body, headers['content-type'], bodyType) : decodeBody(body, '', TEXT);
   return { status, statusText: '', ok, url, headers, body: decoded };
 }
 

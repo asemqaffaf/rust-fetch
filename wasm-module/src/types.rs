@@ -157,6 +157,38 @@ fn mime_essence(content_type: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Redirects followed by default: the limit browsers use
+pub(crate) const DEFAULT_MAX_REDIRECTS: u32 = 20;
+
+/// What to do when the server redirects, like `fetch()`'s `redirect` option
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Redirect {
+    /// Follow redirects, up to the maximum number of redirects
+    #[default]
+    Follow,
+    /// Return the redirect response (301, 302, 303, 307 or 308) as a success
+    Manual,
+    /// Fail with a network error on any redirect
+    Error,
+}
+
+impl Redirect {
+    /// The `follow_redirects` and `max_redirects` of a [`RequestConfig`]
+    pub(crate) fn config(self, max_redirects: u32) -> (bool, u32) {
+        match self {
+            Self::Follow => (true, max_redirects),
+            Self::Manual => (false, max_redirects),
+            Self::Error => (true, 0),
+        }
+    }
+}
+
+/// Whether a status is a redirect that is followed (or, with
+/// `follow_redirects: false`, returned as is)
+pub(crate) fn is_redirect_status(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
 /// Request configuration
 #[derive(Debug, Clone)]
 pub struct RequestConfig {
@@ -168,9 +200,11 @@ pub struct RequestConfig {
     pub body: Option<Body>,
     /// Request timeout
     pub timeout: Option<Duration>,
-    /// Follow redirects
+    /// Follow redirects (`redirect: 'follow'`). When `false`, a redirect
+    /// response (301, 302, 303, 307 or 308) is returned as is (`'manual'`).
     pub follow_redirects: bool,
-    /// Maximum number of redirects
+    /// Maximum number of redirects to follow; `0` fails on any redirect
+    /// (`redirect: 'error'`)
     pub max_redirects: u32,
     /// Response format preference
     pub response_format: ResponseFormat,
@@ -184,7 +218,7 @@ impl Default for RequestConfig {
             body: None,
             timeout: Some(Duration::from_secs(30)),
             follow_redirects: true,
-            max_redirects: 10,
+            max_redirects: DEFAULT_MAX_REDIRECTS,
             response_format: ResponseFormat::Auto,
         }
     }
@@ -535,7 +569,7 @@ mod tests {
         assert!(config.body.is_none());
         assert_eq!(config.timeout, Some(Duration::from_secs(30)));
         assert!(config.follow_redirects);
-        assert_eq!(config.max_redirects, 10);
+        assert_eq!(config.max_redirects, 20);
         assert_eq!(config.response_format, ResponseFormat::Auto);
         assert!(config.headers.iter().next().is_none());
     }

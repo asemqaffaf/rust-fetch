@@ -84,9 +84,9 @@ Dates aren't promised; the order is.
 
 **Needs one-time setup first ([#14](https://github.com/asemqaffaf/rust-fetch/issues/14)):** npm trusted publishing is configured per package, so the per-platform packages must first exist on npm. Their names (scope), whether the native transport is on by default when installed, and the minimum glibc for Linux builds also need choosing.
 
-## 2.7.0: resilience and observability
+## 2.7.0: resilience, security and observability
 
-*Goal: protect both the client and the APIs it calls, and show where the time goes.*
+*Goal: protect both the client and the APIs it calls, keep untrusted servers from exhausting memory or reaching internal networks, and show where the time goes.*
 
 | | |
 | --- | --- |
@@ -98,6 +98,10 @@ Dates aren't promised; the order is.
 | Request method, URL and attempts on errors | [#65](https://github.com/asemqaffaf/rust-fetch/issues/65) |
 | Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) |
 | Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) |
+| Limit decompressed response size (decompression bombs) | [#76](https://github.com/asemqaffaf/rust-fetch/issues/76) |
+| Response size limits: `maxResponseBytes` | [#77](https://github.com/asemqaffaf/rust-fetch/issues/77) |
+| SSRF protection for server-side requests | [#78](https://github.com/asemqaffaf/rust-fetch/issues/78) |
+| Separate connect, response and idle timeouts | [#79](https://github.com/asemqaffaf/rust-fetch/issues/79) |
 
 ## 2.8.0: data and developer experience
 
@@ -118,6 +122,8 @@ Dates aren't promised; the order is.
 | Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) |
 | Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) |
 | Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) |
+| The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) |
+| `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) |
 
 ## Exploring
 

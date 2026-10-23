@@ -7,8 +7,9 @@ use crate::{
     error::{Error, Result},
     runtime,
     types::{
-        is_json_content_type, is_text_content_type, Body, Headers, Method, Multipart, Progress,
-        RequestConfig, Response, ResponseBody, ResponseFormat, RetryConfig,
+        is_json_content_type, is_redirect_status, is_text_content_type, Body, Headers, Method,
+        Multipart, Progress, Redirect, RequestConfig, Response, ResponseBody, ResponseFormat,
+        RetryConfig, DEFAULT_MAX_REDIRECTS,
     },
 };
 use futures_util::{Stream, StreamExt};
@@ -22,6 +23,10 @@ pub use crate::wasm::WasmClient;
 pub struct Client {
     inner: reqwest::Client,
     pub(crate) config: Arc<ClientConfig>,
+    /// Clients for requests that override the redirect settings: reqwest
+    /// sets the redirect policy per client (and connection pool)
+    #[cfg(not(target_arch = "wasm32"))]
+    redirect_clients: Arc<std::sync::Mutex<Vec<((bool, u32), reqwest::Client)>>>,
 }
 
 /// Client configuration
@@ -31,6 +36,8 @@ pub(crate) struct ClientConfig {
     pub(crate) timeout: Option<Duration>,
     retry_config: Option<RetryConfig>,
     pub(crate) base_url: Option<String>,
+    redirect: Redirect,
+    max_redirects: u32,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -167,6 +174,8 @@ impl Client {
     /// Relative URLs are resolved against the client's base URL (or, in a
     /// browser, against the page URL). Absolute URLs are used as-is.
     pub fn request(&self, method: Method, url: impl AsRef<str>) -> RequestBuilder {
+        let (redirect, max_redirects) = (self.config.redirect, self.config.max_redirects);
+        let (follow_redirects, limit) = redirect.config(max_redirects);
         RequestBuilder {
             client: self.clone(),
             config: RequestConfig {
@@ -174,14 +183,43 @@ impl Client {
                 headers: self.config.default_headers.clone(),
                 body: None,
                 timeout: self.config.timeout,
-                follow_redirects: true,
-                max_redirects: 10,
+                follow_redirects,
+                max_redirects: limit,
                 response_format: ResponseFormat::Auto,
             },
             url: url.as_ref().to_string(),
             query: Vec::new(),
             progress: None,
+            redirect,
+            max_redirects,
         }
+    }
+
+    /// The reqwest client for a request's redirect settings
+    #[cfg(not(target_arch = "wasm32"))]
+    fn http_client(&self, config: &RequestConfig) -> Result<reqwest::Client> {
+        let key = (config.follow_redirects, config.max_redirects);
+        if key == self.config.redirect.config(self.config.max_redirects) {
+            return Ok(self.inner.clone());
+        }
+        let mut clients = self
+            .redirect_clients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, client)) = clients.iter().find(|(settings, _)| *settings == key) {
+            return Ok(client.clone());
+        }
+        let client = http_client(key)?;
+        clients.push((key, client.clone()));
+        Ok(client)
+    }
+
+    /// In browsers `fetch()` follows redirects; the bindings send requests
+    /// with other redirect settings through their own transports
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::unnecessary_wraps)]
+    fn http_client(&self, _config: &RequestConfig) -> Result<reqwest::Client> {
+        Ok(self.inner.clone())
     }
 
     /// Execute a request, retrying according to the client's retry configuration.
@@ -198,7 +236,7 @@ impl Client {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         self.execute_retrying(config.method, config.timeout, || async {
             let raw = self.execute_once(&url, config, stream, progress).await?;
-            if (200..300).contains(&raw.status) {
+            if is_success(raw.status, config) {
                 Ok(Attempt::Success(raw))
             } else {
                 let retry_after = raw
@@ -294,7 +332,9 @@ impl Client {
         stream: bool,
         progress: Option<&ProgressFn>,
     ) -> Result<RawResponse> {
-        let mut request = self.inner.request(config.method.to_reqwest(), url.clone());
+        let mut request = self
+            .http_client(config)?
+            .request(config.method.to_reqwest(), url.clone());
 
         // Set headers
         for (name, values) in config.headers.iter() {
@@ -320,11 +360,12 @@ impl Client {
             headers.insert(name.as_str(), String::from_utf8_lossy(value.as_bytes()));
         }
 
-        let (body, stream) = if stream && status.is_success() {
+        let success = is_success(status.as_u16(), config);
+        let (body, stream) = if stream && success {
             (Vec::new(), Some(response))
         } else {
             // Only report progress for the body the caller asked for
-            let progress = progress.filter(|_| status.is_success());
+            let progress = progress.filter(|_| success);
             (read_body(response, progress).await?, None)
         };
 
@@ -337,6 +378,46 @@ impl Client {
             stream,
         })
     }
+}
+
+/// Whether a response is returned rather than rejected: a 2xx, or with
+/// `follow_redirects: false`, a redirect
+fn is_success(status: u16, config: &RequestConfig) -> bool {
+    (200..300).contains(&status) || !config.follow_redirects && is_redirect_status(status)
+}
+
+/// A reqwest client following redirects as configured
+fn http_client((follow, max_redirects): (bool, u32)) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder();
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.redirect(redirect_policy(follow, max_redirects));
+    #[cfg(target_arch = "wasm32")]
+    let _ = (follow, max_redirects);
+    builder.build().map_err(client_init_error)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn redirect_policy(follow: bool, max_redirects: u32) -> reqwest::redirect::Policy {
+    if !follow {
+        return reqwest::redirect::Policy::none();
+    }
+    reqwest::redirect::Policy::custom(move |attempt| {
+        // `previous` includes the original URL
+        let redirects = attempt.previous().len();
+        if redirects <= max_redirects as usize {
+            return attempt.follow();
+        }
+        let message = if max_redirects == 0 {
+            format!(
+                "Redirect not allowed: {} to {}",
+                attempt.status().as_u16(),
+                attempt.url()
+            )
+        } else {
+            format!("Too many redirects (more than {max_redirects})")
+        };
+        attempt.error(message)
+    })
 }
 
 /// Resolve a request URL and append query parameters.
@@ -496,6 +577,8 @@ pub struct ClientBuilder {
     timeout: Option<Duration>,
     retry_config: Option<RetryConfig>,
     base_url: Option<String>,
+    redirect: Redirect,
+    max_redirects: u32,
 }
 
 impl ClientBuilder {
@@ -506,7 +589,21 @@ impl ClientBuilder {
             timeout: Some(Duration::from_secs(30)),
             retry_config: None,
             base_url: None,
+            redirect: Redirect::Follow,
+            max_redirects: DEFAULT_MAX_REDIRECTS,
         }
+    }
+
+    /// What to do when the server redirects (default: [`Redirect::Follow`])
+    pub fn redirect(mut self, redirect: Redirect) -> Self {
+        self.redirect = redirect;
+        self
+    }
+
+    /// Maximum number of redirects to follow (default: 20)
+    pub fn max_redirects(mut self, max_redirects: u32) -> Self {
+        self.max_redirects = max_redirects;
+        self
     }
 
     /// Set default header
@@ -571,9 +668,7 @@ impl ClientBuilder {
             }
         }
 
-        let inner = reqwest::Client::builder()
-            .build()
-            .map_err(client_init_error)?;
+        let inner = http_client(self.redirect.config(self.max_redirects))?;
 
         Ok(Client {
             inner,
@@ -582,7 +677,11 @@ impl ClientBuilder {
                 timeout: self.timeout,
                 retry_config: self.retry_config,
                 base_url: self.base_url,
+                redirect: self.redirect,
+                max_redirects: self.max_redirects,
             }),
+            #[cfg(not(target_arch = "wasm32"))]
+            redirect_clients: Arc::default(),
         })
     }
 }
@@ -600,6 +699,8 @@ pub struct RequestBuilder {
     url: String,
     query: Vec<(String, String)>,
     progress: Option<ProgressFn>,
+    redirect: Redirect,
+    max_redirects: u32,
 }
 
 impl RequestBuilder {
@@ -709,6 +810,21 @@ impl RequestBuilder {
     pub fn no_timeout(mut self) -> Self {
         self.config.timeout = None;
         self
+    }
+
+    /// What to do when the server redirects, overriding the client's setting
+    pub fn redirect(mut self, redirect: Redirect) -> Self {
+        self.redirect = redirect;
+        (self.config.follow_redirects, self.config.max_redirects) =
+            redirect.config(self.max_redirects);
+        self
+    }
+
+    /// Maximum number of redirects to follow, overriding the client's setting
+    pub fn max_redirects(mut self, max_redirects: u32) -> Self {
+        self.max_redirects = max_redirects;
+        let redirect = self.redirect;
+        self.redirect(redirect)
     }
 
     /// Set response format preference

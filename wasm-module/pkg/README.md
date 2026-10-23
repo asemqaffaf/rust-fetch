@@ -315,6 +315,8 @@ const client = new WasmClient({
   headers: { Authorization: 'Bearer …' }, // sent with every request
   timeoutMs: 10_000,                      // per attempt; 0 disables. Default: 30000
   retries: 3,                             // or a RetryOptions object, see Retries
+  redirect: 'follow',                     // or 'manual' / 'error', see Redirects. Default: 'follow'
+  maxRedirects: 20,                       // Node.js; browsers apply their own limit. Default: 20
 });
 ```
 
@@ -349,6 +351,25 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `signal` | `AbortSignal` | See [Cancellation](#cancellation) |
 | `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](#download-progress) |
 | `onUploadProgress` | `({ loaded, total }) => void` | See [Upload progress](#upload-progress) |
+| `redirect` | `'follow'` \| `'manual'` \| `'error'` | Overrides the client's; see [Redirects](#redirects) |
+| `maxRedirects` | number | Overrides the client's; see [Redirects](#redirects) |
+
+#### Redirects
+
+Redirects (301, 302, 303, 307 and 308) are followed the way `fetch()` follows them: a 303, or a 301 or 302 after `POST`, becomes a `GET` without a body, and `res.url` is the final URL. In Node.js, `Authorization`, `Cookie` and `Proxy-Authorization` headers are dropped when a redirect leaves the origin; browsers apply their own rules.
+
+| `redirect` | What happens |
+| --- | --- |
+| `'follow'` (default) | Follow up to `maxRedirects` redirects (default 20); one more rejects with a `NetworkError` |
+| `'manual'` | Resolve with the redirect response itself, with `ok: false` and its `Location` header |
+| `'error'` | Reject with a `NetworkError` on any redirect (the same as `maxRedirects: 0`) |
+
+```js
+const res = await client.get('/login', { redirect: 'manual' });
+if (!res.ok) console.log(res.status, res.headers.location); // 302 '/sso?…'
+```
+
+In browsers, `fetch()` hides redirects from scripts: with `'manual'` the response has `status: 0` and no headers, and the browser's own limit (20) applies instead of `maxRedirects`. `'manual'` and `'error'` can't be combined with `responseType: 'stream'` or `'ndjson'` (an `InvalidInputError`). With upload progress in browsers, they send the request with `fetch()` instead of `XMLHttpRequest` (which always follows redirects), so upload progress is reported once.
 
 ### Request bodies
 
@@ -367,13 +388,13 @@ The body's type decides how it's sent. A `Content-Type` header you set yourself 
 
 ### Responses
 
-Successful (2xx) requests resolve to:
+Successful (2xx) requests, and redirects with `redirect: 'manual'`, resolve to:
 
 ```ts
 interface HttpResponse<T = any> {
   status: number;          // 200
   statusText: string;      // "OK"
-  ok: boolean;             // always true: non-2xx responses reject with an HttpError
+  ok: boolean;             // true; false only for a redirect with redirect: 'manual'. Other non-2xx responses reject with an HttpError
   url: string;             // final URL after redirects
   headers: Record<string, string>; // lower-cased names; repeated headers joined with ", "
   body: T;
@@ -710,6 +731,8 @@ client.post("upload").multipart(&form).send().await?;
 
 let mut chunks = client.get_streaming("export.csv").await?.into_stream(); // a futures::Stream of Vec<u8>
 ```
+
+Redirects: `.redirect(Redirect::Manual)` or `Redirect::Error`, and `.max_redirects(n)` (default 20), on the `ClientBuilder` or per request on the `RequestBuilder`.
 
 Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (`on_download_progress`) must be `Send + Sync` on native targets. Upload progress, WebSockets and interceptors are only in the JavaScript API.
 

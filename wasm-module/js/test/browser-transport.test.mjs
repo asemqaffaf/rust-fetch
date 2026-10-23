@@ -111,6 +111,9 @@ before(async () => {
       case '/bytes':
         res.writeHead(200, { 'content-type': 'application/octet-stream' });
         return res.end(Buffer.from([1, 2, 3]));
+      case '/moved':
+        res.writeHead(302, { location: '/echo', 'content-type': 'text/plain' });
+        return res.end('see /echo');
       default:
         res.writeHead(404);
         return res.end();
@@ -145,6 +148,42 @@ describe('upload progress without XMLHttpRequest (fetch())', () => {
     let called = false;
     await new WasmClient().get(server.url('/echo'), { onUploadProgress: () => (called = true) });
     assert.equal(called, false);
+  });
+});
+
+// Node's fetch() returns the redirect itself with redirect: 'manual';
+// browsers return an opaque redirect (browsers.test.mjs)
+describe('redirect modes through fetch()', () => {
+  it("returns the redirect with redirect: 'manual'", async () => {
+    const res = await new WasmClient({ redirect: 'manual' }).get(server.url('/moved'));
+    assert.equal(res.status, 302);
+    assert.equal(res.ok, false);
+    assert.equal(res.headers.location, '/echo');
+    assert.equal(res.body, 'see /echo');
+    assert.equal(res.url, server.url('/moved'));
+    const followed = await new WasmClient().get(server.url('/moved'));
+    assert.equal(followed.body.method, 'GET');
+  });
+
+  it("rejects redirects with redirect: 'error'", async () => {
+    const error = await rejection(new WasmClient().get(server.url('/moved'), { redirect: 'error' }));
+    assert.equal(error.kind, 'NetworkError');
+    assert.match(error.message, /Redirect not allowed: 302 to \/echo/);
+    const res = await new WasmClient({ redirect: 'error' }).get(server.url('/echo'));
+    assert.equal(res.status, 200);
+  });
+
+  it('uses fetch() instead of XMLHttpRequest, which always follows redirects', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest;
+    const uploads = [];
+    const res = await new WasmClient().post(server.url('/moved'), {
+      body: 'abc',
+      redirect: 'manual',
+      onUploadProgress: (p) => uploads.push(p),
+    });
+    assert.equal(res.status, 302);
+    assert.equal(FakeXMLHttpRequest.instances.length, 0);
+    assert.deepEqual(uploads, [{ loaded: 3, total: 3 }]);
   });
 });
 

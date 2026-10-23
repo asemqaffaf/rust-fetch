@@ -78,6 +78,10 @@ pub struct Request {
     pub body: Option<Uint8Array>,
     /// Timeout for the whole attempt, in ms
     pub timeout: Option<f64>,
+    /// Return redirects instead of following them (`redirect: 'manual'`)
+    pub manual: Option<bool>,
+    /// Redirects to follow before failing (default 20); `0` fails on any redirect
+    pub max_redirects: Option<u32>,
 }
 
 /// The finished response, or `error` (with `code` for timeouts)
@@ -156,6 +160,8 @@ impl Transport {
         let mut headers = header_map(&request.headers)?;
         let mut body = request.body.map(|body| Bytes::copy_from_slice(&body));
         let mut redirects = 0;
+        let manual = request.manual.unwrap_or(false);
+        let max_redirects = request.max_redirects.unwrap_or(MAX_REDIRECTS);
 
         loop {
             let (connection, response) = self
@@ -167,15 +173,20 @@ impl Transport {
                 .headers()
                 .get(LOCATION)
                 .map(|l| String::from_utf8_lossy(l.as_bytes()).into_owned());
-            if let (true, Some(location)) =
-                (matches!(status, 301 | 302 | 303 | 307 | 308), location)
-            {
+            if let (true, Some(location)) = (
+                !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
+                location,
+            ) {
                 // Read the (small) body so the connection can be reused
                 if response.into_body().collect().await.is_ok() {
                     connection.release();
                 }
-                if redirects >= MAX_REDIRECTS {
-                    return Err(format!("Too many redirects (more than {MAX_REDIRECTS})"));
+                if redirects >= max_redirects {
+                    return Err(if max_redirects == 0 {
+                        format!("Redirect not allowed: {status} to {location}")
+                    } else {
+                        format!("Too many redirects (more than {max_redirects})")
+                    });
                 }
                 let next = url
                     .join(&location)

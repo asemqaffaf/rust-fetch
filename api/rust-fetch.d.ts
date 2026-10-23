@@ -45,6 +45,15 @@ export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | 
  */
 export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
 
+/**
+ * What to do when the server redirects (301, 302, 303, 307 or 308), like `fetch()`'s `redirect`:
+ * - `follow`: follow it, up to `maxRedirects`
+ * - `manual`: resolve with the redirect response and its `Location` header. In browsers,
+ *   `fetch()` hides redirects from scripts: the response has `status: 0` and no headers.
+ * - `error`: reject with a `NetworkError`
+ */
+export type RedirectMode = 'follow' | 'manual' | 'error';
+
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
     loaded: number;
@@ -85,6 +94,10 @@ export interface ClientOptions {
     timeoutMs?: number;
     /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
     retries?: number | RetryOptions;
+    /** What to do when the server redirects. Default: `follow` */
+    redirect?: RedirectMode;
+    /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
+    maxRedirects?: number;
 }
 
 export interface RequestOptions {
@@ -93,6 +106,13 @@ export interface RequestOptions {
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
     timeoutMs?: number;
     responseType?: ResponseBodyType;
+    /**
+     * Overrides the client's `redirect`. `manual` and `error` can't be combined with
+     * `responseType: 'stream' | 'ndjson'`.
+     */
+    redirect?: RedirectMode;
+    /** Overrides the client's `maxRedirects` */
+    maxRedirects?: number;
     /**
      * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
      * For `responseType: 'stream'` it also errors the body stream.
@@ -132,7 +152,7 @@ export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpRespons
 export interface HttpResponse<T = any> {
     status: number;
     statusText: string;
-    /** Always `true`: non-2xx responses reject with an `HttpError` */
+    /** `true` for 2xx responses (other statuses reject with an `HttpError`); `false` for a redirect resolved with `redirect: 'manual'` */
     ok: boolean;
     /** Final URL after redirects */
     url: string;
