@@ -18,6 +18,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
 import net from 'node:net';
+import { pipeline, Readable, Transform } from 'node:stream';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
@@ -269,6 +270,56 @@ function decode(body, encoding) {
   }
 }
 
+/** Raw or zlib-wrapped deflate, decided by the first byte as in `decode` */
+function inflateStream() {
+  let inflate;
+  return new Transform({
+    transform(chunk, _, done) {
+      if (!inflate) {
+        inflate = chunk[0] === 0x78 ? zlib.createInflate() : zlib.createInflateRaw();
+        inflate.on('data', (data) => this.push(data));
+        inflate.on('error', (error) => this.destroy(error));
+      }
+      inflate.write(chunk, () => done());
+    },
+    flush(done) {
+      if (!inflate) return done();
+      inflate.once('end', done);
+      inflate.end();
+    },
+  });
+}
+
+/** A decoder stream for one Content-Encoding, or undefined to pass it through */
+function decoderStream(encoding) {
+  switch (encoding) {
+    case 'gzip':
+    case 'x-gzip':
+      return zlib.createGunzip({ finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    case 'deflate':
+      return inflateStream();
+    case 'br':
+      return zlib.createBrotliDecompress();
+    case 'zstd':
+      return typeof zlib.createZstdDecompress === 'function' ? zlib.createZstdDecompress() : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** A streamed response body as a web `ReadableStream`, decompressed; cancelling it closes the response */
+function bodyStream(response, method) {
+  const encodings = (method === 'HEAD' ? '' : response.headers['content-encoding'] ?? '')
+    .toLowerCase()
+    .split(',')
+    .map((e) => e.trim())
+    .filter((e) => e && e !== 'identity');
+  const decoders = encodings.reverse().map(decoderStream).filter(Boolean);
+  const source = decoders.length ? pipeline(response, ...decoders, () => {}) : response;
+  // A queue of several chunks, so the socket isn't paused after each one
+  return Readable.toWeb(source, { strategy: new CountQueuingStrategy({ highWaterMark: 16 }) });
+}
+
 function decompress(body, contentEncoding) {
   if (!contentEncoding || body.length === 0) return body;
   // Encodings are listed in the order they were applied
@@ -378,6 +429,12 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       return send(state, nextMethod, next, nextHeaders, nextBody, redirects + 1, resolve, reject);
     }
 
+    // Streamed: resolve with the body as it arrives (error statuses are read in full)
+    const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
+    if (state.stream && success) {
+      return resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) });
+    }
+
     // With a Content-Length, fill one preallocated buffer (a single copy);
     // otherwise collect chunks and join them at the end.
     const expected = Number(response.headers['content-length']);
@@ -422,8 +479,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 /**
  * One attempt, called by the Rust core with `{ method, url, headers, body?,
  * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
- * maxRedirects?, proxy? }` (`redirect` is only ever `'manual'`; `maxRedirects: 0`
- * fails on any redirect; `proxy` is `'env'` or a proxy URL). Resolves to the finished `{ status, statusText,
+ * maxRedirects?, proxy?, stream? }` (`redirect` is only ever `'manual'`;
+ * `maxRedirects: 0` fails on any redirect; `proxy` is `'env'` or a proxy URL).
+ * With `stream`, a successful response resolves as soon as its headers
+ * arrive, with `body` a `ReadableStream` of the decompressed bytes. Resolves to the finished `{ status, statusText,
  * ok, url, headers, body }` (the core fills in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
  * or any other error for network failures.
  *
@@ -439,7 +498,7 @@ function nodeTransport(request) {
   const { onUploadProgress, onDownloadProgress } = request;
   const proxy = request.proxy ?? (process.env.NODE_USE_ENV_PROXY === '1' ? 'env' : undefined);
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
-  if (native && transport && !onUploadProgress && !onDownloadProgress && !proxy && agentFor(transport) === pools.get(transport)) {
+  if (native && transport && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && agentFor(transport) === pools.get(transport)) {
     return nativeTransport(request);
   }
 
@@ -452,6 +511,7 @@ function nodeTransport(request) {
     manual: request.redirect === 'manual',
     maxRedirects: request.maxRedirects ?? MAX_REDIRECTS,
     proxy,
+    stream: request.stream === true,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -482,7 +542,9 @@ function nodeTransport(request) {
   // Decode only after the socket's event handlers have returned: decoding
   // inside them keeps the raw chunks and stream state alive during
   // JSON.parse, which costs several times more garbage collection.
-  const finished = promise.then((response) => finishResponse(response, state.bodyType, state.manual));
+  const finished = promise.then((response) =>
+    response.body instanceof ReadableStream ? response : finishResponse(response, state.bodyType, state.manual),
+  );
   finished.cancel = () => {
     clearTimeout(timer);
     cancel();

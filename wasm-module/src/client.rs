@@ -935,6 +935,7 @@ impl RequestBuilder {
             url.as_str(),
             &self.config,
             self.fetch_options.as_ref(),
+            self.client.config.proxy.as_deref(),
         )?;
         let response = self
             .client

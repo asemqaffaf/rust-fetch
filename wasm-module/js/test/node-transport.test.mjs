@@ -17,6 +17,7 @@ import { WasmClient } from '../../pkg/node.js';
 import { json, rejection, startServer } from './helpers.mjs';
 
 let server;
+let endlessClosed = false;
 let other; // a second origin (different port)
 const sockets = new Set();
 
@@ -48,6 +49,18 @@ before(async () => {
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-encoding': encoding });
         return res.end(body);
       }
+      case '/empty-deflate':
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-encoding': 'deflate' });
+        return res.end();
+      case '/events':
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        return res.end('data: one\n\ndata: two\n\n');
+      case '/endless':
+        // Streams until the client goes away
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        res.write('first');
+        req.socket.once('close', () => (endlessClosed = true));
+        return;
       case '/loop':
         res.writeHead(302, { location: '/loop' });
         return res.end();
@@ -342,6 +355,26 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     });
   });
 
+  describe('streamed responses', () => {
+    it('go through this transport: error statuses, redirects and cancellation', async () => {
+      const missing = await rejection(client().get(server.url('/missing'), { responseType: 'stream' }));
+      assert.equal(missing.kind, 'HttpError');
+      assert.equal(missing.status, 404);
+      const redirected = await client().get(server.url('/moved'), { responseType: 'ndjson' });
+      assert.equal(redirected.url, server.url('/echo'));
+      const lines = [];
+      for await (const line of redirected.body) lines.push(line);
+      assert.equal(lines[0].url, '/echo');
+      endlessClosed = false;
+      const endless = await client().get(server.url('/endless'), { responseType: 'stream' });
+      const reader = endless.body.getReader();
+      assert.equal(new TextDecoder().decode((await reader.read()).value), 'first');
+      await reader.cancel();
+      for (let i = 0; i < 50 && !endlessClosed; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.equal(endlessClosed, true, 'cancelling the stream closes the connection');
+    });
+  });
+
   describe('proxies', () => {
     let proxy;
     before(async () => {
@@ -384,6 +417,16 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal(await via({ no_proxy: noProxy }), true, noProxy);
       }
       assert.equal(host.startsWith('127.0.0.1'), true);
+    });
+
+    it('applies to streamed responses and Server-Sent Events', async () => {
+      const c = new WasmClient({ proxy: proxy.url });
+      const res = await c.get(server.url('/compressed?encoding=gzip'), { responseType: 'stream' });
+      assert.equal(JSON.parse(await new Response(res.body).text()).compressed, true);
+      const events = [];
+      await c.events(server.url('/events'), { reconnect: false, onEvent: (e) => events.push(e.data) }).closed;
+      assert.deepEqual(events, ['one', 'two']);
+      assert.deepEqual(seen(), [`GET ${server.url('/compressed?encoding=gzip')}`, `GET ${server.url('/events')}`]);
     });
 
     it('rejects invalid proxy settings', async () => {
@@ -534,14 +577,34 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       }
     });
 
+    it('decodes streamed responses as they arrive', async () => {
+      const text = async (path, options) => new Response((await client().get(server.url(path), { responseType: 'stream', ...options })).body).text();
+      for (const encoding of ['gzip', 'x-gzip', 'deflate', 'raw-deflate', 'br', 'gzip, br', 'identity']) {
+        assert.equal(JSON.parse(await text('/compressed?' + new URLSearchParams({ encoding }))).text, 'Zoë'.repeat(100), encoding);
+      }
+      for (const encoding of ['zstd', 'compress']) {
+        assert.equal(await text('/encoded?' + new URLSearchParams({ encoding })), 'raw bytes', encoding);
+      }
+      assert.equal(await text('/empty-deflate'), '');
+      // NDJSON over a compressed stream, and HEAD (no body to decode)
+      const head = await client().head(server.url('/compressed?encoding=gzip'), { responseType: 'stream' });
+      assert.equal(await new Response(head.body).text(), '');
+    });
+
     it('reports corrupt compressed bodies as NetworkError', async () => {
       const s = await startServer((req, res) => {
-        res.writeHead(200, { 'content-type': 'text/plain', 'content-encoding': 'gzip' });
-        res.end('not gzip');
+        res.writeHead(200, { 'content-type': 'text/plain', 'content-encoding': req.url.slice(1) || 'gzip' });
+        res.end('xnot compressed');
       });
       try {
         const error = await rejection(client().get(s.url()));
         assert.equal(error.kind, 'NetworkError');
+        // Streamed: the body stream errors
+        for (const encoding of ['gzip', 'deflate']) {
+          const res = await client().get(s.url(`/${encoding}`), { responseType: 'stream' });
+          const failure = await rejection(new Response(res.body).text());
+          assert.equal(failure.kind, 'NetworkError', encoding);
+        }
       } finally {
         await s.close();
       }
