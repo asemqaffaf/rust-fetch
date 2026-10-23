@@ -10,11 +10,12 @@
 **A resilient HTTP client for JavaScript and TypeScript: `fetch()` plus the timeouts, retries, typed errors and interceptors that production code needs, from one Rust core that behaves the same in browsers, Web Workers and Node.js.**
 
 - **Errors you can branch on.** Every failure rejects with a typed `Error`: `HttpError` (with the status and response body), `TimeoutError`, `NetworkError`, `CancelledError` and [more](#errors), so one `catch` handles them all.
+- **Safe with servers and URLs you don't control.** One option each blocks requests to private networks (SSRF, checked on the resolved address), caps response size including decompression bombs, and keeps absolute URLs from taking your credentials away from `baseUrl`. Header injection is rejected, and credentials never follow a redirect to another origin. [Compared with `fetch()` and axios](#security-compared-with-fetch-and-axios).
 - **Timeouts and retries done right.** `timeoutMs` covers each attempt up to the last byte of the body. Retries back off with jitter, honour `Retry-After`, and never repeat a POST or PATCH unless you allow it.
 - **One core, every runtime.** The request policy is written once in Rust and compiled to WebAssembly, so a request is validated, retried and timed out the same way in a browser tab and in a Node.js service.
 - **More than `fetch()` offers.** Interceptors, streaming, Server-Sent Events and newline-delimited JSON (for LLM and other streaming APIs), and download and upload progress.
 - **One client for HTTP and WebSockets.** `client.websocket()` shares the client's base URL, timeouts and typed errors, and adds reconnection with backoff.
-- **Steady under load.** In an [independent benchmark](#independent-benchmark-of-rust-fetch-210) at 15,000 requests per second, the published client's p99 latency was **11.2 ms against 450 ms** for Node.js `fetch()`, with a third of the memory. The native transport, not in the npm package yet, reached up to **1.95×** `fetch()`'s throughput ([performance](#performance)).
+- **Steady under heavy load.** This matters at hundreds or thousands of requests per second; at a few requests a minute, `fetch()` never queues and the server's response time is all you'll see. In an [independent benchmark](#independent-benchmark-of-rust-fetch-210) at 15,000 requests per second, the published client's p99 latency was **11.2 ms against 450 ms** for Node.js `fetch()`, with a third of the memory. The native transport, not in the npm package yet, reached up to **1.95×** `fetch()`'s throughput ([performance](#performance)).
 
 ## Quick start
 
@@ -81,6 +82,7 @@ try {
 - [Using it from Rust](#using-it-from-rust)
 - [Architecture](#architecture)
 - [Compatibility and limitations](#compatibility-and-limitations)
+- [Stability and releases](#stability-and-releases)
 - [Development and benchmarking](#development-and-benchmarking)
 - [FAQ](#faq)
 - [Contributing and license](#contributing-and-license)
@@ -101,6 +103,9 @@ try {
 | Download progress | Read the stream yourself | Yes | Yes |
 | Upload progress | No | Yes | Yes |
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
+| Blocks requests to private networks (SSRF) | No | No | `allowPrivateNetwork: false` (Node.js) |
+| Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
+| Header values with CR/LF | Rejected | Stripped silently | Rejected |
 | Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 188 KB: the WebAssembly module (179 KB) and its JS glue |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](#using-it-from-rust)).
@@ -117,6 +122,9 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 - **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 179 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
+- **Your latency is the server, not the client.** If each request waits seconds on the other side (an AI model, a payment provider, a report) and you send a few a minute, no HTTP client will make it faster. rust-fetch would still give you per-attempt timeouts, retries and typed errors, but if your SDKs already do that, you don't need it.
+- **Your calls go through vendor SDKs.** Most payment, email and AI SDKs make their own requests. Using rust-fetch there means passing it as a custom `fetch` where the SDK allows that; it's simplest for calls your own code makes.
+- **You need a long track record.** rust-fetch 2.x is new: 2.0 to 2.5 shipped within three days in October 2026, and download counts are still small. See the [stability policy](#stability-and-releases) for how releases work from here.
 - **Your Node.js code makes one request at a time** and you're considering the native transport for speed: there it's level with the node:http transport and a few percent behind `fetch()` (it was about 6% slower before 2.4.0).
 
 ## Features
@@ -815,7 +823,7 @@ What the client does for you, each behaviour covered by tests:
 - **Proxy credentials go only to the proxy.** They're sent as `Proxy-Authorization` to the proxy, never to the origin.
 - **No runtime dependencies.** The npm package has none, and every release is published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Rust dependencies are audited in CI (`cargo-deny`: advisories, licenses, sources).
 
-### Compared with `fetch()` and axios
+### Security compared with `fetch()` and axios
 
 The same attacks against each client, with the protections it offers turned on (`npm run security:compare`; Node.js 22.13, axios 1.20). Each rust-fetch row is also a regression test in CI (`wasm-module/js/test/security.test.mjs`), named after the advisories it covers.
 
@@ -995,6 +1003,14 @@ Rust crate users:
 - `RequestBuilder::header()` replaces a default header with the same name instead of adding a second value.
 
 1.x keeps receiving critical fixes on the [`v1.x`](https://github.com/asemqaffaf/rust-fetch/tree/v1.x) branch (`npm install rust-fetch@1`).
+
+## Stability and releases
+
+- **Semantic versioning, staying on 2.x.** Nothing in 2.x breaks existing code: new behaviour is opt-in, defaults don't change, and the TypeScript API and the Rust API are checked against the previous release in CI (`api/rust-fetch.d.ts`, `cargo-semver-checks`). A breaking change would wait for 3.0, with a migration guide and at least one 2.x release warning about it first.
+- **Fewer, larger releases.** 2.0 to 2.5 shipped within three days in October 2026, while the project was getting started. From 2.6.0, minor releases come at most every two weeks. Patch releases are only for regressions and security fixes, each with a test that reproduces the problem.
+- **What gets fixed.** The latest 2.x minor release gets bug and security fixes. Security issues are handled privately, as described in [SECURITY.md](SECURITY.md).
+- **How a release is checked.** Every release is built and published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements), after the Rust and JavaScript suites (100% line coverage enforced for the Rust core and the Node.js transport), real-browser tests in Chromium, Firefox and WebKit, the security regression tests, and the size and API checks. Each pull request is also benchmarked against the previous version.
+- **What changed and why.** [CHANGELOG.md](CHANGELOG.md) lists every change, including performance regressions and their fixes (2.4.1), and [ROADMAP.md](ROADMAP.md) shows what's next.
 
 ## Development and benchmarking
 

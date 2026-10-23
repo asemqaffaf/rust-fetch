@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- The README leads with what holds at any request rate: typed errors, timeouts and retries, and safety with untrusted servers and URLs. The speed figures are qualified as high-volume results.
+- New cases in *When to choose something else*: the server is the bottleneck, calls go through vendor SDKs, or you need a long track record.
+- The comparison with `fetch()` and axios gains SSRF, response-size and header-injection rows.
+- A *Stability and releases* policy: semver on 2.x, minor releases at most every two weeks from 2.6.0, patch releases only for regressions and security fixes, and how releases are checked.
+
 ## [2.5.0] - 2026-10-24
 
 ### Added
