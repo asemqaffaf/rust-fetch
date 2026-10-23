@@ -8,6 +8,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import dns from 'node:dns';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -427,6 +428,66 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       for (const value of [-1, 1.5, '10', Infinity]) {
         assert.throws(() => new WasmClient({ maxResponseBytes: value }), (e) => e.kind === 'InvalidInputError' && e.parameter === 'maxResponseBytes', String(value));
         assert.equal((await rejection(client().get(s.url('/declared'), { maxResponseBytes: value }))).parameter, 'maxResponseBytes');
+      }
+    });
+  });
+
+  describe('allowPrivateNetwork: false (SSRF)', () => {
+    const guarded = () => new WasmClient({ allowPrivateNetwork: false, timeoutMs: 300 });
+    const outcome = (url, options) =>
+      guarded()
+        .get(url, options)
+        .then(() => 'reached', (e) => (/^Network error: Blocked: /.test(e.message) ? 'blocked' : 'not blocked'));
+
+    it('blocks private and reserved IP addresses before connecting', async () => {
+      const blocked = ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '255.255.255.255',
+        '[::1]', '[::]', '[fd00::1]', '[fe80::1]', '[ff02::1]', '[::ffff:127.0.0.1]', '[::ffff:a9fe:a9fe]', '[64:ff9b::a9fe:a9fe]', '[64:ff9b::10.0.0.1]'];
+      for (const host of blocked) assert.equal(await outcome(`http://${host}:9/`), 'blocked', host);
+      // Public addresses are let through (these fail some other way: an unused port, a short timeout)
+      for (const host of ['1.1.1.1', '[2606:4700:4700::1111]', '[::ffff:1.1.1.1]', '[64:ff9b::101:101]']) {
+        assert.equal(await outcome(`http://${host}:9/`, { timeoutMs: 50 }), 'not blocked', host);
+      }
+    });
+
+    it('checks the addresses a name resolves to', async () => {
+      // localhost resolves to loopback addresses
+      assert.equal(await outcome(server.url('/echo').replace('127.0.0.1', 'localhost')), 'blocked');
+      assert.equal(await outcome(server.url('/echo')), 'blocked');
+      // Every hop goes through the same check (each redirect is a new request in
+      // the transport); with only local test servers, the first hop is already blocked
+      const error = await rejection(guarded().get(server.url('/redirect?' + new URLSearchParams({ to: 'http://localhost:9/' }))));
+      assert.match(error.message, /Blocked: 127\.0\.0\.1/);
+      // Per request, the check can be turned off
+      assert.equal((await new WasmClient({ allowPrivateNetwork: false }).get(server.url('/redirect'), { allowPrivateNetwork: true })).status, 200);
+      // Errors are NetworkErrors; per request, the check can be turned off or on
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal((await rejection(client().get(server.url('/echo'), { allowPrivateNetwork: false }))).kind, 'NetworkError');
+      assert.throws(() => new WasmClient({ allowPrivateNetwork: 'no' }), (e) => e.parameter === 'allowPrivateNetwork');
+      assert.equal((await rejection(client().get(server.url('/echo'), { allowPrivateNetwork: 1 }))).parameter, 'allowPrivateNetwork');
+    });
+
+    it('lets names that resolve to public addresses through', async () => {
+      // Resolve a test name to a public address (an unused port, a short timeout: nothing is reached)
+      const lookup = dns.lookup;
+      dns.lookup = (hostname, options, callback) =>
+        hostname === 'public.test' ? (options.all ? callback(null, [{ address: '1.1.1.1', family: 4 }]) : callback(null, '1.1.1.1', 4)) : lookup(hostname, options, callback);
+      try {
+        assert.equal(await outcome('http://public.test:9/', { timeoutMs: 50 }), 'not blocked');
+      } finally {
+        dns.lookup = lookup;
+      }
+      // And DNS failures surface as they are
+      assert.equal(await outcome('http://does-not-exist.invalid/'), 'not blocked');
+    });
+
+    it('checks IP-literal targets through a proxy (the proxy resolves names)', async () => {
+      const proxy = await startProxy();
+      try {
+        const viaProxy = new WasmClient({ allowPrivateNetwork: false, proxy: proxy.url });
+        assert.match((await rejection(viaProxy.get(server.url('/echo')))).message, /Blocked/);
+        assert.equal((await viaProxy.get(server.url('/echo').replace('127.0.0.1', 'localhost'))).status, 200);
+      } finally {
+        await proxy.close();
       }
     });
   });

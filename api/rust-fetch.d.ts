@@ -139,6 +139,14 @@ export interface ClientOptions extends BrowserRequestOptions {
      * limit. Applies to error responses and streamed bodies too. Default: no limit
      */
     maxResponseBytes?: number;
+    /**
+     * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
+     * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
+     * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
+     * redirect, so DNS rebinding can't get past it. For servers that fetch user-supplied URLs (SSRF). Through a
+     * proxy, only IP-literal hosts are checked (the proxy resolves names). Browsers have their own rules. Default: `true`
+     */
+    allowPrivateNetwork?: boolean;
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
@@ -156,6 +164,8 @@ export interface RequestOptions extends BrowserRequestOptions {
     allowAbsoluteUrls?: boolean;
     /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
     maxResponseBytes?: number | null;
+    /** Overrides the client's `allowPrivateNetwork` */
+    allowPrivateNetwork?: boolean;
     /**
      * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
      * For `responseType: 'stream'` it also errors the body stream.

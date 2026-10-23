@@ -46,6 +46,9 @@ pub(crate) struct ClientConfig {
     /// Node.js: `'env'` or a proxy URL, already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) proxy: Option<String>,
+    /// Node.js: `allowPrivateNetwork`
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) allow_private_network: bool,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -236,6 +239,8 @@ impl Client {
             max_redirects,
             allow_absolute_urls: self.config.allow_absolute_urls,
             max_response_bytes: self.config.max_response_bytes,
+            #[cfg(target_arch = "wasm32")]
+            allow_private_network: self.config.allow_private_network,
             #[cfg(target_arch = "wasm32")]
             fetch_options: self.config.fetch_options.clone(),
         }
@@ -662,6 +667,8 @@ pub struct ClientBuilder {
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
     proxy: Option<String>,
+    #[cfg(target_arch = "wasm32")]
+    allow_private_network: bool,
 }
 
 impl ClientBuilder {
@@ -680,7 +687,16 @@ impl ClientBuilder {
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
             proxy: None,
+            #[cfg(target_arch = "wasm32")]
+            allow_private_network: true,
         }
+    }
+
+    /// Node.js: whether requests may reach private and reserved addresses
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn allow_private_network(mut self, allow: bool) -> Self {
+        self.allow_private_network = allow;
+        self
     }
 
     /// Node.js: send requests through a proxy (`'env'` or a URL), validated by the bindings
@@ -804,6 +820,8 @@ impl ClientBuilder {
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
                 proxy: self.proxy,
+                #[cfg(target_arch = "wasm32")]
+                allow_private_network: self.allow_private_network,
             }),
             #[cfg(not(target_arch = "wasm32"))]
             redirect_clients: Arc::default(),
@@ -828,6 +846,9 @@ pub struct RequestBuilder {
     max_redirects: u32,
     allow_absolute_urls: bool,
     pub(crate) max_response_bytes: Option<u64>,
+    /// Node.js: `allowPrivateNetwork`
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) allow_private_network: bool,
     /// Browser `fetch()` options: the client's, with this request's overrides
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -851,9 +872,7 @@ impl RequestBuilder {
         let request = crate::wasm::transport::PreparedRequest::new(
             url.as_str(),
             &self.config,
-            self.fetch_options.as_ref(),
-            self.client.config.proxy.as_deref(),
-            self.max_response_bytes,
+            &self.transport_options(),
             body_type,
             progress,
         )?;
@@ -975,6 +994,16 @@ impl RequestBuilder {
         self
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn transport_options(&self) -> crate::wasm::transport::TransportOptions<'_> {
+        crate::wasm::transport::TransportOptions {
+            fetch_options: self.fetch_options.as_ref(),
+            proxy: self.client.config.proxy.as_deref(),
+            limit: self.max_response_bytes,
+            block_private_network: !self.allow_private_network,
+        }
+    }
+
     fn check_absolute_url(&self) -> Result<()> {
         check_absolute_url(
             self.client.config.base_url.as_deref(),
@@ -1031,9 +1060,7 @@ impl RequestBuilder {
         let request = crate::wasm::transport::StreamingRequest::new(
             url.as_str(),
             &self.config,
-            self.fetch_options.as_ref(),
-            self.client.config.proxy.as_deref(),
-            self.max_response_bytes,
+            &self.transport_options(),
         )?;
         let response = self
             .client
