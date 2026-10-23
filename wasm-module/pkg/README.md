@@ -173,6 +173,34 @@ rust-fetch as published (2.1.x, `node:http` transport) against Node.js `fetch()`
 
 The published client matches `fetch()` one request at a time, is ahead with large binary bodies and many requests in flight, and stays steadier under sustained load in tail latency and memory. It's behind on concurrent HTTPS, and in one of the two 15,000 requests/s harnesses its tail was worse.
 
+The same independent harness later re-tested **2.2.0** ([below](#independent-benchmark-of-rust-fetch-220)): ahead of `fetch()` in all four throughput workloads (102% to 112%), including 50 requests at a time, where 2.1.0 was at 91%, and at an offered 50,000 requests/s it delivered 1.3 times `fetch()`'s requests with no errors and a third less memory.
+
+#### Independent benchmark of rust-fetch 2.2.0
+
+[aakjp/stress-test](https://github.com/aakjp/stress-test/blob/main/BENCHMARK-2.2.0.md) re-ran its benchmark on rust-fetch 2.2.0 (`node:http` transport) against Node's `fetch()` and axios 1.20, on Apple silicon with Node.js 22.15, against a local HTTP/1.1 server. The report has its method and raw data.
+
+**Throughput**, requests per second, medians of 10 runs:
+
+| Workload | `fetch()` | rust-fetch 2.2.0 | axios (default) | rust-fetch vs `fetch()` |
+| --- | ---: | ---: | ---: | ---: |
+| Small JSON, one at a time | 10,002 | 10,389 | 7,831 | **104%** (faster in 8 of 10 runs) |
+| Small JSON, 50 at a time | 14,821 | 15,188 | 11,037 | **102%** (6 of 10) |
+| Large JSON (0.6 MB) | 449 | 473 | 436 | **105%** (10 of 10) |
+| Binary (8 MB) | 188 | 210 | 199 | **112%** (10 of 10) |
+
+Against `fetch()` in the same runs, 2.1.0 had scored 100%, 91%, 105% and 115%: the clear change is 50 requests at a time, from 91% to 102%. The report also compares 2.2.0's raw numbers with 2.1.0's (+4.5% to +7.3%), but `fetch()`'s own numbers moved by up to 9% between those runs, so we read the ratios.
+
+**Overload: an offered 50,000 requests/s for 60 s:**
+
+| Client | Delivered | p50 | p99 | Errors | Peak memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| rust-fetch 2.2.0 | **21,341/s** | 461 ms | **505 ms** | **0** | **604 MB** |
+| `fetch()` | 16,158/s | 352 ms | 832 ms | 2,166 | 913 MB |
+| axios (keep-alive) | 13,763/s | 716 ms | 786 ms | 0 | 754 MB |
+| axios (default) | 3,113/s | 2.6 s | 10.5 s | 149,749 | 912 MB |
+
+The improvement over 2.1.0 at this load (3,493/s with 172,942 errors) comes from the bounded connection pool released in 2.1.1, after the first report found the port exhaustion; 2.2.0 includes it. The report's [verification suite](https://github.com/aakjp/stress-test/blob/main/TEST-2.2.0.md) also checked 2.2.0's new features (typed requests, upload progress, WebSockets with reconnection and typed errors): 19 of 19 checks passed, and 2.1.0 code ran unchanged.
+
 #### Independent benchmark of rust-fetch 2.1.0
 
 [aakjp/stress-test](https://github.com/aakjp/stress-test/blob/main/BENCHMARK.md) compared the published client, rust-fetch 2.1.0 (`node:http` transport), with Node's built-in `fetch()` and axios 1.20, on an Apple M4 Pro with Node.js 22.15, against a local HTTP/1.1 server without TLS or compression. The full report has its method and raw data.
