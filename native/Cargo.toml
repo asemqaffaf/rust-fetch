@@ -22,7 +22,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 napi = { version = "3", default-features = false, features = ["napi9", "tokio_rt"] }
 napi-derive = "3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tokio = { version = "1", features = ["net", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 url = "2"
 webpki-roots = "1"
