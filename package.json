@@ -9,7 +9,7 @@
     "build:native": "node scripts/build-native.mjs",
     "test": "npm run test:rust && npm run test:js",
     "test:rust": "cd wasm-module && cargo test",
-    "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/client-js.test.mjs wasm-module/js/test/node-transport.test.mjs wasm-module/js/test/node-transport-js.test.mjs wasm-module/js/test/browser-transport.test.mjs wasm-module/js/test/websocket.test.mjs wasm-module/js/test/events.test.mjs wasm-module/js/test/package.test.mjs",
+    "test:js": "node --test wasm-module/js/test/client.test.mjs wasm-module/js/test/client-js.test.mjs wasm-module/js/test/node-transport.test.mjs wasm-module/js/test/node-transport-js.test.mjs wasm-module/js/test/browser-transport.test.mjs wasm-module/js/test/websocket.test.mjs wasm-module/js/test/events.test.mjs wasm-module/js/test/security.test.mjs wasm-module/js/test/security-js.test.mjs wasm-module/js/test/package.test.mjs",
     "pack:check": "cd wasm-module/pkg && npm pack --dry-run",
     "bench": "node benchmarks/fetch-comparison.mjs",
     "size": "node scripts/check-size.mjs",
@@ -18,13 +18,15 @@
     "coverage:js": "node --test --experimental-test-coverage --test-coverage-include=wasm-module/pkg/node.js --test-coverage-lines=100 --test-coverage-functions=100 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=lcov-js.info wasm-module/js/test/client.test.mjs wasm-module/js/test/client-js.test.mjs wasm-module/js/test/node-transport.test.mjs wasm-module/js/test/node-transport-js.test.mjs",
     "test:browsers": "node --test wasm-module/js/test/browsers.test.mjs",
     "bench:cold": "node benchmarks/cold-start.mjs",
-    "bench:compare": "node benchmarks/compare.mjs"
+    "bench:compare": "node benchmarks/compare.mjs",
+    "security:compare": "node benchmarks/security-compare.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "license": "MIT OR Apache-2.0",
   "devDependencies": {
+    "axios": "1.20.0",
     "playwright": "1.64.1",
     "typescript": "^7.0.2",
     "typescript-5.2": "npm:typescript@5.2.2",

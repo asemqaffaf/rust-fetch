@@ -815,6 +815,23 @@ What the client does for you, each behaviour covered by tests:
 - **Proxy credentials go only to the proxy.** They're sent as `Proxy-Authorization` to the proxy, never to the origin.
 - **No runtime dependencies.** The npm package has none, and every release is published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Rust dependencies are audited in CI (`cargo-deny`: advisories, licenses, sources).
 
+### Compared with `fetch()` and axios
+
+The same attacks against each client, with the protections it offers turned on (`npm run security:compare`; Node.js 22.13, axios 1.20). Each rust-fetch row is also a regression test in CI (`wasm-module/js/test/security.test.mjs`), named after the advisories it covers.
+
+| Attack | rust-fetch | Node's `fetch()` | axios |
+| --- | --- | --- | --- |
+| Credentials on a cross-origin redirect (node-fetch CVE-2022-0235, follow-redirects CVE-2022-0536 and CVE-2024-28849, undici CVE-2023-45143 and CVE-2024-24758) | dropped | dropped | dropped |
+| CR/LF in a header (undici CVE-2022-31150, CVE-2022-35948) | rejected before sending | rejected | stripped silently |
+| Path tricks with a base URL (axios CVE-2024-39338) | stay on the base host | no base URL | stay on the base host |
+| Absolute URL with a base URL (axios CVE-2025-27152) | blocked with `allowAbsoluteUrls: false` | no base URL | blocked with `allowAbsoluteUrls: false` |
+| Redirect to `file:` | refused | refused | refused |
+| 256 MB gzip bomb | rejected with `maxResponseBytes`, +3 MB of memory | **no limit available**: accepted, +853 MB | rejected with `maxContentLength`, +2 MB |
+| Request to the cloud metadata endpoint `169.254.169.254` (SSRF) | **blocked** with `allowPrivateNetwork: false` | no built-in check | no built-in check |
+| Runtime dependencies | none | built in | 4 |
+
+Only rust-fetch blocks SSRF before connecting, rejects header injection instead of altering the header, and can bound a response's size. Every protection that isn't on by default (absolute URLs, size, private networks) is one option away.
+
 ### Absolute URLs and `baseUrl`
 
 By default, as in axios, an absolute URL passed to a client with a `baseUrl` replaces the base URL, **and receives the client's headers**, such as `Authorization`. If any part of a request URL comes from user input, an attacker can send it to their own server along with your credentials (the class of axios CVE-2025-27152). Turn it off:
