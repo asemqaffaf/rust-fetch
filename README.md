@@ -696,6 +696,7 @@ const authed = client.websocket('/live', { headers: { authorization: 'Bearer you
 | `protocols` | Subprotocols to offer; the chosen one is `socket.protocol` |
 | `params` | Appended to the query string |
 | `headers` | Handshake headers, merged over the client's. Node.js only: browsers don't allow WebSocket headers, so passing them there throws an `InvalidInputError`, and the client's headers aren't sent |
+| `dispatcher` | Node.js only: an [undici](https://undici.nodejs.org) dispatcher for the connection, e.g. `new ProxyAgent('http://proxy:3128')` to connect through a proxy (see below). Browsers use the system's proxy settings, so passing one there throws an `InvalidInputError` |
 | `timeoutMs` | Time allowed for each connection attempt; defaults to the client's `timeoutMs`, `0` disables it |
 | `reconnect` | `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }` (defaults: unlimited, 1000, 30000, 2). Off by default |
 | `messageType` | `'auto'` (default: text as strings, binary as `Uint8Array`) or `'json'` |
@@ -821,7 +822,12 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. It's about 6% slower than `fetch()` for sequential requests, isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
-- **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent`, so proxy agents installed there don't apply.
+- **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent` or the client's `proxy` option; pass an undici `ProxyAgent` as `dispatcher` to connect through a proxy:
+
+  ```js
+  import { ProxyAgent } from 'undici'; // npm install undici
+  const socket = client.websocket('wss://stream.example.com/', { dispatcher: new ProxyAgent(process.env.HTTPS_PROXY) });
+  ```
 - **Upload progress** in browsers needs `XMLHttpRequest`, which makes cross-origin requests preflighted (see [Upload progress](#upload-progress)).
 
 ### Upgrading to 2.0

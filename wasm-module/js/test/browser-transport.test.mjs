@@ -333,6 +333,7 @@ describe('websocket', { skip: typeof globalThis.WebSocket !== 'function' && 'no 
     try {
       const client = new WasmClient({ headers: { authorization: 'Bearer a' } });
       assert.throws(() => client.websocket(ws.url(), { headers: { a: '1' } }), (error) => error.kind === 'InvalidInputError' && error.parameter === 'headers');
+      assert.throws(() => client.websocket(ws.url(), { dispatcher: {} }), (error) => error.kind === 'InvalidInputError' && error.parameter === 'dispatcher');
       const socket = client.websocket(ws.url());
       await socket.opened;
       assert.equal(ws.handshakes.at(-1).headers.authorization, undefined);

@@ -65,6 +65,11 @@ export interface WebSocketOptions {
    * WebSocket headers, so there this rejects with an `InvalidInputError` (client headers are skipped).
    */
   headers?: HeadersLike;
+  /**
+   * Node.js only: an undici dispatcher for the connection, e.g. `new ProxyAgent('http://proxy:3128')` from
+   * the `undici` package to connect through a proxy. Node's WebSocket doesn't use the client's `proxy` option.
+   */
+  dispatcher?: object;
   /** Time allowed for each connection attempt, in ms. `0` disables it. Default: the client's `timeoutMs` */
   timeoutMs?: number;
   /**
@@ -482,6 +487,13 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
     let headers = prop(options, "headers")
         .map(|headers| parse_headers(&headers))
         .transpose()?;
+    let dispatcher = prop(options, "dispatcher");
+    if dispatcher.as_ref().is_some_and(|value| !value.is_object()) {
+        return Err(invalid(
+            "dispatcher",
+            "must be an undici dispatcher, e.g. a ProxyAgent",
+        ));
+    }
     let protocols: JsValue = if super::transport::is_node() {
         // Node's WebSocket (undici) takes `{ protocols, headers }`
         let mut merged = config.default_headers.clone();
@@ -491,16 +503,21 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
                 merged.insert(name.clone(), value.clone());
             }
         }
-        if merged.iter().next().is_none() {
+        if merged.iter().next().is_none() && dispatcher.is_none() {
             protocols.into()
         } else {
             let init = js_sys::Object::new();
-            let js_headers = js_sys::Object::new();
-            for (name, values) in merged.iter() {
-                set(&js_headers, name, &values.join(", ").into())?;
-            }
             set(&init, "protocols", &protocols)?;
-            set(&init, "headers", &js_headers)?;
+            if merged.iter().next().is_some() {
+                let js_headers = js_sys::Object::new();
+                for (name, values) in merged.iter() {
+                    set(&js_headers, name, &values.join(", ").into())?;
+                }
+                set(&init, "headers", &js_headers)?;
+            }
+            if let Some(dispatcher) = &dispatcher {
+                set(&init, "dispatcher", dispatcher)?;
+            }
             init.into()
         }
     } else {
@@ -508,6 +525,12 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
             return Err(invalid(
                 "headers",
                 "browsers don't allow WebSocket handshake headers; send credentials in the URL, a cookie or the first message",
+            ));
+        }
+        if dispatcher.is_some() {
+            return Err(invalid(
+                "dispatcher",
+                "only Node.js's WebSocket takes a dispatcher; browsers use the system's proxy settings",
             ));
         }
         protocols.into()

@@ -300,6 +300,11 @@ export interface WebSocketOptions {
      * WebSocket headers, so there this rejects with an `InvalidInputError` (client headers are skipped).
      */
     headers?: HeadersLike;
+    /**
+     * Node.js only: an undici dispatcher for the connection, e.g. `new ProxyAgent('http://proxy:3128')` from
+     * the `undici` package to connect through a proxy. Node's WebSocket doesn't use the client's `proxy` option.
+     */
+    dispatcher?: object;
     /** Time allowed for each connection attempt, in ms. `0` disables it. Default: the client's `timeoutMs` */
     timeoutMs?: number;
     /**
