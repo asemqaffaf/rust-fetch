@@ -797,6 +797,32 @@ fn parse_fetch_options(
     options: &JsValue,
     base: Option<&js_sys::Object>,
 ) -> Result<Option<js_sys::Object>> {
+    const NAMES: [&str; 8] = [
+        "credentials",
+        "mode",
+        "cache",
+        "priority",
+        "referrerPolicy",
+        "referrer",
+        "integrity",
+        "keepalive",
+    ];
+    // Most requests set none of these: one Object.keys call instead of a
+    // property lookup per option (each a call into JS, ~5% per request)
+    let set_any = options.is_object()
+        && js_sys::Object::keys(options.unchecked_ref::<js_sys::Object>())
+            .iter()
+            .any(|key| {
+                key.as_string()
+                    .is_some_and(|key| NAMES.contains(&key.as_str()))
+            });
+    if !set_any {
+        return Ok(if transport::is_node() {
+            None
+        } else {
+            base.cloned()
+        });
+    }
     const CHOICES: [(&str, &[&str]); 5] = [
         ("credentials", &["omit", "same-origin", "include"]),
         ("mode", &["cors", "no-cors", "same-origin"]),
