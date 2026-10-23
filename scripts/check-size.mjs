@@ -1,13 +1,17 @@
 // Fails if the built package grows past its size budget. Run after `npm run build`.
 // Raise a budget only deliberately, and note the growth in the changelog.
+//
+// Budgets are for builds with current stable Rust, as in CI and releases;
+// older toolchains produce a larger module (Rust 1.88: about +11 kB brotli).
+// The WebAssembly module's brotli budget is the target from #61: 180 kB.
 import { readFileSync } from 'node:fs';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 640_000, gzip: 250_000 },
-  'rust_fetch.js': { raw: 70_000, gzip: 11_500 },
-  'node.js': { raw: 26_000, gzip: 9_000 }, // includes the Node.js transports and the native addon's loader
+  'rust_fetch_bg.wasm': { raw: 575_000, gzip: 228_000, brotli: 180_000 },
+  'rust_fetch.js': { raw: 70_000, gzip: 11_500, brotli: 10_000 },
+  'node.js': { raw: 26_000, gzip: 9_000, brotli: 8_000 }, // includes the Node.js transports and the native addon's loader
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);
@@ -21,11 +25,11 @@ for (const [file, budget] of Object.entries(budgets)) {
     gzip: gzipSync(contents, { level: 9 }).length,
     brotli: brotliCompressSync(contents, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length,
   };
-  const over = ['raw', 'gzip'].filter((kind) => size[kind] > budget[kind]);
+  const over = ['raw', 'gzip', 'brotli'].filter((kind) => size[kind] > budget[kind]);
   failed ||= over.length > 0;
   console.log(
     `${over.length ? '✗' : '✓'} ${file.padEnd(20)} raw ${kb(size.raw).padStart(9)} / ${kb(budget.raw).padStart(9)}` +
-      `   gzip ${kb(size.gzip).padStart(9)} / ${kb(budget.gzip).padStart(9)}   brotli ${kb(size.brotli).padStart(9)}`,
+      `   gzip ${kb(size.gzip).padStart(9)} / ${kb(budget.gzip).padStart(9)}   brotli ${kb(size.brotli).padStart(9)} / ${kb(budget.brotli).padStart(9)}`,
   );
 }
 

@@ -100,7 +100,7 @@ try {
 | Download progress | Read the stream yourself | Yes | Yes |
 | Upload progress | No | Yes | Yes |
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 199 KB: the WebAssembly module (190 KB) and its JS glue |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 188 KB: the WebAssembly module (179 KB) and its JS glue |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](#using-it-from-rust)).
 
@@ -114,7 +114,7 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 ### When to choose something else
 
-- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 190 KB brotli-compressed.
+- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 179 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
 - **Your Node.js code makes one request at a time** and you're considering the native transport for speed: there it's level with the node:http transport and a few percent behind `fetch()` (it was about 6% slower before 2.4.0).
 
@@ -845,7 +845,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 
 ### Limitations
 
-- **Bundle size:** the WebAssembly module adds about 190 KB (brotli) to a browser bundle.
+- **Bundle size:** the WebAssembly module adds about 179 KB (brotli) to a browser bundle, plus 9 KB of JS glue.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
@@ -936,7 +936,7 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg
 Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3 })` times out each attempt (including the body) and retries network errors, timeouts and 408/429/5xx responses with exponential backoff and jitter, honouring `Retry-After`. POST and PATCH aren't retried unless you opt in. See [Timeouts](#timeouts) and [Retries](#retries).
 
 **Is rust-fetch an alternative to axios?**
-Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 199 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
+Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 188 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
 
 **Does it work in browsers and Node.js?**
 Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](#supported-environments).
