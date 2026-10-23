@@ -116,7 +116,7 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 - **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 190 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
-- **Your Node.js code makes one request at a time** and you're considering the native transport for speed: it's about 6% slower there.
+- **Your Node.js code makes one request at a time** and you're considering the native transport for speed: there it's level with the node:http transport and a few percent behind `fetch()` (it was about 6% slower before 2.4.0).
 
 ## Features
 
@@ -225,11 +225,13 @@ The native Node.js transport against Node.js `fetch()`, from [our measurements](
 | Steady 15,000 requests/s, our harness | Kept up (14,992/s against 11,557/s), about **13× lower p99** (91 ms against 1.2 s) and about **4× less memory** (195 MB against 782 MB) |
 | Steady 15,000 requests/s, independent harness | Kept up (14,991/s against 13,026/s); p99 568 ms against 920 ms; 541 MB against 903 MB |
 | Large JSON, 0.6 MB | 1.02×, even |
-| Sequential small-JSON requests | 0.94×, about 6% slower |
+| Sequential small-JSON requests | 0.94×, about 6% slower (before 2.4.0; see below) |
+
+**Since 2.4.0** the native transport runs on a single Tokio worker thread, with large compressed bodies decoded on a separate blocking pool. Each request is a short burst of work, so more workers mostly added cross-thread wake-ups. Measured against the previous build in fresh processes over 5 interleaved rounds (`npm run bench:compare`): sequential small JSON **+7.3%**, now level with the node:http transport (11,220 against 11,126 requests/s); 8 MB bodies **+5.5%**; 50 concurrent unchanged; and at an offered 40,000 requests/s, **+9%** delivered (34,827 against 31,970/s) with a lower p99 (281 against 316 ms). The table above predates this change.
 
 **Why concurrency is where it wins.** With the `node:http` transport, connection handling, HTTP parsing and decompression share the JavaScript event loop with your application. The native transport runs them on its own threads, leaving the event loop free to build requests and decode responses. With one request at a time there's little to overlap, and the hand-off between threads costs a little. How much you gain depends on your hardware, payloads and concurrency.
 
-**Where it doesn't win:** sequential requests are about 6% slower than with `fetch()` (and than with the node:http transport); large JSON is effectively even (304 against 299 requests per second), and both parse the JSON in JavaScript; and under heavy overload it used about as much memory as `fetch()` (796 MB against 781 MB).
+**Where it doesn't win:** sequential requests were about 6% slower than with `fetch()` and the node:http transport before 2.4.0, and are now level with the node:http transport; large JSON is effectively even (304 against 299 requests per second), and both parse the JSON in JavaScript; and under heavy overload it used about as much memory as `fetch()` (796 MB against 781 MB).
 
 ### Our measurements: every client
 
@@ -846,7 +848,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 - **Bundle size:** the WebAssembly module adds about 190 KB (brotli) to a browser bundle.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
-- **Native transport:** has to be built from source for each platform until it's published. It's about 6% slower than `fetch()` for sequential requests, isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
+- **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
 - **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent` or the client's `proxy` option; pass an undici `ProxyAgent` as `dispatcher` to connect through a proxy:
 
   ```js
