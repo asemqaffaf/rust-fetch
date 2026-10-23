@@ -14,7 +14,7 @@ Dates aren't promised; the order is.
 | --- | --- | --- |
 | [2.2.0](#220-upload-progress-websockets-typed-responses) | Upload progress, WebSockets, typed responses | Released |
 | [2.3.0](#230-streaming-apis) | Streaming APIs: SSE, NDJSON | Released |
-| [2.4.0](#240-performance-and-proxies) | Performance and proxies | Next |
+| [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Next |
 | [2.5.0](#250-webrtc-signaling) | WebRTC signaling (WHIP/WHEP) | Planned |
 | [2.6.0](#260-the-native-transport-on-npm) | Native transport on npm | Needs a one-time npm setup |
 | [2.7.0](#270-resilience-and-observability) | Resilience and observability | Planned |
@@ -44,18 +44,23 @@ Dates aren't promised; the order is.
 | Real-browser CI in Chromium, Firefox and WebKit | [#19](https://github.com/asemqaffaf/rust-fetch/issues/19) |
 | Web Workers and service workers tested | [#20](https://github.com/asemqaffaf/rust-fetch/issues/20) |
 
-## 2.4.0: performance and proxies
+## 2.4.0: performance, proxies and request options
 
-*Goal: close the remaining gaps in the measurements, and work behind proxies everywhere.*
+*Goal: close the remaining gaps in the measurements, make the client smaller and faster to start, work behind proxies everywhere, and expose the request options browsers and servers need.*
 
 | | |
 | --- | --- |
 | Find the ~565 ms p99 stall at a steady 15,000 requests/s | [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) |
 | Native transport at least as fast as `node:http` for sequential requests | [#17](https://github.com/asemqaffaf/rust-fetch/issues/17) |
 | Bounded memory under overload | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
+| Smaller WebAssembly bundle (target ≤ 180 kB brotli) | [#61](https://github.com/asemqaffaf/rust-fetch/issues/61) |
+| Faster `init()` cold start, measured | [#62](https://github.com/asemqaffaf/rust-fetch/issues/62) |
+| Benchmark regressions caught in CI | [#63](https://github.com/asemqaffaf/rust-fetch/issues/63) |
 | Proxies from the environment (`HTTPS_PROXY`, `NO_PROXY`) | [#49](https://github.com/asemqaffaf/rust-fetch/issues/49) |
 | WebSocket proxy support in Node.js | [#21](https://github.com/asemqaffaf/rust-fetch/issues/21) |
 | How exceptions in WebSocket callbacks are reported (decided: keep the current behaviour) | [#22](https://github.com/asemqaffaf/rust-fetch/issues/22) |
+| Browser `fetch()` options: `credentials`, `mode`, `cache`, `keepalive`, `priority` | [#59](https://github.com/asemqaffaf/rust-fetch/issues/59) |
+| Redirect control: `redirect: 'manual' \| 'error'`, `maxRedirects` | [#60](https://github.com/asemqaffaf/rust-fetch/issues/60) |
 
 ## 2.5.0: WebRTC signaling
 
@@ -89,6 +94,10 @@ Dates aren't promised; the order is.
 | Concurrency limits and client-side rate limiting | [#40](https://github.com/asemqaffaf/rust-fetch/issues/40) |
 | Circuit breaker per origin | [#41](https://github.com/asemqaffaf/rust-fetch/issues/41) |
 | Request timings, lifecycle hooks and W3C trace propagation | [#42](https://github.com/asemqaffaf/rust-fetch/issues/42) |
+| Per-request retry options | [#64](https://github.com/asemqaffaf/rust-fetch/issues/64) |
+| Request method, URL and attempts on errors | [#65](https://github.com/asemqaffaf/rust-fetch/issues/65) |
+| Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) |
+| Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) |
 
 ## 2.8.0: data and developer experience
 
@@ -102,6 +111,13 @@ Dates aren't promised; the order is.
 | Deduplicate identical in-flight GET requests | [#46](https://github.com/asemqaffaf/rust-fetch/issues/46) |
 | Mock transport for unit tests | [#47](https://github.com/asemqaffaf/rust-fetch/issues/47) |
 | Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) |
+| Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) |
+| `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) |
+| Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) |
+| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) |
+| Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) |
+| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) |
+| Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) |
 
 ## Exploring
 
