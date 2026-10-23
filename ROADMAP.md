@@ -13,10 +13,10 @@ Dates aren't promised; the order is.
 | Release | Theme | Status |
 | --- | --- | --- |
 | [2.2.0](#220-upload-progress-websockets-typed-responses) | Upload progress, WebSockets, typed responses | Released |
-| [2.3.0](#230-the-native-transport-on-npm) | Native transport on npm | Next |
-| [2.4.0](#240-performance-and-proxies) | Performance and proxies | Planned |
+| [2.3.0](#230-streaming-apis) | Streaming APIs: SSE, NDJSON | Released |
+| [2.4.0](#240-performance-and-proxies) | Performance and proxies | Next |
 | [2.5.0](#250-webrtc-signaling) | WebRTC signaling (WHIP/WHEP) | Planned |
-| [2.6.0](#260-streaming-apis) | Streaming APIs: SSE, NDJSON | Planned |
+| [2.6.0](#260-the-native-transport-on-npm) | Native transport on npm | Needs a one-time npm setup |
 | [2.7.0](#270-resilience-and-observability) | Resilience and observability | Planned |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
 
@@ -33,18 +33,16 @@ Dates aren't promised; the order is.
 | Native transport code in the repository (not yet in the npm package) | [#10](https://github.com/asemqaffaf/rust-fetch/issues/10) |
 | TypeScript 7 for development; definitions checked with 5.2 and 7 | [#28](https://github.com/asemqaffaf/rust-fetch/issues/28) |
 
-## 2.3.0: the native transport on npm
+## 2.3.0: streaming APIs
 
-*Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step.*
+*Released 2026-10-23* ([release notes](https://github.com/asemqaffaf/rust-fetch/releases/tag/v2.3.0)).
 
 | | |
 | --- | --- |
-| Prebuilt binaries as per-platform optional packages; loader, CI build matrix and publishing | [#14](https://github.com/asemqaffaf/rust-fetch/issues/14) |
-| Windows support and a Windows CI job | [#15](https://github.com/asemqaffaf/rust-fetch/issues/15) |
+| Server-Sent Events with reconnection, `POST` bodies and headers: `client.events()` | [#37](https://github.com/asemqaffaf/rust-fetch/issues/37) |
+| Newline-delimited JSON as an async iterator: `responseType: 'ndjson'` | [#38](https://github.com/asemqaffaf/rust-fetch/issues/38) |
 | Real-browser CI in Chromium, Firefox and WebKit | [#19](https://github.com/asemqaffaf/rust-fetch/issues/19) |
 | Web Workers and service workers tested | [#20](https://github.com/asemqaffaf/rust-fetch/issues/20) |
-
-**Needs a decision first ([#14](https://github.com/asemqaffaf/rust-fetch/issues/14)):** the npm package names (scope), whether the native transport is on by default when installed, and the minimum glibc for Linux builds.
 
 ## 2.4.0: performance and proxies
 
@@ -57,7 +55,7 @@ Dates aren't promised; the order is.
 | Bounded memory under overload | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
 | Proxies from the environment (`HTTPS_PROXY`, `NO_PROXY`) | [#49](https://github.com/asemqaffaf/rust-fetch/issues/49) |
 | WebSocket proxy support in Node.js | [#21](https://github.com/asemqaffaf/rust-fetch/issues/21) |
-| How exceptions in WebSocket callbacks are reported | [#22](https://github.com/asemqaffaf/rust-fetch/issues/22) |
+| How exceptions in WebSocket callbacks are reported (decided: keep the current behaviour) | [#22](https://github.com/asemqaffaf/rust-fetch/issues/22) |
 
 ## 2.5.0: WebRTC signaling
 
@@ -70,14 +68,16 @@ Dates aren't promised; the order is.
 | Trickle ICE and ICE restarts | [#33](https://github.com/asemqaffaf/rust-fetch/issues/33) |
 | Local WHIP/WHEP test server and real-browser WebRTC tests | [#34](https://github.com/asemqaffaf/rust-fetch/issues/34) |
 
-## 2.6.0: streaming APIs
+## 2.6.0: the native transport on npm
 
-*Goal: first-class support for the streaming formats APIs use today, including LLM streaming APIs.*
+*Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step.*
 
 | | |
 | --- | --- |
-| Server-Sent Events with reconnection, `POST` bodies and headers: `client.events()` | [#37](https://github.com/asemqaffaf/rust-fetch/issues/37) |
-| Newline-delimited JSON as an async iterator: `responseType: 'ndjson'` | [#38](https://github.com/asemqaffaf/rust-fetch/issues/38) |
+| Prebuilt binaries as per-platform optional packages; loader, CI build matrix and publishing | [#14](https://github.com/asemqaffaf/rust-fetch/issues/14) |
+| Windows support and a Windows CI job | [#15](https://github.com/asemqaffaf/rust-fetch/issues/15) |
+
+**Needs one-time setup first ([#14](https://github.com/asemqaffaf/rust-fetch/issues/14)):** npm trusted publishing is configured per package, so the per-platform packages must first exist on npm. Their names (scope), whether the native transport is on by default when installed, and the minimum glibc for Linux builds also need choosing.
 
 ## 2.7.0: resilience and observability
 
