@@ -355,6 +355,42 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     });
   });
 
+  describe('request queue', () => {
+    // Beyond 1,024 requests in flight, the rest wait in order in node.js
+    it('completes every request when far more are sent than run at once', async () => {
+      const c = client();
+      const results = await Promise.all(Array.from({ length: 6000 }, (_, i) => c.get(server.url(`/echo?i=${i}`))));
+      assert.equal(results.length, 6000);
+      assert.equal(results[5999].body.url, '/echo?i=5999');
+    });
+
+    it('times out and cancels requests while they wait', async () => {
+      let holding = true;
+      const held = [];
+      const s = await startServer((req, res) => (holding ? held.push(res) : res.end('{}')));
+      try {
+        const c = new WasmClient({ timeoutMs: 0 });
+        const running = Array.from({ length: 1024 }, () => c.get(s.url('/hold')));
+        const timedOut = rejection(c.get(s.url('/late'), { timeoutMs: 50 }));
+        const controller = new AbortController();
+        const cancelled = rejection(c.get(s.url('/never'), { signal: controller.signal }));
+        controller.abort();
+        assert.equal((await timedOut).kind, 'TimeoutError');
+        assert.equal((await cancelled).kind, 'CancelledError');
+        holding = false;
+        for (const res of held.splice(0)) res.end('{}');
+        await Promise.all(running);
+        assert.equal((await c.get(s.url('/after'))).status, 200);
+        // The dropped requests never reached the server
+        assert.deepEqual(s.requests.filter((r) => r.url !== '/hold').map((r) => r.url), ['/after']);
+      } finally {
+        holding = false;
+        for (const res of held) res.end('{}');
+        await s.close();
+      }
+    });
+  });
+
   describe('streamed responses', () => {
     it('go through this transport: error statuses, redirects and cancellation', async () => {
       const missing = await rejection(client().get(server.url('/missing'), { responseType: 'stream' }));

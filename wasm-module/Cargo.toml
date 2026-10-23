@@ -26,6 +26,9 @@ futures-util = { version = "0.3", default-features = false }
 wasm-streams = "0.5"
 serde_urlencoded = "0.7"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dlmalloc = "0.2"
+
 # Platform-specific dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["time"] }

@@ -5,6 +5,8 @@
 //! with `wasm-pack test --node` and the JS test suite in `js/test`.
 
 #[cfg(target_arch = "wasm32")]
+mod alloc;
+#[cfg(target_arch = "wasm32")]
 mod events;
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
