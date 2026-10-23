@@ -255,7 +255,9 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         const client = new WasmClient({ baseUrl: origin });
         const followed = await client.get('/moved');
         const manual = await client.get('/moved', { redirect: 'manual' });
+        const streamed = await client.get('/moved', { redirect: 'manual', responseType: 'stream' });
         const out = { followed: { url: followed.url, method: followed.body.method } };
+        out.streamed = { status: streamed.status, text: await new Response(streamed.body).text() };
         out.manual = { status: manual.status, ok: manual.ok, headers: manual.headers, body: manual.body, url: manual.url };
         for (const options of [{ redirect: 'error' }, { maxRedirects: 0 }]) {
           try {
@@ -269,6 +271,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.deepEqual(result.followed, { url: `${origin}/echo`, method: 'GET' });
       // Browsers hide the redirect: an opaque response with status 0 and no headers
       assert.deepEqual(result.manual, { status: 0, ok: false, headers: {}, body: null, url: `${origin}/moved` });
+      assert.deepEqual(result.streamed, { status: 0, text: '' });
       assert.deepEqual(result.errors, [
         { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },
         { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },

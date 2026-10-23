@@ -64,6 +64,8 @@ struct RawResponse {
     url: String,
     headers: Headers,
     body: Vec<u8>,
+    // In JavaScript runtimes, streamed requests are sent with fetch() instead
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     stream: Option<reqwest::Response>,
 }
 
@@ -83,8 +85,29 @@ pub struct StreamingResponse {
     pub headers: Headers,
     /// Request URL (after redirects)
     pub url: String,
-    inner: reqwest::Response,
+    inner: StreamBody,
     progress: Option<ProgressFn>,
+}
+
+/// The unread body of a streamed response: reqwest's on native targets,
+/// `fetch()`'s in JavaScript runtimes
+#[cfg(not(target_arch = "wasm32"))]
+type StreamBody = reqwest::Response;
+#[cfg(target_arch = "wasm32")]
+type StreamBody = crate::wasm::transport::FetchBody;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn body_chunks(body: StreamBody) -> impl Stream<Item = Result<Vec<u8>>> {
+    body.bytes_stream().map(|chunk| {
+        chunk
+            .map(|chunk| chunk.to_vec())
+            .map_err(|e| Error::network("Failed to read response body", e))
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn body_chunks(body: StreamBody) -> impl Stream<Item = Result<Vec<u8>>> {
+    body.chunks()
 }
 
 impl StreamingResponse {
@@ -98,13 +121,13 @@ impl StreamingResponse {
         let total = self.inner.content_length();
         let progress = self.progress;
         let mut loaded = 0u64;
-        self.inner.bytes_stream().map(move |chunk| {
-            let chunk = chunk.map_err(|e| Error::network("Failed to read response body", e))?;
+        body_chunks(self.inner).map(move |chunk| {
+            let chunk = chunk?;
             loaded += chunk.len() as u64;
             if let Some(progress) = &progress {
                 progress(Progress { loaded, total });
             }
-            Ok(chunk.to_vec())
+            Ok(chunk)
         })
     }
 
@@ -861,6 +884,39 @@ impl RequestBuilder {
     ///
     /// Retries and the timeout apply until the headers arrive. Error
     /// responses are read fully and returned as [`Error::Http`] as usual.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn send_streaming(self) -> Result<StreamingResponse> {
+        let url = resolve_url(
+            self.client.config.base_url.as_deref(),
+            page_url(),
+            &self.url,
+            &self.query,
+        )?;
+        let request = crate::wasm::transport::StreamingRequest::new(url.as_str(), &self.config)?;
+        let response = self
+            .client
+            .execute_retrying(self.config.method, self.config.timeout, || request.send())
+            .await?;
+        Ok(StreamingResponse {
+            status: response.status,
+            status_text: reqwest::StatusCode::from_u16(response.status)
+                .ok()
+                .and_then(|status| status.canonical_reason())
+                .unwrap_or("")
+                .to_string(),
+            headers: response.headers,
+            url: response.url,
+            inner: response.body,
+            progress: self.progress,
+        })
+    }
+
+    /// Execute the request and return as soon as a successful response's
+    /// headers arrive; read the body with [`StreamingResponse::into_stream`].
+    ///
+    /// Retries and the timeout apply until the headers arrive. Error
+    /// responses are read fully and returned as [`Error::Http`] as usual.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn send_streaming(self) -> Result<StreamingResponse> {
         let raw = self
             .client

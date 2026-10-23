@@ -100,7 +100,7 @@ try {
 | Download progress | Read the stream yourself | Yes | Yes |
 | Upload progress | No | Yes | Yes |
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 217 KB: the WebAssembly module (208 KB) and its JS glue |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 198 KB: the WebAssembly module (188 KB) and its JS glue |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](#using-it-from-rust)).
 
@@ -114,7 +114,7 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 ### When to choose something else
 
-- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 208 KB brotli-compressed.
+- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 188 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
 - **Your Node.js code makes one request at a time** and you're considering the native transport for speed: it's about 6% slower there.
 
@@ -369,7 +369,7 @@ const res = await client.get('/login', { redirect: 'manual' });
 if (!res.ok) console.log(res.status, res.headers.location); // 302 '/sso?…'
 ```
 
-In browsers, `fetch()` hides redirects from scripts: with `'manual'` the response has `status: 0` and no headers, and the browser's own limit (20) applies instead of `maxRedirects`. `'manual'` and `'error'` can't be combined with `responseType: 'stream'` or `'ndjson'` (an `InvalidInputError`). With upload progress in browsers, they send the request with `fetch()` instead of `XMLHttpRequest` (which always follows redirects), so upload progress is reported once.
+In browsers, `fetch()` hides redirects from scripts: with `'manual'` the response has `status: 0` and no headers, and the browser's own limit (20) applies instead of `maxRedirects`. With upload progress in browsers, they send the request with `fetch()` instead of `XMLHttpRequest` (which always follows redirects), so upload progress is reported once.
 
 ### Request bodies
 
@@ -779,7 +779,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 
 ### Limitations
 
-- **Bundle size:** the WebAssembly module adds about 208 KB (brotli) to a browser bundle.
+- **Bundle size:** the WebAssembly module adds about 188 KB (brotli) to a browser bundle.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. It's about 6% slower than `fetch()` for sequential requests, isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
@@ -856,7 +856,7 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3 })` times out each attempt (including the body) and retries network errors, timeouts and 408/429/5xx responses with exponential backoff and jitter, honouring `Retry-After`. POST and PATCH aren't retried unless you opt in. See [Timeouts](#timeouts) and [Retries](#retries).
 
 **Is rust-fetch an alternative to axios?**
-Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 217 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
+Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 198 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
 
 **Does it work in browsers and Node.js?**
 Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](#supported-environments).

@@ -14,12 +14,9 @@ mod websocket;
 
 use self::futures::{abortable, AbortableStream};
 use crate::{
-    client::{bytes_to_text, Client, RequestBuilder, StreamingResponse},
+    client::{Client, RequestBuilder, StreamingResponse},
     error::{Error, Result},
-    types::{
-        is_json_content_type, is_text_content_type, Headers, Method, Multipart, Redirect, Response,
-        ResponseBody, ResponseFormat, RetryConfig,
-    },
+    types::{Headers, Method, Multipart, Redirect, ResponseFormat, RetryConfig},
 };
 use futures_util::StreamExt;
 use std::cell::RefCell;
@@ -128,10 +125,7 @@ export interface RequestOptions {
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
   timeoutMs?: number;
   responseType?: ResponseBodyType;
-  /**
-   * Overrides the client's `redirect`. `manual` and `error` can't be combined with
-   * `responseType: 'stream' | 'ndjson'`.
-   */
+  /** Overrides the client's `redirect` */
   redirect?: RedirectMode;
   /** Overrides the client's `maxRedirects` */
   maxRedirects?: number;
@@ -681,8 +675,6 @@ pub(crate) async fn send(
     if let Some(max) = prop(options, "maxRedirects") {
         builder = builder.max_redirects(parse_max_redirects(&max)?);
     }
-    // `manual` or `error`, which the reqwest path (the runtime's fetch()) can't apply
-    let custom_redirect = !builder.config.follow_redirects || builder.config.max_redirects == 0;
 
     builder = apply_body(builder, body).await?;
     if let BodyType::Stream | BodyType::Ndjson = body_type {
@@ -692,29 +684,26 @@ pub(crate) async fn send(
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
-        if custom_redirect {
-            return Err(invalid(
-                "redirect",
-                "'manual' and 'error' can't be combined with a streamed responseType ('stream' or 'ndjson')",
-            ));
-        }
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
         if let BodyType::Ndjson = body_type {
             return ndjson_response_to_js(response, signal);
         }
         return streaming_response_to_js(response, signal);
     }
-    // The JS transports report upload progress; reqwest's fetch() can't
     #[cfg(target_arch = "wasm32")]
-    if progress.is_none() || upload_progress.is_some() || custom_redirect {
+    {
         let callbacks = transport::ProgressCallbacks {
             upload: upload_progress,
             download: progress,
         };
-        return abortable(signal, builder.send_js(body_type, callbacks)).await;
+        abortable(signal, builder.send_js(body_type, callbacks)).await
     }
-    let response = abortable(signal, builder.send()).await?;
-    response_to_js(response, body_type)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = upload_progress;
+        let response = abortable(signal, builder.send()).await?;
+        response_to_js(response, body_type)
+    }
 }
 
 /// An optional callback option, which must be a function when set
@@ -929,7 +918,9 @@ fn response_head_to_js(
 }
 
 /// Convert a response into the object returned to JavaScript
-fn response_to_js(response: Response, body_type: BodyType) -> Result<JsValue> {
+#[cfg(not(target_arch = "wasm32"))]
+fn response_to_js(response: crate::types::Response, body_type: BodyType) -> Result<JsValue> {
+    use crate::types::ResponseBody;
     let obj = response_head_to_js(
         response.status,
         &response.status_text,
@@ -1030,12 +1021,17 @@ fn parse_json_line(line: &crate::lines::Line) -> Result<JsValue> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Decode a body into a JS value, mirroring the Rust `ResponseFormat` rules
 pub(crate) fn decode_js_body(
     bytes: Vec<u8>,
     content_type: &str,
     body_type: BodyType,
 ) -> Result<JsValue> {
+    use crate::{
+        client::bytes_to_text,
+        types::{is_json_content_type, is_text_content_type},
+    };
     if bytes.is_empty() {
         return Ok(match body_type {
             BodyType::Text => JsValue::from_str(""),
@@ -1062,6 +1058,7 @@ pub(crate) fn decode_js_body(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Parse JSON with the engine's `JSON.parse`, exactly like `Response.json()`
 /// (large integers lose precision instead of failing the request)
 fn parse_json(text: &str) -> Result<JsValue> {

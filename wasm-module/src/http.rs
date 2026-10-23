@@ -6,8 +6,8 @@
 use crate::{
     client::{Client, WasmClient},
     error::Result,
-    types::{Method, ResponseBody, ResponseFormat},
-    wasm::{decode_js_body, parse_method, send, BodyMode, BodyType, JsRequest},
+    types::Method,
+    wasm::{parse_method, send, BodyMode, JsRequest},
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
@@ -16,17 +16,7 @@ use wasm_bindgen_futures::future_to_promise;
 /// An empty body resolves to `null`.
 #[wasm_bindgen]
 pub async fn fetch_json(url: String) -> Result<JsValue> {
-    let client = Client::new()?;
-    let response = client
-        .request(Method::Get, &url)
-        .response_format(ResponseFormat::Binary)
-        .send()
-        .await?;
-
-    match response.body {
-        ResponseBody::Binary(bytes) => decode_js_body(bytes, "", BodyType::Json),
-        _ => Ok(JsValue::NULL),
-    }
+    fetch_body(url, "json").await
 }
 
 /// Fetch JSON data and return as a Promise
@@ -38,17 +28,27 @@ pub fn fetch_json_promise(url: String) -> js_sys::Promise {
 /// Fetch a URL and return the body as text
 #[wasm_bindgen]
 pub async fn fetch_text(url: String) -> Result<String> {
-    let client = Client::new()?;
-    let response = client
-        .request(Method::Get, &url)
-        .response_format(ResponseFormat::Text)
-        .send()
-        .await?;
+    Ok(fetch_body(url, "text")
+        .await?
+        .as_string()
+        .unwrap_or_default())
+}
 
-    match response.body {
-        ResponseBody::Text(text) => Ok(text),
-        _ => Ok(String::new()),
-    }
+/// GET `url` with a default client and return the body as `responseType`
+async fn fetch_body(url: String, response_type: &str) -> Result<JsValue> {
+    let client = Client::new()?;
+    let body = BodyMode::Auto(JsValue::UNDEFINED);
+    let request = JsRequest::new(
+        Method::Get,
+        url,
+        &JsValue::UNDEFINED,
+        body,
+        &JsValue::UNDEFINED,
+    )?;
+    let options = js_sys::Object::new();
+    js_sys::Reflect::set(&options, &"responseType".into(), &response_type.into())?;
+    let response = send(&client, request, &options).await?;
+    Ok(js_sys::Reflect::get(&response, &"body".into())?)
 }
 
 /// Fetch with a method, headers and an optional string body.

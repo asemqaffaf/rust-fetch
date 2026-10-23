@@ -8,9 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Redirect control:** `redirect: 'follow' | 'manual' | 'error'` and `maxRedirects`, as client options and per request, with `fetch()`'s semantics. `'manual'` resolves with the redirect response (`ok: false`, with its `Location` header); `'error'` rejects with a `NetworkError` on any redirect; `maxRedirects` (default 20, as before) limits how many are followed in Node.js, on both transports. In browsers, `fetch()` hides redirects from scripts, so `'manual'` resolves with `status: 0` and no headers, and the browser's own limit applies. `'manual'` and `'error'` can't be combined with `responseType: 'stream'` or `'ndjson'`. In the Rust API: `Redirect`, and `redirect()` / `max_redirects()` on `ClientBuilder` and `RequestBuilder`.
+- **Redirect control:** `redirect: 'follow' | 'manual' | 'error'` and `maxRedirects`, as client options and per request, with `fetch()`'s semantics. `'manual'` resolves with the redirect response (`ok: false`, with its `Location` header); `'error'` rejects with a `NetworkError` on any redirect; `maxRedirects` (default 20, as before) limits how many are followed in Node.js, on both transports. In browsers, `fetch()` hides redirects from scripts, so `'manual'` resolves with `status: 0` and no headers, and the browser's own limit applies. In the Rust API: `Redirect`, and `redirect()` / `max_redirects()` on `ClientBuilder` and `RequestBuilder`.
 
 ### Changed
+- **Smaller browser bundle: 197.6 kB brotli, down from 217.4 kB in 2.3.0** (WebAssembly 207.8 → 188.3 kB, JS glue 9.5 → 9.3 kB). In JavaScript runtimes, streamed requests (`responseType: 'stream' | 'ndjson'`, `events()`) are now sent with `fetch()` directly instead of through reqwest's wrapper around it, so reqwest's WebAssembly code is no longer in the module. The size budgets are lowered to match: 640 kB raw / 250 kB gzip for the `.wasm`, 66 kB / 11.5 kB for `rust_fetch.js`.
+- Streamed responses honour `redirect` too, like other requests.
+- Download progress is reported for each chunk on every path: in browsers it was reported once when combined with upload progress, or in service workers. In Node.js, requests with only `onDownloadProgress` now use the `node:http` transport instead of Node's `fetch()`.
 - Rust API: `RequestConfig`'s `follow_redirects` and `max_redirects` are now applied (they were ignored), and the default limit is 20, like browsers and the JavaScript API, instead of reqwest's 10.
 - The Node.js entry point's raw size budget is now 18 kB (it's 17.1 kB, 6.1 kB gzipped).
 

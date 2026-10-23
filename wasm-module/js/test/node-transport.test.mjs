@@ -344,13 +344,18 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal(error.kind, 'InvalidInputError', JSON.stringify(options));
         assert.equal(error.parameter, parameter);
       }
-      for (const responseType of ['stream', 'ndjson']) {
-        for (const redirect of ['manual', 'error']) {
-          const error = await rejection(client().get(server.url('/echo'), { responseType, redirect }));
-          assert.equal(error.kind, 'InvalidInputError');
-          assert.equal(error.parameter, 'redirect');
-        }
-      }
+    });
+
+    it('applies redirect to streamed responses', async () => {
+      const manual = await client().get(server.url('/moved'), { redirect: 'manual', responseType: 'stream' });
+      assert.equal(manual.status, 301);
+      assert.equal(manual.headers.location, '/echo');
+      assert.equal(await new Response(manual.body).text(), 'see /echo');
+      const error = await rejection(client().get(server.url('/moved'), { redirect: 'error', responseType: 'ndjson' }));
+      assert.equal(error.kind, 'NetworkError');
+      assert.match(error.message, /Redirect not allowed: 301 to \/echo/);
+      const followed = await client().get(server.url('/moved'), { responseType: 'stream' });
+      assert.equal(followed.url, server.url('/echo'));
     });
 
     it('fails on redirect loops and unsupported schemes', async () => {
