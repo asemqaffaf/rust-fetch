@@ -139,6 +139,12 @@ export interface ClientOptions extends BrowserRequestOptions {
   redirect?: RedirectMode;
   /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
   maxRedirects?: number;
+  /**
+   * Node.js: send requests through an HTTP(S) proxy, either a URL (`http://user:pass@proxy:8080`) or `'env'`
+   * for `HTTPS_PROXY` / `HTTP_PROXY` with `NO_PROXY`. `NODE_USE_ENV_PROXY=1` is the same as `'env'`.
+   * Browsers use the system's proxy settings. Default: none
+   */
+  proxy?: 'env' | (string & {});
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
@@ -317,6 +323,9 @@ impl WasmClient {
             #[cfg(target_arch = "wasm32")]
             {
                 builder = builder.fetch_options(parse_fetch_options(options, None)?);
+                if let Some(proxy) = prop(options, "proxy") {
+                    builder = builder.proxy(Some(parse_proxy(&proxy)?));
+                }
             }
         }
 
@@ -1304,6 +1313,20 @@ fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
         config.retry_non_idempotent = parse_bool(&v, "retries.retryNonIdempotent")?;
     }
     Ok(config)
+}
+
+/// `'env'`, or an `http:` / `https:` proxy URL
+#[cfg(target_arch = "wasm32")]
+fn parse_proxy(value: &JsValue) -> Result<String> {
+    let reason = "must be 'env' or an http: or https: proxy URL";
+    let proxy = value.as_string().ok_or_else(|| invalid("proxy", reason))?;
+    if proxy == "env" {
+        return Ok(proxy);
+    }
+    match reqwest::Url::parse(&proxy) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.has_host() => Ok(url.into()),
+        _ => Err(invalid("proxy", reason)),
+    }
 }
 
 fn parse_redirect(value: &JsValue) -> Result<Redirect> {

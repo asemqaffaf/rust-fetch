@@ -120,6 +120,12 @@ export interface ClientOptions extends BrowserRequestOptions {
     redirect?: RedirectMode;
     /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
     maxRedirects?: number;
+    /**
+     * Node.js: send requests through an HTTP(S) proxy, either a URL (`http://user:pass@proxy:8080`) or `'env'`
+     * for `HTTPS_PROXY` / `HTTP_PROXY` with `NO_PROXY`. `NODE_USE_ENV_PROXY=1` is the same as `'env'`.
+     * Browsers use the system's proxy settings. Default: none
+     */
+    proxy?: 'env' | (string & {});
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
