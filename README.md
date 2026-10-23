@@ -830,7 +830,7 @@ The same attacks against each client, with the protections it offers turned on (
 | Request to the cloud metadata endpoint `169.254.169.254` (SSRF) | **blocked** with `allowPrivateNetwork: false` | no built-in check | no built-in check |
 | Runtime dependencies | none | built in | 4 |
 
-Only rust-fetch blocks SSRF before connecting, rejects header injection instead of altering the header, and can bound a response's size. Every protection that isn't on by default (absolute URLs, size, private networks) is one option away.
+Only rust-fetch blocks SSRF before connecting, and rejects header injection instead of altering the header. Like axios, and unlike `fetch()`, it can bound a response's size. Every protection that isn't on by default (absolute URLs, size, private networks) is one option away.
 
 ### Absolute URLs and `baseUrl`
 
