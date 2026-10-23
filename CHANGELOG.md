@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-23
+
 ### Added
 - **Proxies in Node.js:** a `proxy` client option, `'env'` (`HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY`, upper or lower case, read on each request) or a proxy URL with optional credentials (sent as `Proxy-Authorization`). HTTPS goes through `CONNECT` tunnels, plain HTTP as absolute-URL requests, with a connection pool per proxy; `http:` and `https:` proxies are supported. `NODE_USE_ENV_PROXY=1` turns on `'env'` by default, as it does for Node's `fetch()`. Proxied requests use the `node:http` transport. The Node.js entry point grows to 22.4 kB (7.8 kB gzipped); its budget is now 24 kB / 8.5 kB.
 - **WebSockets through a proxy in Node.js:** a `dispatcher` option for `client.websocket()`, passed to Node's built-in `WebSocket`, e.g. `new ProxyAgent(url)` from the `undici` package. Tested through a local `CONNECT` proxy with proxy credentials. Browsers reject it with an `InvalidInputError` (they use the system's proxy settings).
@@ -182,7 +184,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...v2.1.1

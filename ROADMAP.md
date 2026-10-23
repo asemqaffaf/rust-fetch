@@ -14,8 +14,8 @@ Dates aren't promised; the order is.
 | --- | --- | --- |
 | [2.2.0](#220-upload-progress-websockets-typed-responses) | Upload progress, WebSockets, typed responses | Released |
 | [2.3.0](#230-streaming-apis) | Streaming APIs: SSE, NDJSON | Released |
-| [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Next |
-| [2.5.0](#250-webrtc-signaling) | WebRTC signaling (WHIP/WHEP) | Planned |
+| [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
+| [2.5.0](#250-webrtc-signaling) | WebRTC signaling (WHIP/WHEP), and the 2.4.0 performance work still open | Next |
 | [2.6.0](#260-the-native-transport-on-npm) | Native transport on npm | Needs a one-time npm setup |
 | [2.7.0](#270-resilience-and-observability) | Resilience and observability | Planned |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
@@ -46,14 +46,14 @@ Dates aren't promised; the order is.
 
 ## 2.4.0: performance, proxies and request options
 
-*Goal: close the remaining gaps in the measurements, make the client smaller and faster to start, work behind proxies everywhere, and expose the request options browsers and servers need.*
+*Released 2026-10-23* ([release notes](https://github.com/asemqaffaf/rust-fetch/releases/tag/v2.4.0)).
 
 | | |
 | --- | --- |
-| Find the ~565 ms p99 stall at a steady 15,000 requests/s | [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) |
-| Native transport at least as fast as `node:http` for sequential requests | [#17](https://github.com/asemqaffaf/rust-fetch/issues/17) |
-| Bounded memory under overload | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
-| Smaller WebAssembly bundle (target ≤ 180 kB brotli) | [#61](https://github.com/asemqaffaf/rust-fetch/issues/61) |
+| Native transport at least as fast as `node:http` for sequential requests: one Tokio worker, +7% | [#17](https://github.com/asemqaffaf/rust-fetch/issues/17) |
+| No throughput collapse under overload: request queue and WebAssembly memory growth (progress on [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) and [#18](https://github.com/asemqaffaf/rust-fetch/issues/18), which continue in 2.5.0) | [#92](https://github.com/asemqaffaf/rust-fetch/pull/92) |
+| Smaller WebAssembly bundle: 178.5 kB brotli (target ≤ 180 kB) | [#61](https://github.com/asemqaffaf/rust-fetch/issues/61) |
+| Node.js streamed responses and `events()` through the `node:http` transport | [#85](https://github.com/asemqaffaf/rust-fetch/issues/85) |
 | Faster `init()` cold start, measured | [#62](https://github.com/asemqaffaf/rust-fetch/issues/62) |
 | Benchmark regressions caught in CI | [#63](https://github.com/asemqaffaf/rust-fetch/issues/63) |
 | Proxies from the environment (`HTTPS_PROXY`, `NO_PROXY`) | [#49](https://github.com/asemqaffaf/rust-fetch/issues/49) |
@@ -72,6 +72,14 @@ Dates aren't promised; the order is.
 | WHEP client for playback: `client.whep(url, pc)` | [#32](https://github.com/asemqaffaf/rust-fetch/issues/32) |
 | Trickle ICE and ICE restarts | [#33](https://github.com/asemqaffaf/rust-fetch/issues/33) |
 | Local WHIP/WHEP test server and real-browser WebRTC tests | [#34](https://github.com/asemqaffaf/rust-fetch/issues/34) |
+
+Carried over from 2.4.0:
+
+| | |
+| --- | --- |
+| The intermittent p99 stall of the `node:http` transport at a steady 15,000 requests/s (now rarer and smaller) | [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) |
+| Native transport memory under overload at or below `node:http`'s | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
+| Parse URLs with the runtime's `URL` on wasm32, dropping `url`, `idna` and ICU from the bundle | [#93](https://github.com/asemqaffaf/rust-fetch/issues/93) |
 
 ## 2.6.0: the native transport on npm
 
