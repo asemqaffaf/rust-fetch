@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-24
+
 ### Added
 - **`allowAbsoluteUrls`** (client and per request, also for `events()` and `websocket()`): with `false`, an absolute URL on a client with a `baseUrl` rejects with an `InvalidInputError` instead of replacing the base URL, and so the client's headers such as `Authorization` can't be sent to a host taken from user input (the class of axios CVE-2025-27152). Default `true`, as before. Rust: `allow_absolute_urls()` on `ClientBuilder` and `RequestBuilder`.
 - **`maxResponseBytes`** (client and per request; `null` per request for none): rejects responses whose decompressed body is larger, with a `NetworkError` that carries the limit as `maxResponseBytes`. Checked against `Content-Length` before reading, counted while reading, and enforced while decompressing (gzip, deflate, brotli, zstd stop one byte past the limit), so a decompression bomb never expands in memory: a 64 MB gzip bomb with a 1 MB limit fails with no measurable memory growth. Applies on every transport, to error bodies, and to streamed bodies (the stream errors). Rust: `max_response_bytes()` on `ClientBuilder` and `RequestBuilder`, and `Error::response_too_large()`.
@@ -198,7 +200,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...v2.3.0

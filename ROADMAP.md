@@ -15,8 +15,8 @@ Dates aren't promised; the order is.
 | [2.2.0](#220-upload-progress-websockets-typed-responses) | Upload progress, WebSockets, typed responses | Released |
 | [2.3.0](#230-streaming-apis) | Streaming APIs: SSE, NDJSON | Released |
 | [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
-| [2.5.0](#250-webrtc-signaling) | WebRTC signaling (WHIP/WHEP), and the 2.4.0 performance work still open | Next |
-| [2.6.0](#260-the-native-transport-on-npm) | Native transport on npm | Needs a one-time npm setup |
+| [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
+| [2.6.0](#260-webrtc-signaling-performance-and-the-native-transport-on-npm) | WebRTC signaling (WHIP/WHEP), the open performance work, and the native transport on npm (needs a one-time npm setup) | Next |
 | [2.7.0](#270-resilience-and-observability) | Resilience and observability | Planned |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
 
@@ -51,7 +51,7 @@ Dates aren't promised; the order is.
 | | |
 | --- | --- |
 | Native transport at least as fast as `node:http` for sequential requests: one Tokio worker, +7% | [#17](https://github.com/asemqaffaf/rust-fetch/issues/17) |
-| No throughput collapse under overload: request queue and WebAssembly memory growth (progress on [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) and [#18](https://github.com/asemqaffaf/rust-fetch/issues/18), which continue in 2.5.0) | [#92](https://github.com/asemqaffaf/rust-fetch/pull/92) |
+| No throughput collapse under overload: request queue and WebAssembly memory growth (progress on [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) and [#18](https://github.com/asemqaffaf/rust-fetch/issues/18), which continue in 2.6.0) | [#92](https://github.com/asemqaffaf/rust-fetch/pull/92) |
 | Smaller WebAssembly bundle: 178.5 kB brotli (target ≤ 180 kB) | [#61](https://github.com/asemqaffaf/rust-fetch/issues/61) |
 | Node.js streamed responses and `events()` through the `node:http` transport | [#85](https://github.com/asemqaffaf/rust-fetch/issues/85) |
 | Faster `init()` cold start, measured | [#62](https://github.com/asemqaffaf/rust-fetch/issues/62) |
@@ -62,7 +62,18 @@ Dates aren't promised; the order is.
 | Browser `fetch()` options: `credentials`, `mode`, `cache`, `keepalive`, `priority` | [#59](https://github.com/asemqaffaf/rust-fetch/issues/59) |
 | Redirect control: `redirect: 'manual' \| 'error'`, `maxRedirects` | [#60](https://github.com/asemqaffaf/rust-fetch/issues/60) |
 
-## 2.5.0: WebRTC signaling
+## 2.5.0: security
+
+*Released 2026-10-24* ([release notes](https://github.com/asemqaffaf/rust-fetch/releases/tag/v2.5.0)). Moved ahead of WebRTC after a comparison with `fetch()` and axios found gaps that all three clients shared.
+
+| | |
+| --- | --- |
+| `allowAbsoluteUrls: false`: absolute URLs can't replace `baseUrl` and receive its credentials (axios CVE-2025-27152 class) | [#98](https://github.com/asemqaffaf/rust-fetch/issues/98) |
+| `maxResponseBytes`, enforced while reading and decompressing (decompression bombs) | [#76](https://github.com/asemqaffaf/rust-fetch/issues/76), [#77](https://github.com/asemqaffaf/rust-fetch/issues/77) |
+| SSRF protection: `allowPrivateNetwork: false` checks resolved addresses at connect time | [#78](https://github.com/asemqaffaf/rust-fetch/issues/78) |
+| Security regression tests per vulnerability class, and `npm run security:compare` against `fetch()` and axios | [#103](https://github.com/asemqaffaf/rust-fetch/pull/103) |
+
+## 2.6.0: WebRTC signaling, performance, and the native transport on npm
 
 *Goal: set up WebRTC sessions with the standard HTTP signaling protocols, WHIP (RFC 9725) and WHEP, with the client's timeouts, retries and typed errors. Tracked in [#30](https://github.com/asemqaffaf/rust-fetch/issues/30).*
 
@@ -73,7 +84,7 @@ Dates aren't promised; the order is.
 | Trickle ICE and ICE restarts | [#33](https://github.com/asemqaffaf/rust-fetch/issues/33) |
 | Local WHIP/WHEP test server and real-browser WebRTC tests | [#34](https://github.com/asemqaffaf/rust-fetch/issues/34) |
 
-Carried over from 2.4.0:
+Performance carried over from 2.4.0:
 
 | | |
 | --- | --- |
@@ -81,9 +92,7 @@ Carried over from 2.4.0:
 | Native transport memory under overload at or below `node:http`'s | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
 | Parse URLs with the runtime's `URL` on wasm32, dropping `url`, `idna` and ICU from the bundle | [#93](https://github.com/asemqaffaf/rust-fetch/issues/93) |
 
-## 2.6.0: the native transport on npm
-
-*Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step.*
+The native transport on npm. *Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step.*
 
 | | |
 | --- | --- |
@@ -106,9 +115,6 @@ Carried over from 2.4.0:
 | Request method, URL and attempts on errors | [#65](https://github.com/asemqaffaf/rust-fetch/issues/65) |
 | Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) |
 | Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) |
-| Limit decompressed response size (decompression bombs) | [#76](https://github.com/asemqaffaf/rust-fetch/issues/76) |
-| Response size limits: `maxResponseBytes` | [#77](https://github.com/asemqaffaf/rust-fetch/issues/77) |
-| SSRF protection for server-side requests | [#78](https://github.com/asemqaffaf/rust-fetch/issues/78) |
 | Separate connect, response and idle timeouts | [#79](https://github.com/asemqaffaf/rust-fetch/issues/79) |
 
 ## 2.8.0: data and developer experience
