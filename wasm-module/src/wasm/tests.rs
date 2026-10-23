@@ -421,8 +421,13 @@ fn content_type_of(request: &RequestBuilder) -> String {
 
 #[wasm_bindgen_test]
 fn decoding_follows_body_type_and_content_type() {
+    let decode_bytes = |bytes: &[u8], content_type: &str, body_type| {
+        let buffer: JsValue = js_sys::Uint8Array::from(bytes).buffer().into();
+        let length = u32::try_from(bytes.len()).unwrap();
+        transport::decode_body(&buffer, length, content_type, body_type)
+    };
     let decode = |bytes: &[u8], content_type: &str, body_type| {
-        decode_js_body(bytes.to_vec(), content_type, body_type).unwrap()
+        decode_bytes(bytes, content_type, body_type).unwrap()
     };
     let stringify = |value: JsValue| {
         js_sys::JSON::stringify(&value)
@@ -472,26 +477,21 @@ fn decoding_follows_body_type_and_content_type() {
         0
     );
 
-    let error = decode_js_body(b"{".to_vec(), "", BodyType::Json).unwrap_err();
+    let error = decode_bytes(b"{", "", BodyType::Json).unwrap_err();
     assert!(matches!(error, Error::Parse { .. }));
     assert!(error.to_string().contains("Failed to parse JSON response"));
 }
 
 #[wasm_bindgen_test]
-fn responses_become_plain_objects() {
+fn response_heads_become_plain_objects() {
     let mut headers = Headers::new();
     headers.insert("content-type", "application/json");
     headers.insert("set-thing", "a");
     headers.insert("set-thing", "b");
-    let response = Response {
-        status: 201,
-        status_text: "Created".into(),
-        headers,
-        body: ResponseBody::Binary(br#"{"ok":true}"#.to_vec()),
-        url: "https://example.com/x".into(),
-    };
 
-    let value = response_to_js(response, BodyType::Auto).unwrap();
+    let value: JsValue = response_head_to_js(201, "Created", "https://example.com/x", &headers)
+        .unwrap()
+        .into();
     assert_eq!(get(&value, "status").as_f64(), Some(201.0));
     assert_eq!(get(&value, "statusText").as_string().unwrap(), "Created");
     assert_eq!(get(&value, "ok").as_bool(), Some(true));
@@ -505,27 +505,10 @@ fn responses_become_plain_objects() {
             .unwrap(),
         "a, b"
     );
-    assert_eq!(get(&get(&value, "body"), "ok").as_bool(), Some(true));
-
-    // Bodies decoded by the Rust side are re-encoded for JS
-    let response = |body| Response {
-        status: 200,
-        status_text: String::new(),
-        headers: Headers::new(),
-        body,
-        url: String::new(),
-    };
-    let body = |value: JsValue| get(&value, "body");
-    let text = response_to_js(response(ResponseBody::Text("hi".into())), BodyType::Text).unwrap();
-    assert_eq!(body(text).as_string().unwrap(), "hi");
-    let json = response_to_js(
-        response(ResponseBody::Json(serde_json::json!({"a": 1}))),
-        BodyType::Json,
-    )
-    .unwrap();
-    assert_eq!(get(&body(json), "a").as_f64(), Some(1.0));
-    let empty = response_to_js(response(ResponseBody::Empty), BodyType::Auto).unwrap();
-    assert!(body(empty).is_null());
+    let redirect: JsValue = response_head_to_js(302, "Found", "", &Headers::new())
+        .unwrap()
+        .into();
+    assert_eq!(get(&redirect, "ok").as_bool(), Some(false));
 }
 
 // --- Errors -------------------------------------------------------------------

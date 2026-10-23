@@ -106,10 +106,7 @@ export interface RequestOptions {
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
     timeoutMs?: number;
     responseType?: ResponseBodyType;
-    /**
-     * Overrides the client's `redirect`. `manual` and `error` can't be combined with
-     * `responseType: 'stream' | 'ndjson'`.
-     */
+    /** Overrides the client's `redirect` */
     redirect?: RedirectMode;
     /** Overrides the client's `maxRedirects` */
     maxRedirects?: number;

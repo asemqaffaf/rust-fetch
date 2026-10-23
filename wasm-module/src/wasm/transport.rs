@@ -18,10 +18,11 @@ use crate::{
     client::{parse_retry_after, Attempt},
     error::{Error, Result},
     types::{
-        is_json_content_type, is_redirect_status, is_text_content_type, Redirect, RequestConfig,
-        DEFAULT_MAX_REDIRECTS,
+        is_json_content_type, is_redirect_status, is_text_content_type, Headers, Redirect,
+        RequestConfig, DEFAULT_MAX_REDIRECTS,
     },
 };
+use futures_util::StreamExt;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -120,11 +121,7 @@ impl PreparedRequest {
             .filter(|bytes| !bytes.is_empty())
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let method = config.method.to_reqwest();
-        let redirect = match (config.follow_redirects, config.max_redirects) {
-            (false, _) => Redirect::Manual,
-            (true, 0) => Redirect::Error,
-            (true, _) => Redirect::Follow,
-        };
+        let redirect = redirect_mode(config);
 
         if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
             let js_headers = js_sys::Object::new();
@@ -200,24 +197,13 @@ impl PreparedRequest {
         }
 
         let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
-        let js_headers = web_sys::Headers::new().map_err(invalid_request)?;
-        for (name, value) in &headers {
-            js_headers.append(name, value).map_err(invalid_request)?;
-        }
-        if let Some(content_type) = default_content_type {
-            js_headers
-                .set("content-type", content_type)
-                .map_err(invalid_request)?;
-        }
-        let init = web_sys::RequestInit::new();
-        init.set_method(method.as_str());
-        init.set_headers(js_headers.as_ref());
-        if let Some(body) = &body {
-            init.set_body(body);
-        }
-        if redirect != Redirect::Follow {
-            init.set_redirect(web_sys::RequestRedirect::Manual);
-        }
+        let init = fetch_init(
+            method.as_str(),
+            &headers,
+            default_content_type,
+            body.as_ref(),
+            redirect,
+        )?;
         Ok(Self::Fetch {
             url: url.to_string(),
             init,
@@ -261,6 +247,242 @@ impl PreparedRequest {
     }
 }
 
+/// A request whose response is returned as soon as its headers arrive
+/// (`responseType: 'stream' | 'ndjson'` and `events()`), sent with `fetch()`
+/// in every runtime
+pub(crate) struct StreamingRequest {
+    url: String,
+    init: web_sys::RequestInit,
+    redirect: Redirect,
+}
+
+/// The head of a streamed response, and its unread body
+pub(crate) struct StreamedResponse {
+    pub(crate) status: u16,
+    pub(crate) url: String,
+    pub(crate) headers: Headers,
+    pub(crate) body: FetchBody,
+}
+
+impl StreamingRequest {
+    pub(crate) fn new(url: &str, config: &RequestConfig) -> Result<Self> {
+        let headers = validated_headers(config)?;
+        let body = match &config.body {
+            Some(body) => Some((body.content_type(), body.to_bytes()?)),
+            None => None,
+        };
+        let default_content_type = body
+            .as_ref()
+            .filter(|_| !config.headers.contains("content-type"))
+            .map(|(content_type, _)| *content_type);
+        let body = body
+            .map(|(_, bytes)| bytes)
+            .filter(|bytes| !bytes.is_empty())
+            .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
+        let redirect = redirect_mode(config);
+        let init = fetch_init(
+            config.method.to_reqwest().as_str(),
+            &headers,
+            default_content_type,
+            body.as_ref(),
+            redirect,
+        )?;
+        Ok(Self {
+            url: url.to_string(),
+            init,
+            redirect,
+        })
+    }
+
+    /// One attempt, until the response headers arrive. Error statuses are
+    /// read in full, as for other requests.
+    pub(crate) async fn send(&self) -> Result<Attempt<StreamedResponse>> {
+        let controller = web_sys::AbortController::new().map_err(network_error)?;
+        self.init.set_signal(Some(&controller.signal()));
+        let guard = CancelGuard::new(move || controller.abort());
+        let request = web_sys::Request::new_with_str_and_init(&self.url, &self.init)
+            .map_err(invalid_request)?;
+        let response: web_sys::Response =
+            JsFuture::from(fetch_native(&request).map_err(network_error)?)
+                .await
+                .map_err(network_error)?
+                .unchecked_into();
+        let status = response.status();
+        let headers = response.headers();
+        let redirected = check_redirect(&response, &headers, self.redirect)?;
+        if !(200..300).contains(&status) && !redirected {
+            let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
+                .await
+                .map_err(network_error)?;
+            guard.disarm();
+            let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
+            let retry_after = headers.get("retry-after")?;
+            return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
+        }
+        // From here on, the body is cancelled when it's dropped
+        guard.disarm();
+        let length = headers
+            .get("content-length")?
+            .and_then(|length| length.trim().parse::<u64>().ok());
+        let url = match response.url() {
+            response_url if response_url.is_empty() => self.url.clone(),
+            response_url => response_url,
+        };
+        Ok(Attempt::Success(StreamedResponse {
+            status,
+            url,
+            headers: rust_headers(&headers)?,
+            body: FetchBody {
+                body: response.body(),
+                length,
+            },
+        }))
+    }
+}
+
+/// A streamed response body; cancelled if dropped unread
+pub(crate) struct FetchBody {
+    body: Option<web_sys::ReadableStream>,
+    length: Option<u64>,
+}
+
+impl FetchBody {
+    /// The expected body size from `Content-Length`, if known
+    pub(crate) fn content_length(&self) -> Option<u64> {
+        self.length
+    }
+
+    /// The body, chunk by chunk; dropping the stream cancels the body
+    pub(crate) fn chunks(mut self) -> impl futures_util::Stream<Item = Result<Vec<u8>>> {
+        let chunks = match self.body.take() {
+            Some(body) => wasm_streams::ReadableStream::from_raw(body)
+                .into_stream()
+                .left_stream(),
+            None => futures_util::stream::empty().right_stream(),
+        };
+        chunks.map(|chunk| {
+            chunk
+                .map(|chunk| js_sys::Uint8Array::new(&chunk).to_vec())
+                .map_err(|error| Error::Network {
+                    message: format!("Failed to read response body: {}", js_error_message(&error)),
+                    source: None,
+                })
+        })
+    }
+}
+
+impl Drop for FetchBody {
+    fn drop(&mut self) {
+        if let Some(body) = self.body.take() {
+            let _ = body.cancel();
+        }
+    }
+}
+
+/// `fetch()` response headers as [`Headers`]; repeated ones (`Set-Cookie`
+/// in Node.js) are kept as separate values
+fn rust_headers(headers: &web_sys::Headers) -> Result<Headers> {
+    let mut result = Headers::new();
+    if let Some(entries) = js_sys::try_iter(headers.as_ref())? {
+        for entry in entries {
+            let entry: js_sys::Array = entry?.unchecked_into();
+            result.insert(
+                entry.get(0).as_string().unwrap_or_default(),
+                entry.get(1).as_string().unwrap_or_default(),
+            );
+        }
+    }
+    Ok(result)
+}
+
+/// `redirect: 'manual' | 'error'` as the transports apply it
+fn redirect_mode(config: &RequestConfig) -> Redirect {
+    match (config.follow_redirects, config.max_redirects) {
+        (false, _) => Redirect::Manual,
+        (true, 0) => Redirect::Error,
+        (true, _) => Redirect::Follow,
+    }
+}
+
+/// The `RequestInit` for a `fetch()` call
+fn fetch_init(
+    method: &str,
+    headers: &[(&str, &str)],
+    default_content_type: Option<&str>,
+    body: Option<&js_sys::Uint8Array>,
+    redirect: Redirect,
+) -> Result<web_sys::RequestInit> {
+    let js_headers = web_sys::Headers::new().map_err(invalid_request)?;
+    for (name, value) in headers {
+        js_headers.append(name, value).map_err(invalid_request)?;
+    }
+    if let Some(content_type) = default_content_type {
+        js_headers
+            .set("content-type", content_type)
+            .map_err(invalid_request)?;
+    }
+    let init = web_sys::RequestInit::new();
+    init.set_method(method);
+    init.set_headers(js_headers.as_ref());
+    if let Some(body) = body {
+        init.set_body(body);
+    }
+    if redirect != Redirect::Follow {
+        init.set_redirect(web_sys::RequestRedirect::Manual);
+    }
+    Ok(init)
+}
+
+/// Whether a `fetch()` response sent with `redirect: 'manual'` is a redirect
+/// to return; fails for `redirect: 'error'`. Browsers hide a redirect behind
+/// an opaque response with status 0; other runtimes (e.g. Deno) return the
+/// redirect itself.
+fn check_redirect(
+    response: &web_sys::Response,
+    headers: &web_sys::Headers,
+    redirect: Redirect,
+) -> Result<bool> {
+    let redirected = redirect != Redirect::Follow
+        && (response.type_() == web_sys::ResponseType::Opaqueredirect
+            || is_redirect_status(response.status()));
+    if redirected && redirect == Redirect::Error {
+        let message = match headers.get("location")? {
+            Some(location) => format!("Redirect not allowed: {} to {location}", response.status()),
+            None => "Redirect not allowed".to_string(),
+        };
+        return Err(Error::Network {
+            message,
+            source: None,
+        });
+    }
+    Ok(redirected)
+}
+
+/// Read a body chunk by chunk, reporting download progress after each one,
+/// into one `ArrayBuffer`
+async fn read_with_progress(
+    body: web_sys::ReadableStream,
+    callback: &js_sys::Function,
+    total: Option<f64>,
+) -> Result<JsValue> {
+    let mut chunks = wasm_streams::ReadableStream::from_raw(body).into_stream();
+    let mut parts = Vec::new();
+    let mut loaded = 0u32;
+    while let Some(chunk) = chunks.next().await {
+        let chunk: js_sys::Uint8Array = chunk.map_err(network_error)?.unchecked_into();
+        loaded += chunk.length();
+        report_progress(callback, f64::from(loaded), total);
+        parts.push(chunk);
+    }
+    let buffer = js_sys::Uint8Array::new_with_length(loaded);
+    let mut offset = 0;
+    for part in parts {
+        buffer.set(&part, offset);
+        offset += part.length();
+    }
+    Ok(buffer.buffer().into())
+}
+
 /// Header pairs, validated the same way as the reqwest-backed path
 fn validated_headers(config: &RequestConfig) -> Result<Vec<(&str, &str)>> {
     let mut pairs = Vec::new();
@@ -299,39 +521,37 @@ async fn send_fetch(
         let length = f64::from(body_length);
         report_progress(callback, length, Some(length));
     }
-    let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
-        .await
-        .map_err(network_error)?;
+    let redirected = check_redirect(&response, &headers, redirect)?;
+    let total = headers
+        .get("content-length")?
+        // Parsed as an integer: parsing floats would add ~13 kB to the module
+        .and_then(|length| length.trim().parse::<u32>().ok())
+        .map(f64::from);
+    // A successful response's body is read chunk by chunk to report progress
+    let download = progress
+        .download
+        .as_ref()
+        .filter(|_| (200..300).contains(&status));
+    let (buffer, reported) = match (download, response.body()) {
+        (Some(callback), Some(body)) => (read_with_progress(body, callback, total).await?, true),
+        _ => {
+            let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
+                .await
+                .map_err(network_error)?;
+            (buffer, false)
+        }
+    };
     guard.disarm();
     let length = buffer.unchecked_ref::<js_sys::ArrayBuffer>().byte_length();
 
-    // Browsers hide a redirect behind an opaque response with status 0;
-    // other runtimes (e.g. Deno) return the redirect itself
-    let redirected = redirect != Redirect::Follow
-        && (response.type_() == web_sys::ResponseType::Opaqueredirect
-            || is_redirect_status(status));
-    if redirected && redirect == Redirect::Error {
-        let message = match headers.get("location")? {
-            Some(location) => format!("Redirect not allowed: {status} to {location}"),
-            None => "Redirect not allowed".to_string(),
-        };
-        return Err(Error::Network {
-            message,
-            source: None,
-        });
-    }
     if !(200..300).contains(&status) && !redirected {
         let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
         let retry_after = headers.get("retry-after")?;
         return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
     }
 
-    if let Some(callback) = &progress.download {
-        let total = headers
-            .get("content-length")?
-            // Parsed as an integer: parsing floats would add ~13 kB to the module
-            .and_then(|length| length.trim().parse::<u32>().ok())
-            .map(f64::from);
+    // A body-less response (e.g. 204) is reported once
+    if let (Some(callback), false) = (download, reported) {
         report_progress(callback, f64::from(length), total);
     }
     let content_type = headers.get("content-type")?.unwrap_or_default();
@@ -575,7 +795,7 @@ fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
 }
 
 /// A non-2xx response, as an HTTP error that may be retried
-fn http_error(status: u16, body: Option<String>, retry_after: Option<&str>) -> Attempt<JsValue> {
+fn http_error<T>(status: u16, body: Option<String>, retry_after: Option<&str>) -> Attempt<T> {
     Attempt::HttpError(
         Error::Http {
             status,
@@ -619,7 +839,7 @@ impl<F: FnOnce()> Drop for CancelGuard<F> {
 /// Decode a `fetch()` body (an `ArrayBuffer`) without copying it into wasm
 /// memory. The Node transport applies the same rules in JS (`decodeBody` in
 /// `js/node.js`); the JS tests check that both paths agree.
-fn decode_body(
+pub(crate) fn decode_body(
     buffer: &JsValue,
     length: u32,
     content_type: &str,
