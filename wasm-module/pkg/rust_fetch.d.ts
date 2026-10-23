@@ -126,6 +126,12 @@ export interface ClientOptions extends BrowserRequestOptions {
      * Browsers use the system's proxy settings. Default: none
      */
     proxy?: 'env' | (string & {});
+    /**
+     * With a `baseUrl`, whether an absolute request URL may replace it. An absolute URL also receives the
+     * client's headers (e.g. `Authorization`), so set `false` when paths come from user input: absolute URLs
+     * then reject with an `InvalidInputError`. Default: `true`
+     */
+    allowAbsoluteUrls?: boolean;
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
@@ -139,6 +145,8 @@ export interface RequestOptions extends BrowserRequestOptions {
     redirect?: RedirectMode;
     /** Overrides the client's `maxRedirects` */
     maxRedirects?: number;
+    /** Overrides the client's `allowAbsoluteUrls` */
+    allowAbsoluteUrls?: boolean;
     /**
      * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
      * For `responseType: 'stream'` it also errors the body stream.
@@ -244,6 +252,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     messageType?: 'auto' | 'json';
     /** Close the stream normally when an event's raw `data` equals this. Default: `'[DONE]'` with `messageType: 'json'`, otherwise none */
     end?: string | null;
+    /** Overrides the client's `allowAbsoluteUrls` */
+    allowAbsoluteUrls?: boolean;
     /** Closes the stream and stops reconnecting when aborted */
     signal?: AbortSignal;
     /** Called each time a connection opens, including after reconnecting */
@@ -312,6 +322,8 @@ export interface WebSocketOptions {
      * `true` for the defaults, a maximum number of attempts in a row, or options. Default: off
      */
     reconnect?: boolean | number | ReconnectOptions;
+    /** Overrides the client's `allowAbsoluteUrls` */
+    allowAbsoluteUrls?: boolean;
     /** Closes the connection and stops reconnecting when aborted */
     signal?: AbortSignal;
     /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */

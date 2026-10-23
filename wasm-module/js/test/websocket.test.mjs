@@ -315,6 +315,13 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     invalid(() => client.websocket(server.url(), { onMessage: 'x' }), 'onMessage');
     invalid(() => client.websocket(server.url(), { signal: {} }), 'signal');
     invalid(() => client.websocket(server.url(), { dispatcher: 'http://proxy' }), 'dispatcher');
+    // allowAbsoluteUrls: an absolute URL can't replace the base URL
+    const guarded = new WasmClient({ baseUrl: server.httpUrl('/v1'), allowAbsoluteUrls: false });
+    invalid(() => guarded.websocket('ws://other.example/'), 'url');
+    invalid(() => client.websocket(server.url(), { allowAbsoluteUrls: 'no' }), 'allowAbsoluteUrls');
+    const allowed = guarded.websocket(server.url('/allowed'), { allowAbsoluteUrls: true });
+    allowed.close();
+    await allowed.closed;
 
     const socket = client.websocket(server.url(), { reconnect: Infinity });
     await socket.opened;

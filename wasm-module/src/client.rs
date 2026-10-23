@@ -38,6 +38,7 @@ pub(crate) struct ClientConfig {
     pub(crate) base_url: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
+    pub(crate) allow_absolute_urls: bool,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -221,6 +222,7 @@ impl Client {
             progress: None,
             redirect,
             max_redirects,
+            allow_absolute_urls: self.config.allow_absolute_urls,
             #[cfg(target_arch = "wasm32")]
             fetch_options: self.config.fetch_options.clone(),
         }
@@ -451,6 +453,20 @@ fn redirect_policy(follow: bool, max_redirects: u32) -> reqwest::redirect::Polic
     })
 }
 
+/// With a base URL and `allow` off, an absolute URL is an error: it would
+/// replace the base URL and receive the client's default headers
+pub(crate) fn check_absolute_url(base: Option<&str>, url: &str, allow: bool) -> Result<()> {
+    if allow || base.is_none() || reqwest::Url::parse(url).is_err() {
+        return Ok(());
+    }
+    Err(Error::InvalidInput {
+        parameter: "url".to_string(),
+        reason: format!(
+            "'{url}' is an absolute URL, and allowAbsoluteUrls is off; use a path relative to the base URL"
+        ),
+    })
+}
+
 /// Resolve a request URL and append query parameters.
 ///
 /// Absolute URLs are used as-is; relative ones are appended to `base`, or
@@ -610,6 +626,7 @@ pub struct ClientBuilder {
     base_url: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
+    allow_absolute_urls: bool,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
@@ -626,6 +643,7 @@ impl ClientBuilder {
             base_url: None,
             redirect: Redirect::Follow,
             max_redirects: DEFAULT_MAX_REDIRECTS,
+            allow_absolute_urls: true,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
@@ -656,6 +674,14 @@ impl ClientBuilder {
     /// Maximum number of redirects to follow (default: 20)
     pub fn max_redirects(mut self, max_redirects: u32) -> Self {
         self.max_redirects = max_redirects;
+        self
+    }
+
+    /// With `false` and a base URL, reject absolute request URLs instead of
+    /// letting them replace the base URL, along with the client's default
+    /// headers (default: `true`). Use it when paths come from input.
+    pub fn allow_absolute_urls(mut self, allow: bool) -> Self {
+        self.allow_absolute_urls = allow;
         self
     }
 
@@ -732,6 +758,7 @@ impl ClientBuilder {
                 base_url: self.base_url,
                 redirect: self.redirect,
                 max_redirects: self.max_redirects,
+                allow_absolute_urls: self.allow_absolute_urls,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
@@ -758,6 +785,7 @@ pub struct RequestBuilder {
     progress: Option<ProgressFn>,
     redirect: Redirect,
     max_redirects: u32,
+    allow_absolute_urls: bool,
     /// Browser `fetch()` options: the client's, with this request's overrides
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -771,6 +799,7 @@ impl RequestBuilder {
         body_type: crate::wasm::BodyType,
         progress: crate::wasm::transport::ProgressCallbacks,
     ) -> Result<wasm_bindgen::JsValue> {
+        self.check_absolute_url()?;
         let url = resolve_url(
             self.client.config.base_url.as_deref(),
             page_url(),
@@ -889,6 +918,21 @@ impl RequestBuilder {
         self.redirect(redirect)
     }
 
+    /// Whether an absolute URL may replace the client's base URL, overriding
+    /// the client's setting (see [`ClientBuilder::allow_absolute_urls`])
+    pub fn allow_absolute_urls(mut self, allow: bool) -> Self {
+        self.allow_absolute_urls = allow;
+        self
+    }
+
+    fn check_absolute_url(&self) -> Result<()> {
+        check_absolute_url(
+            self.client.config.base_url.as_deref(),
+            &self.url,
+            self.allow_absolute_urls,
+        )
+    }
+
     /// Set response format preference
     pub fn response_format(mut self, format: ResponseFormat) -> Self {
         self.config.response_format = format;
@@ -897,6 +941,7 @@ impl RequestBuilder {
 
     /// Execute the request and read the whole response
     pub async fn send(self) -> Result<Response> {
+        self.check_absolute_url()?;
         let raw = self
             .client
             .execute(
@@ -925,6 +970,7 @@ impl RequestBuilder {
     /// responses are read fully and returned as [`Error::Http`] as usual.
     #[cfg(target_arch = "wasm32")]
     pub async fn send_streaming(self) -> Result<StreamingResponse> {
+        self.check_absolute_url()?;
         let url = resolve_url(
             self.client.config.base_url.as_deref(),
             page_url(),
@@ -962,6 +1008,7 @@ impl RequestBuilder {
     /// responses are read fully and returned as [`Error::Http`] as usual.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn send_streaming(self) -> Result<StreamingResponse> {
+        self.check_absolute_url()?;
         let raw = self
             .client
             .execute(&self.url, &self.query, &self.config, true, None)

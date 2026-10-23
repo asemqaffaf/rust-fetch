@@ -235,6 +235,39 @@ describe('responses', () => {
   });
 });
 
+describe('allowAbsoluteUrls', () => {
+  it('keeps absolute URLs, and the client credentials, from replacing baseUrl', async () => {
+    const other = await startServer((req, res) => json(res, { other: true }));
+    try {
+      const c = new WasmClient({ baseUrl: server.url('/api/v1'), headers: { authorization: 'Bearer SECRET' }, allowAbsoluteUrls: false });
+      for (const run of [() => c.get(other.url('/steal')), () => c.get(other.url('/steal'), { responseType: 'stream' }), () => c.fetch(other.url('/steal'), { method: 'POST', body: 'x' })]) {
+        const error = await rejection(run());
+        assert.equal(error.kind, 'InvalidInputError');
+        assert.equal(error.parameter, 'url');
+        assert.match(error.message, /absolute URL/);
+      }
+      assert.throws(() => c.events(other.url('/steal')), (error) => error.kind === 'InvalidInputError' && error.parameter === 'url');
+      assert.equal(other.requests.length, 0, 'nothing reaches the other host');
+      // Paths stay under baseUrl; a request can opt in
+      assert.equal((await c.get('/items')).body.url, '/api/v1/items');
+      const relative = await rejection(c.get('//elsewhere.example/x'));
+      assert.match(relative.body, /no route \/api\/v1\/elsewhere\.example\/x/); // answered by the base host
+      assert.deepEqual((await c.get(other.url('/'), { allowAbsoluteUrls: true })).body, { other: true });
+      // On by default, as before
+      assert.deepEqual((await new WasmClient({ baseUrl: server.url('/api/v1') }).get(other.url('/'))).body, { other: true });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it('is validated', async () => {
+    assert.throws(() => new WasmClient({ allowAbsoluteUrls: 'no' }), (error) => error.kind === 'InvalidInputError' && error.parameter === 'allowAbsoluteUrls');
+    const error = await rejection(client().get(server.url('/echo'), { allowAbsoluteUrls: 1 }));
+    assert.equal(error.parameter, 'allowAbsoluteUrls');
+    assert.throws(() => client().events(server.url('/echo'), { allowAbsoluteUrls: 1 }), (e) => e.parameter === 'allowAbsoluteUrls');
+  });
+});
+
 describe('browser fetch() options in Node.js', () => {
   const valid = {
     credentials: 'include',

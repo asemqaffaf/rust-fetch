@@ -57,6 +57,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   messageType?: 'auto' | 'json';
   /** Close the stream normally when an event's raw `data` equals this. Default: `'[DONE]'` with `messageType: 'json'`, otherwise none */
   end?: string | null;
+  /** Overrides the client's `allowAbsoluteUrls` */
+  allowAbsoluteUrls?: boolean;
   /** Closes the stream and stops reconnecting when aborted */
   signal?: AbortSignal;
   /** Called each time a connection opens, including after reconnecting */
@@ -319,6 +321,11 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         .map(|params| super::parse_params(&params))
         .transpose()?
         .unwrap_or_default();
+    let allow_absolute = match prop(&options, "allowAbsoluteUrls") {
+        Some(value) => super::parse_bool(&value, "allowAbsoluteUrls")?,
+        None => client.config.allow_absolute_urls,
+    };
+    crate::client::check_absolute_url(client.config.base_url.as_deref(), &target, allow_absolute)?;
     let url = resolve_url(
         client.config.base_url.as_deref(),
         page_url(),
