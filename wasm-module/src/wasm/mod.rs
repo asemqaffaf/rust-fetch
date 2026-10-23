@@ -153,6 +153,13 @@ export interface ClientOptions extends BrowserRequestOptions {
    * then reject with an `InvalidInputError`. Default: `true`
    */
   allowAbsoluteUrls?: boolean;
+  /**
+   * Reject responses whose body, after decompression, is larger than this many bytes, reading no more than that:
+   * checked against `Content-Length` first, then counted as the body arrives and while it's decompressed, so a
+   * decompression bomb never expands in memory. Rejects with a `NetworkError` whose `maxResponseBytes` is the
+   * limit. Applies to error responses and streamed bodies too. Default: no limit
+   */
+  maxResponseBytes?: number;
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
@@ -168,6 +175,8 @@ export interface RequestOptions extends BrowserRequestOptions {
   maxRedirects?: number;
   /** Overrides the client's `allowAbsoluteUrls` */
   allowAbsoluteUrls?: boolean;
+  /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
+  maxResponseBytes?: number | null;
   /**
    * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
    * For `responseType: 'stream'` it also errors the body stream.
@@ -239,6 +248,8 @@ export interface RustFetchError extends Error {
   timeoutMs?: number;
   /** InvalidInputError: the offending parameter */
   parameter?: string;
+  /** NetworkError for a response larger than `maxResponseBytes`: the limit */
+  maxResponseBytes?: number;
 }
 "#;
 
@@ -335,6 +346,9 @@ impl WasmClient {
                 builder = builder.fetch_options(parse_fetch_options(options, None)?);
                 if let Some(allow) = prop(options, "allowAbsoluteUrls") {
                     builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+                }
+                if let Some(limit) = prop(options, "maxResponseBytes") {
+                    builder = builder.max_response_bytes(parse_max_response_bytes(&limit)?);
                 }
                 if let Some(proxy) = prop(options, "proxy") {
                     builder = builder.proxy(Some(parse_proxy(&proxy)?));
@@ -790,6 +804,14 @@ pub(crate) fn request_builder(
     }
     if let Some(allow) = prop(options, "allowAbsoluteUrls") {
         builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+    }
+    // `null` removes the client's limit for this request
+    match js_sys::Reflect::get(options, &"maxResponseBytes".into()) {
+        Ok(value) if value.is_null() => builder = builder.max_response_bytes(None),
+        Ok(value) if !value.is_undefined() => {
+            builder = builder.max_response_bytes(Some(parse_max_response_bytes(&value)?));
+        }
+        _ => {}
     }
     if let Some(timeout) = prop(options, "timeoutMs") {
         builder = match parse_timeout(&timeout)? {
@@ -1371,6 +1393,20 @@ fn parse_proxy(value: &JsValue) -> Result<String> {
     }
 }
 
+fn parse_max_response_bytes(value: &JsValue) -> Result<u64> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    value
+        .as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 9_007_199_254_740_991.0)
+        .map(|n| n as u64)
+        .ok_or_else(|| {
+            invalid(
+                "maxResponseBytes",
+                "must be a non-negative integer number of bytes",
+            )
+        })
+}
+
 fn parse_redirect(value: &JsValue) -> Result<Redirect> {
     match value.as_string().as_deref() {
         Some("follow") => Ok(Redirect::Follow),
@@ -1580,6 +1616,10 @@ impl From<Error> for JsValue {
                 let _ = js_sys::Reflect::set(&obj, &"parameter".into(), &parameter.into());
             }
             _ => {}
+        }
+        if let Some(limit) = error.response_too_large() {
+            #[allow(clippy::cast_precision_loss)]
+            let _ = js_sys::Reflect::set(&obj, &"maxResponseBytes".into(), &(limit as f64).into());
         }
 
         obj.into()

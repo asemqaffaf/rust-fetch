@@ -3,13 +3,13 @@
 //
 // Budgets are for builds with current stable Rust, as in CI and releases;
 // older toolchains produce a larger module (Rust 1.88: about +11 kB brotli).
-// The WebAssembly module's brotli budget is the target from #61: 180 kB.
+// The WebAssembly module's brotli target from #61 is 180 kB.
 import { readFileSync } from 'node:fs';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 575_000, gzip: 228_000, brotli: 180_000 },
+  'rust_fetch_bg.wasm': { raw: 580_000, gzip: 230_000, brotli: 183_000 }, // 180 kB in 2.4; +2.2 kB for 2.5's security limits until #93 drops url/idna
   'rust_fetch.js': { raw: 70_000, gzip: 11_500, brotli: 10_000 },
   'node.js': { raw: 30_000, gzip: 10_000, brotli: 9_000 }, // includes the Node.js transports, the request queue and the native addon's loader
 };

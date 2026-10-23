@@ -341,6 +341,26 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result.keepalive, 6);
     });
 
+    it('limits response bodies with maxResponseBytes', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const client = new WasmClient({ baseUrl: origin, maxResponseBytes: 1000 });
+        const kinds = {};
+        const describe = (e) => `${e.kind} ${e.maxResponseBytes}`;
+        kinds.declared = await client.get('/large').then(() => 'OK', describe);
+        const streamed = await client.get('/large', { responseType: 'stream' });
+        // Read directly: Response#arrayBuffer() replaces a stream's error with its own TypeError
+        const reader = streamed.body.getReader();
+        kinds.streamed = await (async () => {
+          for (;;) if ((await reader.read()).done) return 'OK';
+        })().catch(describe);
+        // Chunked, without a Content-Length: counted as it arrives
+        kinds.chunked = await client.get('/stream', { maxResponseBytes: 5 }).then(() => 'OK', describe);
+        kinds.unlimited = (await client.get('/large', { maxResponseBytes: null })).body.length;
+        return kinds;
+      });
+      assert.deepEqual(result, { declared: 'NetworkError 1000', streamed: 'NetworkError 1000', chunked: 'NetworkError 5', unlimited: 2 * 1024 * 1024 });
+    });
+
     it('enforces timeouts, retries with Retry-After, and cancels', async () => {
       const result = await inPage(page, async ({ WasmClient }, { origin }) => {
         const out = {};

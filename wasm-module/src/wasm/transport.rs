@@ -79,6 +79,8 @@ pub(crate) enum PreparedRequest {
         body_length: u32,
         /// `manual` and `error` are applied by requesting `redirect: 'manual'`
         redirect: Redirect,
+        /// `maxResponseBytes`
+        limit: Option<u64>,
     },
     Xhr {
         method: String,
@@ -107,6 +109,7 @@ impl PreparedRequest {
         config: &RequestConfig,
         fetch_options: Option<&js_sys::Object>,
         proxy: Option<&str>,
+        limit: Option<u64>,
         body_type: BodyType,
         progress: ProgressCallbacks,
     ) -> Result<Self> {
@@ -136,6 +139,7 @@ impl PreparedRequest {
                 body.as_ref(),
                 config,
                 proxy,
+                limit,
             )?;
             let timeout_ms = config
                 .timeout
@@ -161,7 +165,8 @@ impl PreparedRequest {
 
         // XMLHttpRequest always follows redirects and has no equivalent for
         // most fetch() options; fetch() reports upload progress only once
-        let xhr = progress.upload.is_some() && redirect == Redirect::Follow;
+        // XMLHttpRequest can't stop reading at a limit either
+        let xhr = progress.upload.is_some() && redirect == Redirect::Follow && limit.is_none();
         if let (true, Some(with_credentials)) = (xhr, xhr_credentials(fetch_options)) {
             if has_global("XMLHttpRequest") {
                 let mut headers: Vec<(String, String)> = headers
@@ -199,6 +204,7 @@ impl PreparedRequest {
             progress,
             body_length,
             redirect,
+            limit,
         })
     }
 
@@ -216,7 +222,19 @@ impl PreparedRequest {
                 progress,
                 body_length,
                 redirect,
-            } => send_fetch(url, init, *body_type, progress, *body_length, *redirect).await,
+                limit,
+            } => {
+                send_fetch(
+                    url,
+                    init,
+                    *body_type,
+                    progress,
+                    *body_length,
+                    *redirect,
+                    *limit,
+                )
+                .await
+            }
             Self::Xhr {
                 method,
                 url,
@@ -255,6 +273,7 @@ pub(crate) enum StreamingRequest {
         url: String,
         init: web_sys::RequestInit,
         redirect: Redirect,
+        limit: Option<u64>,
     },
     /// Node.js: the Node transport, with `stream: true`. The core's timer
     /// covers the attempt until the headers arrive.
@@ -279,6 +298,7 @@ impl StreamingRequest {
         config: &RequestConfig,
         fetch_options: Option<&js_sys::Object>,
         proxy: Option<&str>,
+        limit: Option<u64>,
     ) -> Result<Self> {
         let headers = validated_headers(config)?;
         let body = match &config.body {
@@ -304,6 +324,7 @@ impl StreamingRequest {
                 body.as_ref(),
                 config,
                 proxy,
+                limit,
             )?;
             set(&request, "stream", &JsValue::TRUE)?;
             return Ok(Self::Node {
@@ -324,6 +345,7 @@ impl StreamingRequest {
             url: url.to_string(),
             init,
             redirect,
+            limit,
         })
     }
 
@@ -335,7 +357,8 @@ impl StreamingRequest {
                 url,
                 init,
                 redirect,
-            } => send_fetch_streaming(url, init, *redirect).await,
+                limit,
+            } => send_fetch_streaming(url, init, *redirect, *limit).await,
             Self::Node {
                 transport,
                 request,
@@ -349,6 +372,7 @@ async fn send_fetch_streaming(
     url: &str,
     init: &web_sys::RequestInit,
     redirect: Redirect,
+    limit: Option<u64>,
 ) -> Result<Attempt<StreamedResponse>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
@@ -363,9 +387,15 @@ async fn send_fetch_streaming(
     let headers = response.headers();
     let redirected = check_redirect(&response, &headers, redirect)?;
     if !(200..300).contains(&status) && !redirected {
-        let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
-            .await
-            .map_err(network_error)?;
+        // An error body is read whole, so it's limited here (a streamed
+        // body is limited as it's read, like in the Node.js transports)
+        check_declared_length(&headers, limit)?;
+        let buffer = match (limit, response.body()) {
+            (Some(_), Some(body)) => read_chunks(body, None, None, limit).await?,
+            _ => JsFuture::from(response.array_buffer().map_err(network_error)?)
+                .await
+                .map_err(network_error)?,
+        };
         guard.disarm();
         let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
         let retry_after = headers.get("retry-after")?;
@@ -453,6 +483,7 @@ fn node_request(
     body: Option<&js_sys::Uint8Array>,
     config: &RequestConfig,
     proxy: Option<&str>,
+    limit: Option<u64>,
 ) -> Result<js_sys::Object> {
     let js_headers = js_sys::Object::new();
     for &(name, value) in headers {
@@ -486,6 +517,10 @@ fn node_request(
     }
     if let Some(proxy) = proxy {
         set(&request, "proxy", &proxy.into())?;
+    }
+    if let Some(limit) = limit {
+        #[allow(clippy::cast_precision_loss)]
+        set(&request, "maxResponseBytes", &(limit as f64).into())?;
     }
     Ok(request)
 }
@@ -635,12 +670,29 @@ fn check_redirect(
     Ok(redirected || response.type_() == web_sys::ResponseType::Opaque)
 }
 
-/// Read a body chunk by chunk, reporting download progress after each one,
-/// into one `ArrayBuffer`
-async fn read_with_progress(
+/// Fail before reading a body whose `Content-Length` is over the limit (only
+/// for unencoded bodies: the limit applies to the decoded size)
+fn check_declared_length(headers: &web_sys::Headers, limit: Option<u64>) -> Result<()> {
+    let Some(limit) = limit else { return Ok(()) };
+    let encoded = headers
+        .get("content-encoding")?
+        .is_some_and(|encoding| !encoding.trim().eq_ignore_ascii_case("identity"));
+    let declared = headers
+        .get("content-length")?
+        .and_then(|length| length.trim().parse::<u64>().ok());
+    match declared {
+        Some(declared) if !encoded && declared > limit => Err(Error::too_large(limit)),
+        _ => Ok(()),
+    }
+}
+
+/// Read a body chunk by chunk into one `ArrayBuffer`, reporting download
+/// progress after each chunk and stopping past `limit` bytes
+async fn read_chunks(
     body: web_sys::ReadableStream,
-    callback: &js_sys::Function,
+    callback: Option<&js_sys::Function>,
     total: Option<f64>,
+    limit: Option<u64>,
 ) -> Result<JsValue> {
     let mut chunks = wasm_streams::ReadableStream::from_raw(body).into_stream();
     let mut parts = Vec::new();
@@ -648,7 +700,13 @@ async fn read_with_progress(
     while let Some(chunk) = chunks.next().await {
         let chunk: js_sys::Uint8Array = chunk.map_err(network_error)?.unchecked_into();
         loaded += chunk.length();
-        report_progress(callback, f64::from(loaded), total);
+        // Dropping the stream cancels the rest of the body
+        if let Some(limit) = limit.filter(|limit| u64::from(loaded) > *limit) {
+            return Err(Error::too_large(limit));
+        }
+        if let Some(callback) = callback {
+            report_progress(callback, f64::from(loaded), total);
+        }
         parts.push(chunk);
     }
     let buffer = js_sys::Uint8Array::new_with_length(loaded);
@@ -682,6 +740,7 @@ async fn send_fetch(
     progress: &ProgressCallbacks,
     body_length: u32,
     redirect: Redirect,
+    limit: Option<u64>,
 ) -> Result<Attempt<JsValue>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
@@ -704,13 +763,18 @@ async fn send_fetch(
         // Parsed as an integer: parsing floats would add ~13 kB to the module
         .and_then(|length| length.trim().parse::<u32>().ok())
         .map(f64::from);
-    // A successful response's body is read chunk by chunk to report progress
+    check_declared_length(&headers, limit)?;
+    // A successful response's body is read chunk by chunk to report progress,
+    // and any body when it's limited
     let download = progress
         .download
         .as_ref()
         .filter(|_| (200..300).contains(&status));
-    let (buffer, reported) = match (download, response.body()) {
-        (Some(callback), Some(body)) => (read_with_progress(body, callback, total).await?, true),
+    let (buffer, reported) = match (download.is_some() || limit.is_some(), response.body()) {
+        (true, Some(body)) => (
+            read_chunks(body, download, total, limit).await?,
+            download.is_some(),
+        ),
         _ => {
             let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
                 .await
@@ -967,6 +1031,13 @@ fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
         Some("RUST_FETCH_TIMEOUT") => Error::Timeout {
             duration_ms: timeout_ms,
         },
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Some("RUST_FETCH_TOO_LARGE") => Error::too_large(
+            js_sys::Reflect::get(error, &"maxResponseBytes".into())
+                .ok()
+                .and_then(|limit| limit.as_f64())
+                .unwrap_or(0.0) as u64,
+        ),
         Some("RUST_FETCH_PARSE") => Error::Parse {
             message: format!("Failed to parse JSON response: {}", js_error_message(error)),
             source: None,

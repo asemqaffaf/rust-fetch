@@ -769,6 +769,70 @@ async fn absolute_urls_can_be_kept_from_replacing_the_base_url() {
 }
 
 #[tokio::test]
+async fn max_response_bytes_limits_what_is_read() {
+    let big = vec![b'x'; 64 * 1024];
+    let body = big.clone();
+    let half = "y".repeat(0x8000);
+    let server = TestServer::start(move |req, _| match req.target.as_str() {
+        "/declared" => Reply::bytes(200, body.clone()),
+        "/error" => Reply::bytes(500, body.clone()),
+        // No Content-Length: chunked, so only counting catches it
+        _ => Reply::raw(vec![
+            (
+                Duration::ZERO,
+                "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n",
+            ),
+            (Duration::ZERO, "8000\r\n"),
+            (Duration::ZERO, half.as_str()),
+            (Duration::ZERO, "\r\n8000\r\n"),
+            (Duration::ZERO, half.as_str()),
+            (Duration::ZERO, "\r\n0\r\n\r\n"),
+        ]),
+    });
+    let client = Client::builder().max_response_bytes(1024).build().unwrap();
+
+    for path in ["/declared", "/chunked", "/error"] {
+        let error = client.get(server.url(path)).await.unwrap_err();
+        assert_eq!(error.response_too_large(), Some(1024), "{path}: {error}");
+        assert!(
+            error.to_string().contains("maxResponseBytes (1024 bytes)"),
+            "{error}"
+        );
+    }
+    // Streamed: the stream fails once the limit is passed
+    for path in ["/declared", "/chunked"] {
+        let streamed = client
+            .request(Method::Get, server.url(path))
+            .send_streaming()
+            .await
+            .unwrap();
+        let error = streamed.bytes().await.unwrap_err();
+        assert_eq!(error.response_too_large(), Some(1024), "{path}");
+    }
+    // Per request, and off by default
+    let response = client
+        .request(Method::Get, server.url("/declared"))
+        .max_response_bytes(Some(big.len() as u64))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.bytes().map(<[u8]>::len), Some(big.len()));
+    assert!(Client::new()
+        .unwrap()
+        .get(server.url("/chunked"))
+        .await
+        .is_ok());
+    assert_eq!(Error::Cancelled.response_too_large(), None);
+    let other = Error::network("x", std::io::Error::other("y"));
+    assert_eq!(other.response_too_large(), None);
+    let bare = Error::Network {
+        message: "x".into(),
+        source: None,
+    };
+    assert_eq!(bare.response_too_large(), None);
+}
+
+#[tokio::test]
 async fn chunked_responses_are_reassembled() {
     let server = TestServer::start(|_, _| {
         Reply::raw(vec![

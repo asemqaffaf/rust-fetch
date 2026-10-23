@@ -111,6 +111,17 @@ before(async () => {
       case '/bytes':
         res.writeHead(200, { 'content-type': 'application/octet-stream' });
         return res.end(Buffer.from([1, 2, 3]));
+      case '/big': {
+        // 64 kB, declared or chunked
+        const big = Buffer.alloc(64 * 1024, 7);
+        if (url.searchParams.has('chunked')) {
+          res.writeHead(200, { 'content-type': 'application/octet-stream' });
+          res.write(big.subarray(0, 1000));
+          return res.end(big.subarray(1000));
+        }
+        res.writeHead(url.searchParams.has('error') ? 500 : 200, { 'content-type': 'application/octet-stream', 'content-length': big.length });
+        return res.end(big);
+      }
       case '/moved':
         res.writeHead(302, { location: '/echo', 'content-type': 'text/plain' });
         return res.end('see /echo');
@@ -240,6 +251,31 @@ describe('browser fetch() options', () => {
     });
     assert.equal(FakeXMLHttpRequest.instances.length, 2);
     assert.deepEqual(requests.map((r) => [r.credentials, r.cache]), [['omit', 'default'], ['same-origin', 'no-store']]);
+  });
+});
+
+describe('maxResponseBytes through fetch()', () => {
+  const check = (error) => {
+    assert.equal(error.kind, 'NetworkError', error.message);
+    assert.equal(error.maxResponseBytes, 1000);
+  };
+
+  it('rejects declared, chunked, error and streamed bodies over the limit', async () => {
+    const c = new WasmClient({ maxResponseBytes: 1000 });
+    for (const query of ['', '?chunked', '?error']) check(await rejection(c.get(server.url(`/big${query}`))));
+    for (const query of ['', '?chunked']) {
+      const res = await c.get(server.url(`/big${query}`), { responseType: 'stream' });
+      check(await rejection(new Response(res.body).arrayBuffer()));
+    }
+    assert.equal((await c.get(server.url('/big?chunked'), { maxResponseBytes: null })).body.length, 64 * 1024);
+  });
+
+  it('uses fetch() instead of XMLHttpRequest, which cannot stop at a limit', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest;
+    const uploads = [];
+    const error = await rejection(new WasmClient({ maxResponseBytes: 1000 }).post(server.url('/big?chunked'), { body: 'abc', onUploadProgress: (p) => uploads.push(p) }));
+    check(error);
+    assert.equal(FakeXMLHttpRequest.instances.length, 0);
   });
 });
 

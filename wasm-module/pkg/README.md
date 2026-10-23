@@ -832,7 +832,27 @@ await api.get('https://partner.example/data', { allowAbsoluteUrls: true }); // p
 
 `allowAbsoluteUrls` applies to requests, `client.events()` and `client.websocket()`, and can be set per request. In Rust, it's `ClientBuilder::allow_absolute_urls(false)`.
 
-Not covered yet, and planned for 2.5.0: limits on decompressed and total response size ([#76](https://github.com/asemqaffaf/rust-fetch/issues/76), [#77](https://github.com/asemqaffaf/rust-fetch/issues/77)), and SSRF protection for servers that fetch user-supplied URLs ([#78](https://github.com/asemqaffaf/rust-fetch/issues/78)).
+### Response size limits and decompression bombs
+
+A server, or anyone who controls a URL you fetch, can send an endless body, or a few kilobytes of gzip that decompress to gigabytes, and exhaust your process's memory. `fetch()` has no way to limit either. Set `maxResponseBytes`:
+
+```js
+const client = new WasmClient({ maxResponseBytes: 10 * 1024 * 1024 });        // 10 MB, for every request
+await client.get('/export', { maxResponseBytes: 500 * 1024 * 1024 });         // per request
+await client.get('/trusted', { maxResponseBytes: null });                     // no limit for this one
+// → NetworkError "Response body larger than maxResponseBytes (10485760 bytes)", error.maxResponseBytes === 10485760
+```
+
+The limit is on the decompressed body, and it's enforced on every transport (node:http, native, browser `fetch()`), without reading more than needed:
+
+- A `Content-Length` over the limit fails before the body is read. For a compressed body, the limit applies to its decompressed size.
+- Without a `Content-Length`, the body is counted as it arrives, and reading stops at the limit.
+- Decompression is bounded too: zlib, brotli and zstd stop one byte past the limit. A 64 MB gzip bomb with a 1 MB limit fails without expanding in memory (tested for gzip, deflate, brotli and zstd).
+- Error responses and streamed bodies (`responseType: 'stream' | 'ndjson'`) are limited the same way; a stream errors once it passes the limit. In browsers, a request with `onUploadProgress` and a limit uses `fetch()` instead of `XMLHttpRequest`, which can't stop at a limit.
+
+The default is no limit, as before. For servers that fetch URLs they don't control, set one.
+
+Planned for 2.5.0: SSRF protection for servers that fetch user-supplied URLs ([#78](https://github.com/asemqaffaf/rust-fetch/issues/78)).
 
 ## Using it from Rust
 
