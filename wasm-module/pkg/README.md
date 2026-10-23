@@ -68,7 +68,7 @@ try {
 ```
 
 > **Release status**
-> - **On npm (2.4.0):** everything in this README, including [redirect control](#redirects), [browser `fetch()` options](#browser-request-options), [proxies in Node.js](#proxies), [Server-Sent Events](#server-sent-events), newline-delimited JSON, [upload progress](#upload-progress) and [WebSockets](#websockets), except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **On npm (2.4.1):** everything in this README, including [redirect control](#redirects), [browser `fetch()` options](#browser-request-options), [proxies in Node.js](#proxies), [Server-Sent Events](#server-sent-events), newline-delimited JSON, [upload progress](#upload-progress) and [WebSockets](#websockets), except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains below. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Contents
