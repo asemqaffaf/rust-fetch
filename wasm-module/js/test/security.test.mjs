@@ -5,6 +5,7 @@
 // benchmarks/security-compare.mjs runs the same probes against fetch() and axios.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import zlib from 'node:zlib';
 import { WasmClient } from '../../pkg/node.js';
 import { json, rejection, startServer } from './helpers.mjs';
@@ -107,6 +108,12 @@ describe('redirects to other schemes and redirect loops', () => {
 });
 
 describe('decompression bombs (CWE-409)', () => {
+  it('a body exactly at maxResponseBytes is accepted; one byte more is not', async () => {
+    const size = Buffer.byteLength(JSON.stringify({ path: '/exact' }));
+    assert.equal((await new WasmClient({ maxResponseBytes: size }).get(api.url('/exact'))).body.path, '/exact');
+    assert.equal((await rejection(new WasmClient({ maxResponseBytes: size - 1 }).get(api.url('/exact')))).maxResponseBytes, size - 1);
+  });
+
   it('with maxResponseBytes, a 256 MB gzip bomb fails without expanding in memory', async () => {
     global.gc?.();
     const before = process.memoryUsage().rss;
@@ -118,6 +125,39 @@ describe('decompression bombs (CWE-409)', () => {
 
 describe('server-side request forgery (CWE-918)', () => {
   const guarded = new WasmClient({ allowPrivateNetwork: false });
+
+  // The next two checks come from an independent evaluation of 2.5.0 (aakjp/stress-test)
+  it('rechecks every redirect hop: a public name through a proxy, redirected to a private address', async () => {
+    // Through a proxy, names aren't checked (the proxy resolves them), so the first hop goes out;
+    // the proxy answers with a redirect to an IP-literal private address, which must be blocked
+    let proxied = 0;
+    const proxy = http.createServer((req, res) => {
+      proxied++;
+      res.writeHead(302, { location: api.url('/internal') });
+      res.end();
+    });
+    await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    try {
+      const before = api.requests.length;
+      const client = new WasmClient({ allowPrivateNetwork: false, proxy: `http://127.0.0.1:${proxy.address().port}` });
+      const error = await rejection(client.get('http://public-fixture.invalid/redirect'));
+      assert.match(error.message, /Blocked: 127\.0\.0\.1/);
+      assert.equal(proxied, 1, 'the first hop reached the proxy');
+      assert.equal(api.requests.length, before, 'the redirect target was never contacted');
+    } finally {
+      proxy.close();
+    }
+  });
+
+  it('never reuses a connection an unchecked request made to a private address', async () => {
+    const url = api.url('/pooled').replace('127.0.0.1', 'localhost');
+    const client = new WasmClient({ allowPrivateNetwork: false });
+    assert.equal((await client.get(url, { allowPrivateNetwork: true })).status, 200);
+    const before = api.requests.length;
+    assert.match((await rejection(client.get(url))).message, /Blocked: /);
+    assert.equal(api.requests.length, before);
+  });
+
   for (const url of ['http://127.0.0.1:9/', 'http://localhost:9/', 'http://169.254.169.254/latest/meta-data/', 'http://[::1]:9/', 'http://[::ffff:169.254.169.254]/', 'http://10.0.0.1/', 'http://[fd00::1]/']) {
     it(`with allowPrivateNetwork: false, blocks ${url}`, async () => {
       const error = await rejection(guarded.get(url));
