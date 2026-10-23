@@ -13,6 +13,7 @@
 // Where the native addon (rust-fetch-native.<platform>-<arch>.node) loads,
 // requests go through it instead: the same rules, implemented in Rust on
 // Tokio threads, so the JS thread only builds requests and decodes bodies.
+import dns from 'node:dns';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -181,10 +182,10 @@ function proxyAgent(proxy, tunnel) {
 }
 
 /** `transport.request` arguments for `url`, through `proxy` when there is one */
-function requestOptions(url, method, headers, proxy) {
+function requestOptions(url, method, headers, proxy, publicOnly) {
   if (!proxy) {
     const transport = url.protocol === 'https:' ? https : http;
-    return [transport, url, { method, headers, agent: agentFor(transport) }];
+    return [transport, url, { method, headers, agent: publicOnly ? publicPools.get(transport) : agentFor(transport) }];
   }
   if (url.protocol === 'https:') return [https, url, { method, headers, agent: proxyAgent(proxy, true) }];
   // Options override the proxy URL's fields; its credentials only go in Proxy-Authorization
@@ -197,6 +198,82 @@ function requestOptions(url, method, headers, proxy) {
   };
   return [proxy.protocol === 'https:' ? https : http, proxy, options];
 }
+
+// --- Private networks -----------------------------------------------------------
+//
+// With `allowPrivateNetwork: false`, requests may only reach public addresses:
+// every address a host resolves to is checked when connecting (so DNS
+// rebinding can't slip past), and IP-literal hosts before the request.
+
+const PRIVATE_NETWORKS = new net.BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8], // "this" network
+  ['10.0.0.0', 8], // private
+  ['100.64.0.0', 10], // carrier-grade NAT
+  ['127.0.0.0', 8], // loopback
+  ['169.254.0.0', 16], // link-local, including cloud metadata (169.254.169.254)
+  ['172.16.0.0', 12], // private
+  ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.0.2.0', 24], // documentation
+  ['192.168.0.0', 16], // private
+  ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // documentation
+  ['203.0.113.0', 24], // documentation
+  ['224.0.0.0', 4], // multicast
+  ['240.0.0.0', 4], // reserved, and broadcast
+]) {
+  PRIVATE_NETWORKS.addSubnet(address, prefix, 'ipv4');
+}
+for (const [address, prefix] of [
+  ['::', 128], // unspecified
+  ['::1', 128], // loopback
+  ['100::', 64], // discard
+  ['2001:db8::', 32], // documentation
+  ['fc00::', 7], // unique local
+  ['fe80::', 10], // link-local
+  ['ff00::', 8], // multicast
+]) {
+  PRIVATE_NETWORKS.addSubnet(address, prefix, 'ipv6');
+}
+
+/** Whether an IP address is private or reserved; IPv4-mapped and NAT64 (64:ff9b::/96) addresses by their IPv4 address */
+function isPrivateAddress(address) {
+  const family = net.isIP(address);
+  if (family === 4) return PRIVATE_NETWORKS.check(address, 'ipv4');
+  if (family !== 6) return false;
+  const nat64 = /^64:ff9b::(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/i.exec(address);
+  if (nat64) {
+    const embedded = nat64[1] ?? [nat64[2], nat64[3]].flatMap((group) => [parseInt(group, 16) >> 8, parseInt(group, 16) & 255]).join('.');
+    return PRIVATE_NETWORKS.check(embedded, 'ipv4');
+  }
+  // BlockList matches IPv4-mapped IPv6 (::ffff:a.b.c.d) against the IPv4 ranges
+  return PRIVATE_NETWORKS.check(address, 'ipv6');
+}
+
+function blockedAddress(host, address) {
+  return coded(
+    new Error(`Blocked: ${host} is or resolves to ${address}, a private or reserved address (allowPrivateNetwork: false)`),
+    'RUST_FETCH_BLOCKED',
+  );
+}
+
+/** `dns.lookup` that fails when any address is private or reserved */
+function publicLookup(hostname, options, callback) {
+  dns.lookup(hostname, options, (error, address, family) => {
+    if (error) return callback(error);
+    const addresses = Array.isArray(address) ? address : [{ address }];
+    const blocked = addresses.find((entry) => isPrivateAddress(entry.address));
+    if (blocked) return callback(blockedAddress(hostname, blocked.address));
+    callback(null, address, family);
+  });
+}
+
+// Connections made under the check are pooled apart, so a connection another
+// client made to a private address is never reused for a checked request
+const publicPools = new Map([
+  [http, new http.Agent({ ...POOL_OPTIONS, lookup: publicLookup })],
+  [https, new https.Agent({ ...POOL_OPTIONS, lookup: publicLookup })],
+]);
 
 // --- Request queue --------------------------------------------------------------
 //
@@ -450,7 +527,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   if (state.cancelled) return reject(new Error('The request was cancelled'));
   let args;
   try {
-    args = requestOptions(url, method, headers, proxyFor(url, state.proxy));
+    // IP-literal hosts don't go through DNS, so they're checked here
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (state.publicOnly && isPrivateAddress(host)) throw blockedAddress(url.hostname, host);
+    args = requestOptions(url, method, headers, proxyFor(url, state.proxy), state.publicOnly);
   } catch (error) {
     return reject(error);
   }
@@ -556,7 +636,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 /**
  * One attempt, called by the Rust core with `{ method, url, headers, body?,
  * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
- * maxRedirects?, proxy?, stream?, maxResponseBytes? }` (`redirect` is only ever `'manual'`;
+ * maxRedirects?, proxy?, stream?, maxResponseBytes?, blockPrivateNetwork? }` (`redirect` is only ever `'manual'`;
  * `maxRedirects: 0` fails on any redirect; `proxy` is `'env'` or a proxy URL).
  * With `stream`, a successful response resolves as soon as its headers
  * arrive, with `body` a `ReadableStream` of the decompressed bytes. Resolves to the finished `{ status, statusText,
@@ -571,11 +651,12 @@ function nodeTransport(request) {
   // The native transport makes its own connections, so only where the
   // node:http transport would use its own pool too, not an installed agent.
   // Progress callbacks run on this thread, so those requests stay here.
-  // Proxied requests stay on node:http as well.
+  // Proxied requests, and those checked for private addresses, stay on node:http as well.
   const { onUploadProgress, onDownloadProgress } = request;
   const proxy = request.proxy ?? (process.env.NODE_USE_ENV_PROXY === '1' ? 'env' : undefined);
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
-  if (native && transport && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && agentFor(transport) === pools.get(transport)) {
+  const publicOnly = request.blockPrivateNetwork === true;
+  if (native && transport && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && !publicOnly && agentFor(transport) === pools.get(transport)) {
     return nativeTransport(request);
   }
 
@@ -590,6 +671,7 @@ function nodeTransport(request) {
     proxy,
     stream: request.stream === true,
     maxResponseBytes: request.maxResponseBytes,
+    publicOnly,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {

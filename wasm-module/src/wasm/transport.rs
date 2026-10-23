@@ -67,6 +67,19 @@ pub(crate) struct ProgressCallbacks {
     pub(crate) download: Option<js_sys::Function>,
 }
 
+/// Per-request settings for the transports, beyond the `RequestConfig`
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TransportOptions<'a> {
+    /// Browser `fetch()` options, validated
+    pub(crate) fetch_options: Option<&'a js_sys::Object>,
+    /// Node.js: `'env'` or a proxy URL
+    pub(crate) proxy: Option<&'a str>,
+    /// `maxResponseBytes`
+    pub(crate) limit: Option<u64>,
+    /// Node.js: `allowPrivateNetwork: false` blocks private and reserved addresses
+    pub(crate) block_private_network: bool,
+}
+
 pub(crate) enum PreparedRequest {
     Fetch {
         url: String,
@@ -107,12 +120,15 @@ impl PreparedRequest {
     pub(crate) fn new(
         url: &str,
         config: &RequestConfig,
-        fetch_options: Option<&js_sys::Object>,
-        proxy: Option<&str>,
-        limit: Option<u64>,
+        options: &TransportOptions,
         body_type: BodyType,
         progress: ProgressCallbacks,
     ) -> Result<Self> {
+        let TransportOptions {
+            fetch_options,
+            limit,
+            ..
+        } = *options;
         let headers = validated_headers(config)?;
         let body = match &config.body {
             Some(body) => Some((body.content_type(), body.to_bytes()?)),
@@ -138,8 +154,7 @@ impl PreparedRequest {
                 default_content_type,
                 body.as_ref(),
                 config,
-                proxy,
-                limit,
+                options,
             )?;
             let timeout_ms = config
                 .timeout
@@ -296,10 +311,13 @@ impl StreamingRequest {
     pub(crate) fn new(
         url: &str,
         config: &RequestConfig,
-        fetch_options: Option<&js_sys::Object>,
-        proxy: Option<&str>,
-        limit: Option<u64>,
+        options: &TransportOptions,
     ) -> Result<Self> {
+        let TransportOptions {
+            fetch_options,
+            limit,
+            ..
+        } = *options;
         let headers = validated_headers(config)?;
         let body = match &config.body {
             Some(body) => Some((body.content_type(), body.to_bytes()?)),
@@ -323,8 +341,7 @@ impl StreamingRequest {
                 default_content_type,
                 body.as_ref(),
                 config,
-                proxy,
-                limit,
+                options,
             )?;
             set(&request, "stream", &JsValue::TRUE)?;
             return Ok(Self::Node {
@@ -482,8 +499,7 @@ fn node_request(
     default_content_type: Option<&str>,
     body: Option<&js_sys::Uint8Array>,
     config: &RequestConfig,
-    proxy: Option<&str>,
-    limit: Option<u64>,
+    options: &TransportOptions,
 ) -> Result<js_sys::Object> {
     let js_headers = js_sys::Object::new();
     for &(name, value) in headers {
@@ -515,10 +531,13 @@ fn node_request(
     if config.max_redirects != DEFAULT_MAX_REDIRECTS {
         set(&request, "maxRedirects", &config.max_redirects.into())?;
     }
-    if let Some(proxy) = proxy {
+    if let Some(proxy) = options.proxy {
         set(&request, "proxy", &proxy.into())?;
     }
-    if let Some(limit) = limit {
+    if options.block_private_network {
+        set(&request, "blockPrivateNetwork", &JsValue::TRUE)?;
+    }
+    if let Some(limit) = options.limit {
         #[allow(clippy::cast_precision_loss)]
         set(&request, "maxResponseBytes", &(limit as f64).into())?;
     }

@@ -852,7 +852,23 @@ The limit is on the decompressed body, and it's enforced on every transport (nod
 
 The default is no limit, as before. For servers that fetch URLs they don't control, set one.
 
-Planned for 2.5.0: SSRF protection for servers that fetch user-supplied URLs ([#78](https://github.com/asemqaffaf/rust-fetch/issues/78)).
+### Fetching user-supplied URLs (SSRF)
+
+A server that fetches URLs its users give it (webhooks, link previews, image proxies, importers) can be pointed at its own network: `http://169.254.169.254/` (cloud credentials), `http://localhost:6379/`, an admin panel on `10.0.0.5`. Checking the URL string isn't enough: a public-looking name can resolve to a private address, and a redirect can point anywhere. In Node.js, set `allowPrivateNetwork: false`:
+
+```js
+const fetcher = new WasmClient({ allowPrivateNetwork: false, maxResponseBytes: 5 * 1024 * 1024, timeoutMs: 10_000 });
+await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, a private or reserved address" for internal targets
+```
+
+- **Every address is checked when connecting:** the host's DNS answers (all of them), or the IP address itself. So DNS rebinding can't get past it, and each redirect is checked again.
+- **Blocked ranges:**
+  - IPv4: loopback, RFC 1918 private, link-local (including the 169.254.169.254 metadata endpoint), carrier-grade NAT, "this network", multicast, reserved and documentation ranges
+  - IPv6: loopback, unspecified, unique-local, link-local and multicast, plus IPv4-mapped (`::ffff:10.0.0.1`) and NAT64 (`64:ff9b::…`) forms of the IPv4 ranges
+- **Separate connection pool:** checked requests never reuse a connection another client made to a private address.
+- **Proxies:** through a proxy, only IP-address targets are checked, since the proxy resolves names. Apply the same rule in the proxy's own configuration.
+- **Not covered:** `client.websocket()` connections (Node's built-in WebSocket). In browsers this option does nothing; they enforce their own private-network rules.
+- **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
 
 ## Using it from Rust
 
