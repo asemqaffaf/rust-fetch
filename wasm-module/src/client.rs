@@ -41,6 +41,9 @@ pub(crate) struct ClientConfig {
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
+    /// Node.js: `'env'` or a proxy URL, already validated
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) proxy: Option<String>,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -609,6 +612,8 @@ pub struct ClientBuilder {
     max_redirects: u32,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
+    #[cfg(target_arch = "wasm32")]
+    proxy: Option<String>,
 }
 
 impl ClientBuilder {
@@ -623,7 +628,16 @@ impl ClientBuilder {
             max_redirects: DEFAULT_MAX_REDIRECTS,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
+            #[cfg(target_arch = "wasm32")]
+            proxy: None,
         }
+    }
+
+    /// Node.js: send requests through a proxy (`'env'` or a URL), validated by the bindings
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn proxy(mut self, proxy: Option<String>) -> Self {
+        self.proxy = proxy;
+        self
     }
 
     /// Browser `fetch()` options for every request, validated by the bindings
@@ -720,6 +734,8 @@ impl ClientBuilder {
                 max_redirects: self.max_redirects,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
+                #[cfg(target_arch = "wasm32")]
+                proxy: self.proxy,
             }),
             #[cfg(not(target_arch = "wasm32"))]
             redirect_clients: Arc::default(),
@@ -765,6 +781,7 @@ impl RequestBuilder {
             url.as_str(),
             &self.config,
             self.fetch_options.as_ref(),
+            self.client.config.proxy.as_deref(),
             body_type,
             progress,
         )?;

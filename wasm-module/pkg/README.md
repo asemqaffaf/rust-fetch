@@ -317,8 +317,23 @@ const client = new WasmClient({
   retries: 3,                             // or a RetryOptions object, see Retries
   redirect: 'follow',                     // or 'manual' / 'error', see Redirects. Default: 'follow'
   maxRedirects: 20,                       // Node.js; browsers apply their own limit. Default: 20
+  proxy: 'env',                           // Node.js: HTTPS_PROXY / HTTP_PROXY / NO_PROXY, or a proxy URL; see Proxies
 });
 ```
+
+#### Proxies
+
+In Node.js, requests can go through an HTTP or HTTPS proxy: HTTPS requests through a `CONNECT` tunnel, so the proxy never sees their contents, and plain HTTP requests as absolute-URL requests.
+
+```js
+new WasmClient({ proxy: 'env' });                              // HTTPS_PROXY, HTTP_PROXY and NO_PROXY (or lower case)
+new WasmClient({ proxy: 'http://user:pass@proxy.internal:3128' }); // every request; credentials as Proxy-Authorization
+```
+
+- `'env'` reads the variables on each request: `HTTPS_PROXY` for `https:` URLs, `HTTP_PROXY` for `http:` ones, and skips hosts in `NO_PROXY`. A `NO_PROXY` entry is `*`, a host name (which also covers its subdomains; a leading `.` or `*.` is optional) or an IP address (matched exactly), each with an optional `:port`.
+- `NODE_USE_ENV_PROXY=1`, which Node.js uses for its own `fetch()`, turns on `'env'` for clients without a `proxy` option.
+- Proxied requests use the `node:http` transport, with a pool of connections per proxy. Streamed responses (`'stream'`, `'ndjson'`) and `events()` use Node's `fetch()`, which applies only `NODE_USE_ENV_PROXY`, where the Node.js version supports it.
+- Browsers use the system's proxy settings and ignore this option.
 
 Invalid options throw an `InvalidInputError` right away, from the constructor.
 
@@ -804,7 +819,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 
 - **Bundle size:** the WebAssembly module adds about 190 KB (brotli) to a browser bundle.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
-- **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
+- **Proxies:** in Node.js, use the [`proxy` option](#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. Streamed responses and `events()` in Node.js don't use the `proxy` option yet. In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. It's about 6% slower than `fetch()` for sequential requests, isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
 - **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent`, so proxy agents installed there don't apply.
 - **Upload progress** in browsers needs `XMLHttpRequest`, which makes cross-origin requests preflighted (see [Upload progress](#upload-progress)).

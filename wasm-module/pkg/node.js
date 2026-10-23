@@ -17,6 +17,8 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
+import net from 'node:net';
+import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
 
@@ -71,6 +73,128 @@ function agentFor(transport) {
     global.maxSockets === Infinity &&
     Object.entries(global.options).every(([key, value]) => value == null || NODE_AGENT_OPTIONS[key] === value);
   return isNodeDefault ? pools.get(transport) : global;
+}
+
+// --- Proxies ------------------------------------------------------------------
+//
+// With the `proxy` client option ('env' or a URL), or NODE_USE_ENV_PROXY=1
+// (as 'env'), requests go through an HTTP(S) proxy: plain HTTP as
+// absolute-form requests to the proxy, HTTPS through a CONNECT tunnel.
+
+const defaultPort = (url) => url.port || (url.protocol === 'https:' ? '443' : '80');
+
+/**
+ * Whether NO_PROXY (`*`, hosts and IP addresses, with an optional `:port`)
+ * excludes `url`. A name also covers its subdomains; addresses match exactly.
+ */
+function bypassesProxy(url, noProxy) {
+  if (!noProxy) return false;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const port = defaultPort(url);
+  for (const raw of noProxy.toLowerCase().split(/[\s,]+/)) {
+    if (raw === '*') return true;
+    // host, host:port, [v6]:port or a bare IPv6 address
+    const match = /^\[([^\]]+)\](?::(\d+))?$/.exec(raw) ?? /^([^:]+)(?::(\d+))?$/.exec(raw) ?? [raw, raw];
+    const name = match[1].replace(/^\*?\./, '');
+    const matches = host === name || (!net.isIP(host) && host.endsWith(`.${name}`));
+    if (name && matches && (!match[2] || match[2] === port)) return true;
+  }
+  return false;
+}
+
+const proxyUrls = new Map();
+
+/** A parsed proxy URL, cached; `source` names the setting for errors */
+function parseProxy(value, source) {
+  let url = proxyUrls.get(value);
+  if (!url) {
+    try {
+      url = new URL(value.includes('://') ? value : `http://${value}`);
+    } catch {
+      throw new TypeError(`Invalid proxy URL in ${source}: ${value}`);
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new TypeError(`Unsupported proxy protocol in ${source}: ${url.protocol}`);
+    proxyUrls.set(value, url);
+  }
+  return url;
+}
+
+/** The proxy for a request to `url`, or undefined to connect directly */
+function proxyFor(url, setting) {
+  if (!setting) return undefined;
+  if (setting !== 'env') return parseProxy(setting, 'the proxy option');
+  const env = process.env;
+  const [name, value] = url.protocol === 'https:' ? ['HTTPS_PROXY', env.HTTPS_PROXY ?? env.https_proxy] : ['HTTP_PROXY', env.HTTP_PROXY ?? env.http_proxy];
+  if (!value || bypassesProxy(url, env.NO_PROXY ?? env.no_proxy)) return undefined;
+  return parseProxy(value, name);
+}
+
+/** `Proxy-Authorization` from the proxy URL's user info, if any */
+function proxyAuthorization(proxy) {
+  if (!proxy.username && !proxy.password) return {};
+  const credentials = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
+  return { 'proxy-authorization': `Basic ${Buffer.from(credentials).toString('base64')}` };
+}
+
+/** HTTPS through a proxy: each pooled connection is a TLS session inside a CONNECT tunnel */
+class TunnelAgent extends https.Agent {
+  constructor(proxy) {
+    super(POOL_OPTIONS);
+    this.proxy = proxy;
+  }
+
+  createConnection(options, callback) {
+    const { proxy } = this;
+    const target = `${options.host.includes(':') ? `[${options.host}]` : options.host}:${options.port}`;
+    const connect = (proxy.protocol === 'https:' ? https : http).request({
+      hostname: proxy.hostname,
+      port: defaultPort(proxy),
+      method: 'CONNECT',
+      path: target,
+      headers: { host: target, ...proxyAuthorization(proxy) },
+      agent: false,
+    });
+    connect.once('connect', (response, socket) => {
+      if (response.statusCode !== 200) {
+        socket.destroy();
+        return callback(new TypeError(`The proxy refused to connect to ${target}: ${response.statusCode} ${response.statusMessage}`));
+      }
+      callback(null, tls.connect({ ...options, socket }));
+    });
+    connect.once('error', callback);
+    connect.end();
+  }
+}
+
+// One pool per proxy: HTTP agents for plain requests, tunnels for HTTPS
+const proxyAgents = new Map();
+
+function proxyAgent(proxy, tunnel) {
+  const key = `${tunnel ? 'tunnel' : 'plain'} ${proxy.href}`;
+  let agent = proxyAgents.get(key);
+  if (!agent) {
+    agent = tunnel ? new TunnelAgent(proxy) : new (proxy.protocol === 'https:' ? https : http).Agent(POOL_OPTIONS);
+    proxyAgents.set(key, agent);
+  }
+  return agent;
+}
+
+/** `transport.request` arguments for `url`, through `proxy` when there is one */
+function requestOptions(url, method, headers, proxy) {
+  if (!proxy) {
+    const transport = url.protocol === 'https:' ? https : http;
+    return [transport, url, { method, headers, agent: agentFor(transport) }];
+  }
+  if (url.protocol === 'https:') return [https, url, { method, headers, agent: proxyAgent(proxy, true) }];
+  // Options override the proxy URL's fields; its credentials only go in Proxy-Authorization
+  const options = {
+    path: url.href,
+    auth: undefined,
+    method,
+    headers: { ...headers, host: url.host, ...proxyAuthorization(proxy) },
+    agent: proxyAgent(proxy, false),
+  };
+  return [proxy.protocol === 'https:' ? https : http, proxy, options];
 }
 
 const MAX_REDIRECTS = 20;
@@ -211,8 +335,14 @@ function withoutHeaders(headers, names) {
 
 function send(state, method, url, headers, body, redirects, resolve, reject) {
   if (state.cancelled) return;
-  const transport = url.protocol === 'https:' ? https : http;
-  const request = transport.request(url, { method, headers, agent: agentFor(transport) }, (response) => {
+  let args;
+  try {
+    args = requestOptions(url, method, headers, proxyFor(url, state.proxy));
+  } catch (error) {
+    return reject(error);
+  }
+  const [transport, target, options] = args;
+  const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
     const location = response.headers.location;
 
@@ -292,8 +422,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 /**
  * One attempt, called by the Rust core with `{ method, url, headers, body?,
  * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
- * maxRedirects? }` (`redirect` is only ever `'manual'`; `maxRedirects: 0`
- * fails on any redirect). Resolves to the finished `{ status, statusText,
+ * maxRedirects?, proxy? }` (`redirect` is only ever `'manual'`; `maxRedirects: 0`
+ * fails on any redirect; `proxy` is `'env'` or a proxy URL). Resolves to the finished `{ status, statusText,
  * ok, url, headers, body }` (the core fills in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
  * or any other error for network failures.
  *
@@ -305,9 +435,11 @@ function nodeTransport(request) {
   // The native transport makes its own connections, so only where the
   // node:http transport would use its own pool too, not an installed agent.
   // Progress callbacks run on this thread, so those requests stay here.
+  // Proxied requests stay on node:http as well.
   const { onUploadProgress, onDownloadProgress } = request;
+  const proxy = request.proxy ?? (process.env.NODE_USE_ENV_PROXY === '1' ? 'env' : undefined);
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
-  if (native && transport && !onUploadProgress && !onDownloadProgress && agentFor(transport) === pools.get(transport)) {
+  if (native && transport && !onUploadProgress && !onDownloadProgress && !proxy && agentFor(transport) === pools.get(transport)) {
     return nativeTransport(request);
   }
 
@@ -319,6 +451,7 @@ function nodeTransport(request) {
     onDownloadProgress,
     manual: request.redirect === 'manual',
     maxRedirects: request.maxRedirects ?? MAX_REDIRECTS,
+    proxy,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {

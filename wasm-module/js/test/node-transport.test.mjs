@@ -8,6 +8,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -82,6 +83,71 @@ after(async () => {
 });
 
 const client = () => new WasmClient();
+
+/**
+ * A forward proxy recording what it sees: absolute-form requests for plain
+ * HTTP, CONNECT tunnels for HTTPS. With `refuse`, it answers CONNECT with 403.
+ */
+function startProxy({ refuse = false } = {}) {
+  const seen = [];
+  const sockets = new Set();
+  const proxy = http.createServer((req, res) => {
+    seen.push({ method: req.method, url: req.url, auth: req.headers['proxy-authorization'] ?? null });
+    const { 'proxy-authorization': _, ...headers } = req.headers;
+    const upstream = http.request(req.url, { method: req.method, headers, agent: false }, (response) => {
+      res.writeHead(response.statusCode, response.headers);
+      response.pipe(res);
+    });
+    req.pipe(upstream);
+  });
+  proxy.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  proxy.on('connect', (req, socket, head) => {
+    seen.push({ method: 'CONNECT', url: req.url, auth: req.headers['proxy-authorization'] ?? null });
+    if (refuse) return socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+    const { hostname, port } = new URL(`http://${req.url}`);
+    const upstream = net.connect(Number(port), hostname.replace(/^\[|\]$/g, ''), () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
+    sockets.add(upstream);
+  });
+  return new Promise((resolve) =>
+    proxy.listen(0, '127.0.0.1', () =>
+      resolve({
+        seen,
+        url: `http://127.0.0.1:${proxy.address().port}`,
+        close: () => {
+          for (const socket of sockets) socket.destroy();
+          return new Promise((done) => proxy.close(done));
+        },
+      }),
+    ),
+  );
+}
+
+/** Run `fn` with environment variables set (or unset, for `undefined`), restoring them afterwards */
+async function withEnv(vars, fn) {
+  const saved = Object.fromEntries(Object.keys(vars).map((name) => [name, process.env[name]]));
+  const apply = (values) => {
+    for (const [name, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  apply(vars);
+  try {
+    return await fn();
+  } finally {
+    apply(saved);
+  }
+}
 
 const addon = new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url);
 const nativeExpected = process.env.RUST_FETCH_NATIVE !== '0' && existsSync(addon);
@@ -242,9 +308,93 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.deepEqual(result, { error: 'NetworkError' });
     });
 
+    it('tunnels HTTPS through a proxy with CONNECT, reusing the tunnel', async () => {
+      const proxy = await startProxy();
+      try {
+        // Trust the test certificate in this process (read by tls.connect)
+        await withEnv({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }, async () => {
+          const c = new WasmClient({ proxy: proxy.url.replace('http://', 'http://user:secret@') });
+          const res = await c.get(url());
+          assert.equal(res.status, 200);
+          await c.get(url());
+        });
+        const target = `127.0.0.1:${secure.address().port}`;
+        assert.deepEqual(proxy.seen, [{ method: 'CONNECT', url: target, auth: `Basic ${Buffer.from('user:secret').toString('base64')}` }]);
+      } finally {
+        await proxy.close();
+      }
+    });
+
+    it('fails when the proxy refuses the tunnel', async () => {
+      const proxy = await startProxy({ refuse: true });
+      try {
+        const error = await rejection(new WasmClient({ proxy: proxy.url }).get(url()));
+        assert.equal(error.kind, 'NetworkError');
+        assert.match(error.message, /The proxy refused to connect to 127\.0\.0\.1:\d+: 403 Forbidden/);
+      } finally {
+        await proxy.close();
+      }
+    });
+
     it('skips verification with NODE_TLS_REJECT_UNAUTHORIZED=0', async () => {
       const headers = await getInProcess({ NODE_TLS_REJECT_UNAUTHORIZED: '0' });
       assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
+    });
+  });
+
+  describe('proxies', () => {
+    let proxy;
+    before(async () => {
+      proxy = await startProxy();
+    });
+    after(() => proxy.close());
+    const seen = () => proxy.seen.splice(0).map(({ method, url, auth }) => `${method} ${url}${auth ? ` ${auth}` : ''}`);
+
+    it('sends plain HTTP through the proxy option as absolute-form requests', async () => {
+      const res = await new WasmClient({ proxy: proxy.url }).post(server.url('/echo?x=1'), { body: 'hi' });
+      assert.equal(res.body.body, 'hi');
+      assert.equal(res.body.headers.host, new URL(server.url('/')).host);
+      assert.equal(res.body.headers['proxy-authorization'], undefined);
+      assert.deepEqual(seen(), [`POST ${server.url('/echo?x=1')}`]);
+    });
+
+    it('sends credentials from the proxy URL, percent-decoded', async () => {
+      await new WasmClient({ proxy: proxy.url.replace('http://', 'http://us%3Aer:p%40ss@') }).get(server.url('/echo'));
+      assert.deepEqual(seen(), [`GET ${server.url('/echo')} Basic ${Buffer.from('us:er:p@ss').toString('base64')}`]);
+    });
+
+    it("reads HTTP_PROXY and NO_PROXY with proxy: 'env' or NODE_USE_ENV_PROXY=1", async () => {
+      const { host, port } = new URL(server.url('/'));
+      const env = { HTTP_PROXY: proxy.url, NO_PROXY: undefined };
+      const via = async (vars, options = { proxy: 'env' }, target = server.url('/echo')) => {
+        await withEnv({ ...env, ...vars }, () => new WasmClient(options).get(target));
+        return seen().length === 1;
+      };
+      assert.equal(await via({}), true);
+      assert.equal(await via({}, {}), false, 'off by default');
+      assert.equal(await via({ NODE_USE_ENV_PROXY: '1' }, {}), true);
+      assert.equal(await via({ HTTP_PROXY: undefined, http_proxy: proxy.url.slice('http://'.length) }), true, 'lower case, without a scheme');
+      assert.equal(await via({ HTTPS_PROXY: proxy.url, HTTP_PROXY: undefined }), false, 'only HTTPS_PROXY');
+      for (const noProxy of ['*', '127.0.0.1', `127.0.0.1:${port}`, 'example.com, 127.0.0.1', '*.localhost', '.localhost', 'LOCALHOST']) {
+        const target = noProxy.toLowerCase().includes('localhost') ? `http://localhost:${port}/echo` : server.url('/echo');
+        assert.equal(await via({ NO_PROXY: noProxy }, undefined, target), false, noProxy);
+      }
+      // Addresses match exactly, never as suffixes
+      for (const noProxy of ['example.com', '127.0.0.1:1', '[::1]', '0.0.1', '.0.0.1']) {
+        assert.equal(await via({ no_proxy: noProxy }), true, noProxy);
+      }
+      assert.equal(host.startsWith('127.0.0.1'), true);
+    });
+
+    it('rejects invalid proxy settings', async () => {
+      for (const value of ['ftp://proxy', 'not a url', 42, 'http://']) {
+        assert.throws(() => new WasmClient({ proxy: value }), (error) => error.kind === 'InvalidInputError' && error.parameter === 'proxy', String(value));
+      }
+      for (const [value, message] of [['http://[bad', /Invalid proxy URL in HTTP_PROXY/], ['socks5://proxy:1080', /Unsupported proxy protocol in HTTP_PROXY: socks5:/]]) {
+        const error = await withEnv({ HTTP_PROXY: value }, () => rejection(new WasmClient({ proxy: 'env' }).get(server.url('/echo'))));
+        assert.equal(error.kind, 'NetworkError');
+        assert.match(error.message, message);
+      }
     });
   });
 

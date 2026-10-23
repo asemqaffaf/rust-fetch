@@ -93,7 +93,7 @@ pub(crate) enum PreparedRequest {
     Node {
         transport: js_sys::Function,
         /// `{ method, url, headers, body?, timeout?, bodyType, redirect?,
-        /// maxRedirects? }`, reused for every attempt
+        /// maxRedirects?, proxy? }`, reused for every attempt
         request: js_sys::Object,
         timeout_ms: u64,
         /// Whether redirect responses resolve (`redirect: 'manual'`)
@@ -106,6 +106,7 @@ impl PreparedRequest {
         url: &str,
         config: &RequestConfig,
         fetch_options: Option<&js_sys::Object>,
+        proxy: Option<&str>,
         body_type: BodyType,
         progress: ProgressCallbacks,
     ) -> Result<Self> {
@@ -170,6 +171,9 @@ impl PreparedRequest {
             }
             if config.max_redirects != DEFAULT_MAX_REDIRECTS {
                 set(&request, "maxRedirects", &config.max_redirects.into())?;
+            }
+            if let Some(proxy) = proxy {
+                set(&request, "proxy", &proxy.into())?;
             }
             return Ok(Self::Node {
                 transport,
