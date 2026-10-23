@@ -26,7 +26,8 @@ const client = new WasmClient({
 - `client.post_json(url, body, options?)`, `put_json`, `patch_json`: always JSON
 - TypeScript: `client.get<User>('/users/42')` resolves to `HttpResponse<User>` (the type isn't validated at runtime)
 - Bodies: string, `Uint8Array`/`ArrayBuffer`/`DataView`, `Blob`/`File`, `FormData` (multipart), `URLSearchParams`, or any value sent as JSON
-- Options: `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`
+- Options: `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
+- Redirects (client or per request): `redirect: 'follow'` (default, up to `maxRedirects`, default 20), `'manual'` (resolves with the 3xx and its `location` header, `ok: false`; in browsers an opaque response with `status: 0`), `'error'` (rejects with a `NetworkError`)
 
 Resolves (2xx only) to `{ status, statusText, ok, url, headers, body }`. With `responseType: 'auto'`, `body` is parsed JSON for `application/json` and `*+json`, a string for text types, a `Uint8Array` otherwise, `null` when empty.
 

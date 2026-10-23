@@ -4,7 +4,7 @@
 use futures_util::StreamExt;
 use rust_fetch::error::Error;
 use rust_fetch::types::{ResponseBody, RetryConfig};
-use rust_fetch::{Client, Method, Multipart, Progress};
+use rust_fetch::{Client, Method, Multipart, Progress, Redirect};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -609,6 +609,113 @@ async fn redirects_are_followed_and_final_url_reported() {
     assert_eq!(response.text(), Some("arrived"));
     assert_eq!(response.url, server.url("/new?x=1"));
     assert_eq!(server.requests().len(), 3);
+}
+
+fn redirecting_server() -> TestServer {
+    TestServer::start(|req, _| match req.target.as_str() {
+        "/old" => Reply::new(301, "moved").header("location", "/middle"),
+        "/middle" => Reply::new(302, "").header("location", "/new"),
+        "/loop" => Reply::new(302, "").header("location", "/loop"),
+        "/cached" => Reply::new(304, ""),
+        _ => Reply::new(200, "arrived").header("content-type", "text/plain"),
+    })
+}
+
+#[tokio::test]
+async fn manual_redirects_return_the_redirect_response() {
+    let server = redirecting_server();
+    let client = Client::builder()
+        .redirect(Redirect::Manual)
+        .build()
+        .unwrap();
+
+    let response = client.get(server.url("/old")).await.unwrap();
+    assert_eq!(response.status, 301);
+    assert_eq!(response.headers.get_first("location"), Some("/middle"));
+    assert_eq!(response.bytes(), Some(&b"moved"[..]));
+    assert!(response.is_redirect());
+
+    // Streaming returns it too, with the body unread
+    let streamed = client
+        .request(Method::Get, server.url("/old"))
+        .send_streaming()
+        .await
+        .unwrap();
+    assert_eq!(streamed.status, 301);
+    assert_eq!(streamed.bytes().await.unwrap(), b"moved");
+
+    // Other 3xx statuses are still errors
+    let error = client.get(server.url("/cached")).await.unwrap_err();
+    assert!(matches!(error, Error::Http { status: 304, .. }), "{error}");
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn redirect_error_rejects_any_redirect() {
+    let server = redirecting_server();
+    let client = Client::builder().redirect(Redirect::Error).build().unwrap();
+
+    let error = client.get(server.url("/old")).await.unwrap_err();
+    assert!(matches!(error, Error::Network { .. }), "{error}");
+    assert!(
+        error.to_string().contains("Redirect not allowed: 301 to"),
+        "{error}"
+    );
+    // A request may still follow them
+    let response = client
+        .request(Method::Get, server.url("/old"))
+        .redirect(Redirect::Follow)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.text(), Some("arrived"));
+}
+
+#[tokio::test]
+async fn max_redirects_limits_redirects_per_client_and_request() {
+    let server = redirecting_server();
+    let client = Client::builder().max_redirects(1).build().unwrap();
+
+    let error = client.get(server.url("/old")).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Too many redirects (more than 1)"),
+        "{error}"
+    );
+    assert!(client.get(server.url("/middle")).await.is_ok());
+
+    // Per request, in either order with `redirect`; the same settings reuse one client
+    for _ in 0..2 {
+        let response = client
+            .request(Method::Get, server.url("/old"))
+            .max_redirects(2)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.text(), Some("arrived"));
+    }
+    let response = client
+        .request(Method::Get, server.url("/old"))
+        .max_redirects(5)
+        .redirect(Redirect::Manual)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status, 301);
+
+    // The default limit is 20, like browsers
+    let error = Client::new()
+        .unwrap()
+        .get(server.url("/loop"))
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Too many redirects (more than 20)"),
+        "{error}"
+    );
 }
 
 #[tokio::test]

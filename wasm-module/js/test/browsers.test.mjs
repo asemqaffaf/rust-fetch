@@ -66,6 +66,9 @@ function handler(cors) {
         res.writeHead(200, { ...headers, 'content-type': 'application/json', 'content-length': Buffer.byteLength(json), 'x-trace': 'abc' });
         return res.end(json);
       }
+      case '/moved':
+        res.writeHead(302, { ...headers, location: '/echo', 'content-type': 'text/plain' });
+        return res.end('see /echo');
       case '/status': {
         const code = Number(url.searchParams.get('code'));
         res.writeHead(code, { ...headers, 'content-type': 'text/plain' });
@@ -245,6 +248,31 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result.errors.network.kind, 'NetworkError');
       assert.equal(result.errors.invalid.kind, 'InvalidInputError');
       assert.equal(result.errors.invalid.parameter, 'url');
+    });
+
+    it('follows, returns or rejects redirects', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const client = new WasmClient({ baseUrl: origin });
+        const followed = await client.get('/moved');
+        const manual = await client.get('/moved', { redirect: 'manual' });
+        const out = { followed: { url: followed.url, method: followed.body.method } };
+        out.manual = { status: manual.status, ok: manual.ok, headers: manual.headers, body: manual.body, url: manual.url };
+        for (const options of [{ redirect: 'error' }, { maxRedirects: 0 }]) {
+          try {
+            await client.get('/moved', options);
+          } catch (error) {
+            (out.errors ??= []).push({ kind: error.kind, message: error.message });
+          }
+        }
+        return out;
+      });
+      assert.deepEqual(result.followed, { url: `${origin}/echo`, method: 'GET' });
+      // Browsers hide the redirect: an opaque response with status 0 and no headers
+      assert.deepEqual(result.manual, { status: 0, ok: false, headers: {}, body: null, url: `${origin}/moved` });
+      assert.deepEqual(result.errors, [
+        { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },
+        { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },
+      ]);
     });
 
     it('enforces timeouts, retries with Retry-After, and cancels', async () => {

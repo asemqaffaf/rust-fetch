@@ -57,7 +57,7 @@ pub use wasm::WasmClient;
 // Re-export commonly used types
 pub use client::{Client, ClientBuilder, ProgressCallback, RequestBuilder, StreamingResponse};
 pub use error::{Error, Result};
-pub use types::{Headers, Method, Multipart, Progress, Response, ResponseBody};
+pub use types::{Headers, Method, Multipart, Progress, Redirect, Response, ResponseBody};
 
 // Re-export all public items from feature modules for backward compatibility
 pub use http::*;

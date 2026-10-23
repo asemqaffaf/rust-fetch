@@ -171,6 +171,12 @@ impl From<reqwest::Error> for Error {
                 message: "Failed to decode response".to_string(),
                 source: Some(Box::new(err)),
             }
+        } else if err.is_redirect() {
+            // A redirect that isn't allowed, with the reason from the policy
+            Error::Network {
+                message: error_chain(&err),
+                source: Some(Box::new(err)),
+            }
         } else if let Some(status) = err.status() {
             Error::Http {
                 status: status.as_u16(),

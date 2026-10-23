@@ -17,7 +17,7 @@ use crate::{
     client::{bytes_to_text, Client, RequestBuilder, StreamingResponse},
     error::{Error, Result},
     types::{
-        is_json_content_type, is_text_content_type, Headers, Method, Multipart, Response,
+        is_json_content_type, is_text_content_type, Headers, Method, Multipart, Redirect, Response,
         ResponseBody, ResponseFormat, RetryConfig,
     },
 };
@@ -67,6 +67,15 @@ export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | 
  */
 export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
 
+/**
+ * What to do when the server redirects (301, 302, 303, 307 or 308), like `fetch()`'s `redirect`:
+ * - `follow`: follow it, up to `maxRedirects`
+ * - `manual`: resolve with the redirect response and its `Location` header. In browsers,
+ *   `fetch()` hides redirects from scripts: the response has `status: 0` and no headers.
+ * - `error`: reject with a `NetworkError`
+ */
+export type RedirectMode = 'follow' | 'manual' | 'error';
+
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
   loaded: number;
@@ -107,6 +116,10 @@ export interface ClientOptions {
   timeoutMs?: number;
   /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
   retries?: number | RetryOptions;
+  /** What to do when the server redirects. Default: `follow` */
+  redirect?: RedirectMode;
+  /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
+  maxRedirects?: number;
 }
 
 export interface RequestOptions {
@@ -115,6 +128,13 @@ export interface RequestOptions {
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
   timeoutMs?: number;
   responseType?: ResponseBodyType;
+  /**
+   * Overrides the client's `redirect`. `manual` and `error` can't be combined with
+   * `responseType: 'stream' | 'ndjson'`.
+   */
+  redirect?: RedirectMode;
+  /** Overrides the client's `maxRedirects` */
+  maxRedirects?: number;
   /**
    * Cancels the request (including pending retries) when aborted; rejects with a `CancelledError`.
    * For `responseType: 'stream'` it also errors the body stream.
@@ -154,7 +174,7 @@ export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpRespons
 export interface HttpResponse<T = any> {
   status: number;
   statusText: string;
-  /** Always `true`: non-2xx responses reject with an `HttpError` */
+  /** `true` for 2xx responses (other statuses reject with an `HttpError`); `false` for a redirect resolved with `redirect: 'manual'` */
   ok: boolean;
   /** Final URL after redirects */
   url: string;
@@ -270,6 +290,12 @@ impl WasmClient {
             }
             if let Some(retries) = prop(options, "retries") {
                 builder = builder.retry_config(parse_retries(&retries)?);
+            }
+            if let Some(redirect) = prop(options, "redirect") {
+                builder = builder.redirect(parse_redirect(&redirect)?);
+            }
+            if let Some(max) = prop(options, "maxRedirects") {
+                builder = builder.max_redirects(parse_max_redirects(&max)?);
             }
         }
 
@@ -649,6 +675,14 @@ pub(crate) async fn send(
         builder = with_progress(builder, callback.clone());
     }
     let upload_progress = callback_option(options, "onUploadProgress")?;
+    if let Some(redirect) = prop(options, "redirect") {
+        builder = builder.redirect(parse_redirect(&redirect)?);
+    }
+    if let Some(max) = prop(options, "maxRedirects") {
+        builder = builder.max_redirects(parse_max_redirects(&max)?);
+    }
+    // `manual` or `error`, which the reqwest path (the runtime's fetch()) can't apply
+    let custom_redirect = !builder.config.follow_redirects || builder.config.max_redirects == 0;
 
     builder = apply_body(builder, body).await?;
     if let BodyType::Stream | BodyType::Ndjson = body_type {
@@ -656,6 +690,12 @@ pub(crate) async fn send(
             return Err(invalid(
                 "onUploadProgress",
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
+            ));
+        }
+        if custom_redirect {
+            return Err(invalid(
+                "redirect",
+                "'manual' and 'error' can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
@@ -666,7 +706,7 @@ pub(crate) async fn send(
     }
     // The JS transports report upload progress; reqwest's fetch() can't
     #[cfg(target_arch = "wasm32")]
-    if progress.is_none() || upload_progress.is_some() {
+    if progress.is_none() || upload_progress.is_some() || custom_redirect {
         let callbacks = transport::ProgressCallbacks {
             upload: upload_progress,
             download: progress,
@@ -1160,6 +1200,19 @@ fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
         config.retry_non_idempotent = parse_bool(&v, "retries.retryNonIdempotent")?;
     }
     Ok(config)
+}
+
+fn parse_redirect(value: &JsValue) -> Result<Redirect> {
+    match value.as_string().as_deref() {
+        Some("follow") => Ok(Redirect::Follow),
+        Some("manual") => Ok(Redirect::Manual),
+        Some("error") => Ok(Redirect::Error),
+        _ => Err(invalid("redirect", "must be 'follow', 'manual' or 'error'")),
+    }
+}
+
+fn parse_max_redirects(value: &JsValue) -> Result<u32> {
+    non_negative_u32(value.as_f64().unwrap_or(f64::NAN), "maxRedirects")
 }
 
 fn parse_body_type(value: &JsValue) -> Result<BodyType> {

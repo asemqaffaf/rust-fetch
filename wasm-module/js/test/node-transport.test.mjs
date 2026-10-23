@@ -33,6 +33,9 @@ before(async () => {
         res.writeHead(status, { location: url.searchParams.get('to') ?? '/echo' });
         return res.end();
       }
+      case '/moved':
+        res.writeHead(301, { location: '/echo', 'content-type': 'text/plain' });
+        return res.end('see /echo');
       case '/bad-location':
         res.writeHead(302, { location: 'http://[not-a-host' });
         return res.end();
@@ -287,6 +290,67 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       const error = await rejection(client().get(server.url('/bad-location')));
       assert.equal(error.kind, 'NetworkError');
       assert.match(error.message, /Invalid redirect location/);
+    });
+
+    it("returns redirects with redirect: 'manual'", async () => {
+      const manual = new WasmClient({ redirect: 'manual' });
+      const res = await manual.get(server.url('/moved'));
+      assert.equal(res.status, 301);
+      assert.equal(res.statusText, 'Moved Permanently');
+      assert.equal(res.ok, false);
+      assert.equal(res.headers.location, '/echo');
+      assert.equal(res.body, 'see /echo');
+      assert.equal(res.url, server.url('/moved'));
+
+      // Per request, and decoded like any response
+      const binary = await client().get(server.url('/moved'), { redirect: 'manual', responseType: 'binary' });
+      assert.deepEqual(binary.body, new TextEncoder().encode('see /echo'));
+      // A request can still follow them
+      const followed = await manual.get(server.url('/moved'), { redirect: 'follow' });
+      assert.equal(followed.body.url, '/echo');
+      // Only redirects resolve; other errors are unchanged
+      const missing = await rejection(manual.get(server.url('/missing')));
+      assert.equal(missing.kind, 'HttpError');
+      assert.equal(missing.status, 404);
+    });
+
+    it("rejects any redirect with redirect: 'error'", async () => {
+      const error = await rejection(client().get(server.url('/moved'), { redirect: 'error' }));
+      assert.equal(error.kind, 'NetworkError');
+      assert.match(error.message, /Redirect not allowed: 301 to \/echo/);
+      // maxRedirects: 0 is the same
+      const zero = await rejection(new WasmClient({ maxRedirects: 0 }).get(server.url('/moved')));
+      assert.match(zero.message, /Redirect not allowed/);
+      // Requests without redirects are unaffected
+      const res = await new WasmClient({ redirect: 'error' }).get(server.url('/echo'));
+      assert.equal(res.status, 200);
+    });
+
+    it('follows at most maxRedirects redirects', async () => {
+      const twice = server.url('/redirect?' + new URLSearchParams({ to: '/redirect?to=/echo' }));
+      const limited = new WasmClient({ maxRedirects: 1 });
+      const error = await rejection(limited.get(twice));
+      assert.equal(error.kind, 'NetworkError');
+      assert.match(error.message, /Too many redirects \(more than 1\)/);
+      assert.equal((await limited.get(twice, { maxRedirects: 2 })).body.url, '/echo');
+      assert.equal((await client().get(twice)).body.url, '/echo');
+    });
+
+    it('validates redirect and maxRedirects', async () => {
+      for (const options of [{ redirect: 'nope' }, { redirect: 1 }, { maxRedirects: -1 }, { maxRedirects: 1.5 }, { maxRedirects: '2' }]) {
+        const parameter = Object.keys(options)[0];
+        assert.throws(() => new WasmClient(options), (error) => error.kind === 'InvalidInputError' && error.parameter === parameter);
+        const error = await rejection(client().get(server.url('/echo'), options));
+        assert.equal(error.kind, 'InvalidInputError', JSON.stringify(options));
+        assert.equal(error.parameter, parameter);
+      }
+      for (const responseType of ['stream', 'ndjson']) {
+        for (const redirect of ['manual', 'error']) {
+          const error = await rejection(client().get(server.url('/echo'), { responseType, redirect }));
+          assert.equal(error.kind, 'InvalidInputError');
+          assert.equal(error.parameter, 'redirect');
+        }
+      }
     });
 
     it('fails on redirect loops and unsupported schemes', async () => {

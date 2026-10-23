@@ -17,7 +17,10 @@ use super::{invalid, js_error_message, set, BodyType};
 use crate::{
     client::{parse_retry_after, Attempt},
     error::{Error, Result},
-    types::{is_json_content_type, is_text_content_type, RequestConfig},
+    types::{
+        is_json_content_type, is_redirect_status, is_text_content_type, Redirect, RequestConfig,
+        DEFAULT_MAX_REDIRECTS,
+    },
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -73,6 +76,8 @@ pub(crate) enum PreparedRequest {
         /// body has been read
         progress: ProgressCallbacks,
         body_length: u32,
+        /// `manual` and `error` are applied by requesting `redirect: 'manual'`
+        redirect: Redirect,
     },
     Xhr {
         method: String,
@@ -84,10 +89,12 @@ pub(crate) enum PreparedRequest {
     },
     Node {
         transport: js_sys::Function,
-        /// `{ method, url, headers, body?, timeout?, bodyType }`, reused for
-        /// every attempt
+        /// `{ method, url, headers, body?, timeout?, bodyType, redirect?,
+        /// maxRedirects? }`, reused for every attempt
         request: js_sys::Object,
         timeout_ms: u64,
+        /// Whether redirect responses resolve (`redirect: 'manual'`)
+        manual: bool,
     },
 }
 
@@ -113,6 +120,11 @@ impl PreparedRequest {
             .filter(|bytes| !bytes.is_empty())
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let method = config.method.to_reqwest();
+        let redirect = match (config.follow_redirects, config.max_redirects) {
+            (false, _) => Redirect::Manual,
+            (true, 0) => Redirect::Error,
+            (true, _) => Redirect::Follow,
+        };
 
         if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
             let js_headers = js_sys::Object::new();
@@ -153,14 +165,23 @@ impl PreparedRequest {
             if let Some(callback) = &progress.download {
                 set(&request, "onDownloadProgress", callback)?;
             }
+            if redirect == Redirect::Manual {
+                set(&request, "redirect", &"manual".into())?;
+            }
+            if config.max_redirects != DEFAULT_MAX_REDIRECTS {
+                set(&request, "maxRedirects", &config.max_redirects.into())?;
+            }
             return Ok(Self::Node {
                 transport,
                 request,
                 timeout_ms,
+                manual: redirect == Redirect::Manual,
             });
         }
 
-        if progress.upload.is_some() && has_global("XMLHttpRequest") {
+        // XMLHttpRequest always follows redirects; fetch() reports progress less often
+        if progress.upload.is_some() && redirect == Redirect::Follow && has_global("XMLHttpRequest")
+        {
             let mut headers: Vec<(String, String)> = headers
                 .iter()
                 .map(|&(name, value)| (name.to_string(), value.to_string()))
@@ -194,12 +215,16 @@ impl PreparedRequest {
         if let Some(body) = &body {
             init.set_body(body);
         }
+        if redirect != Redirect::Follow {
+            init.set_redirect(web_sys::RequestRedirect::Manual);
+        }
         Ok(Self::Fetch {
             url: url.to_string(),
             init,
             body_type,
             progress,
             body_length,
+            redirect,
         })
     }
 
@@ -216,7 +241,8 @@ impl PreparedRequest {
                 body_type,
                 progress,
                 body_length,
-            } => send_fetch(url, init, *body_type, progress, *body_length).await,
+                redirect,
+            } => send_fetch(url, init, *body_type, progress, *body_length, *redirect).await,
             Self::Xhr {
                 method,
                 url,
@@ -229,7 +255,8 @@ impl PreparedRequest {
                 transport,
                 request,
                 timeout_ms,
-            } => send_node(transport, request, *timeout_ms).await,
+                manual,
+            } => send_node(transport, request, *timeout_ms, *manual).await,
         }
     }
 }
@@ -255,6 +282,7 @@ async fn send_fetch(
     body_type: BodyType,
     progress: &ProgressCallbacks,
     body_length: u32,
+    redirect: Redirect,
 ) -> Result<Attempt<JsValue>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
@@ -277,7 +305,22 @@ async fn send_fetch(
     guard.disarm();
     let length = buffer.unchecked_ref::<js_sys::ArrayBuffer>().byte_length();
 
-    if !(200..300).contains(&status) {
+    // Browsers hide a redirect behind an opaque response with status 0;
+    // other runtimes (e.g. Deno) return the redirect itself
+    let redirected = redirect != Redirect::Follow
+        && (response.type_() == web_sys::ResponseType::Opaqueredirect
+            || is_redirect_status(status));
+    if redirected && redirect == Redirect::Error {
+        let message = match headers.get("location")? {
+            Some(location) => format!("Redirect not allowed: {status} to {location}"),
+            None => "Redirect not allowed".to_string(),
+        };
+        return Err(Error::Network {
+            message,
+            source: None,
+        });
+    }
+    if !(200..300).contains(&status) && !redirected {
         let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
         let retry_after = headers.get("retry-after")?;
         return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
@@ -299,10 +342,16 @@ async fn send_fetch(
     if let Some(cookies) = headers.get("set-cookie")? {
         set(&response_headers, "set-cookie", &cookies.into())?;
     }
-    success_response(status, &response.url(), &response_headers, &body)
+    // An opaque redirect has no URL of its own
+    let response_url = match response.url() {
+        response_url if response_url.is_empty() => url.to_string(),
+        response_url => response_url,
+    };
+    success_response(status, &response_url, &response_headers, &body)
 }
 
-/// The finished `{ status, statusText, ok, url, headers, body }` of a 2xx response
+/// The finished `{ status, statusText, ok, url, headers, body }` of a 2xx
+/// response, or of a redirect returned with `redirect: 'manual'`
 fn success_response(
     status: u16,
     url: &str,
@@ -312,7 +361,7 @@ fn success_response(
     let result = js_sys::Object::new();
     set(&result, "status", &f64::from(status).into())?;
     set(&result, "statusText", &status_text(status).into())?;
-    set(&result, "ok", &JsValue::TRUE)?;
+    set(&result, "ok", &(200..300).contains(&status).into())?;
     set(&result, "url", &url.into())?;
     set(&result, "headers", headers)?;
     set(&result, "body", body)?;
@@ -474,6 +523,7 @@ async fn send_node(
     transport: &js_sys::Function,
     request: &js_sys::Object,
     timeout_ms: u64,
+    manual: bool,
 ) -> Result<Attempt<JsValue>> {
     let pending = transport
         .call1(&JsValue::UNDEFINED, request)
@@ -492,7 +542,7 @@ async fn send_node(
     let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let status = get(&response, "status")?.as_f64().unwrap_or(0.0) as u16;
-    if !(200..300).contains(&status) {
+    if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
         // For error statuses the transport decodes the body as text
         let body = get(&response, "body")?.as_string();
         let retry_after = get(&get(&response, "headers")?, "retry-after")?.as_string();
