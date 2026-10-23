@@ -919,6 +919,15 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 
 `npm run bench` compares rust-fetch with Node's `fetch()` on a local server, and `npm run bench:cold` measures [startup](#startup) in Node.js and, when Playwright's browsers are installed, Chromium, Firefox and WebKit. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. For sustained load and overload, the [aakjp/stress-test](https://github.com/aakjp/stress-test) harness runs against any installed version of rust-fetch.
 
+Every pull request also compares itself with its base branch in CI: small JSON (sequential and 50 concurrent), an 8 MB body and startup, on both Node.js transports, plus the browser bundle size. Each measurement runs in a fresh process, alternating the two builds over 5 rounds; the table is in the *Benchmarks* job's summary. A change over 10% worse in the median and in most rounds shows as a warning, never a failure, since shared runners are noisy. To reproduce it locally against `main`:
+
+```sh
+git worktree add ../rust-fetch-main main
+(cd ../rust-fetch-main && npm ci && npm run build && npm run build:native)
+npm run build && npm run build:native
+npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg
+```
+
 ## FAQ
 
 **How do I add retries and timeouts to `fetch()`?**
