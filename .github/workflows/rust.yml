@@ -165,32 +165,34 @@ jobs:
       - name: Size budget
         if: matrix.node == 22
         run: npm run size
+      - name: Share the built package with the browser job
+        if: matrix.node == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg
+          path: wasm-module/pkg
+          retention-days: 1
       - name: TypeScript API unchanged (or snapshot updated)
         if: matrix.node == 22
         run: npm run api:check
 
   browsers:
     name: Browsers (Chromium, Firefox, WebKit)
+    # Playwright's image has the browsers and their system libraries preinstalled;
+    # installing them with apt on the runner took up to half an hour
+    needs: wasm
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --user 1001
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: wasm-module
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-pack
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
       - name: Install JS dev dependencies
         run: npm ci
-      - name: Build npm package
-        run: npm run build
-      - name: Install browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Download the built package
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg
+          path: wasm-module/pkg
       - name: Browser tests
         run: npm run test:browsers
