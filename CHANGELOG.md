@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`allowAbsoluteUrls`** (client and per request, also for `events()` and `websocket()`): with `false`, an absolute URL on a client with a `baseUrl` rejects with an `InvalidInputError` instead of replacing the base URL, and so the client's headers such as `Authorization` can't be sent to a host taken from user input (the class of axios CVE-2025-27152). Default `true`, as before. Rust: `allow_absolute_urls()` on `ClientBuilder` and `RequestBuilder`.
+- **`maxResponseBytes`** (client and per request; `null` per request for none): rejects responses whose decompressed body is larger, with a `NetworkError` that carries the limit as `maxResponseBytes`. Checked against `Content-Length` before reading, counted while reading, and enforced while decompressing (gzip, deflate, brotli, zstd stop one byte past the limit), so a decompression bomb never expands in memory: a 64 MB gzip bomb with a 1 MB limit fails with no measurable memory growth. Applies on every transport, to error bodies, and to streamed bodies (the stream errors). Rust: `max_response_bytes()` on `ClientBuilder` and `RequestBuilder`, and `Error::response_too_large()`.
 - README *Security* section: what the client protects against, and what's planned.
+- The WebAssembly module's brotli budget is 183 kB (from 180 kB) for these limits, until #93 removes the URL parser's Unicode tables.
 
 ## [2.4.1] - 2026-10-23
 

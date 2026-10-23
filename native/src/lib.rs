@@ -31,6 +31,11 @@ use url::{Position, Url};
 use pool::{lock, Connection, Pool};
 
 const MAX_REDIRECTS: u32 = 20;
+/// How errors for bodies over `max_response_bytes` start; `send` reports them
+/// with the code `RUST_FETCH_TOO_LARGE`
+const TOO_LARGE: &str = "Response body larger than maxResponseBytes";
+/// A compressed body may be this much larger than the decompressed limit
+const COMPRESSED_SLACK: u64 = 1024 * 1024;
 /// Compressed bodies larger than this are decompressed off the runtime's thread
 const BLOCKING_DECOMPRESS: usize = 16 * 1024;
 
@@ -100,6 +105,8 @@ pub struct Request {
     pub manual: Option<bool>,
     /// Redirects to follow before failing (default 20); `0` fails on any redirect
     pub max_redirects: Option<u32>,
+    /// Fail when the decompressed body is larger than this (`maxResponseBytes`)
+    pub max_response_bytes: Option<f64>,
 }
 
 /// The finished response, or `error` (with `code` for timeouts)
@@ -136,7 +143,12 @@ pub async fn send(request: Request) -> Response {
 
     match outcome {
         Ok(Ok(Ok(response))) => response,
-        Ok(Ok(Err(message))) => Response::failed(message, None),
+        Ok(Ok(Err(message))) => {
+            let code = message
+                .starts_with(TOO_LARGE)
+                .then_some("RUST_FETCH_TOO_LARGE");
+            Response::failed(message, code)
+        }
         Ok(Err(_aborted)) => {
             Response::failed("The request was cancelled".into(), Some("ABORT_ERR"))
         }
@@ -180,6 +192,8 @@ impl Transport {
         let mut redirects = 0;
         let manual = request.manual.unwrap_or(false);
         let max_redirects = request.max_redirects.unwrap_or(MAX_REDIRECTS);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let limit = request.max_response_bytes.map(|limit| limit as u64);
 
         loop {
             let (connection, response) = self
@@ -248,21 +262,11 @@ impl Transport {
                 .headers()
                 .get(CONTENT_ENCODING)
                 .map(|e| String::from_utf8_lossy(e.as_bytes()).to_ascii_lowercase());
-            let raw = response
-                .into_body()
-                .collect()
-                .await
-                .map_err(|e| {
-                    format!(
-                        "The connection closed before the response body was complete: {}",
-                        error_message(&e)
-                    )
-                })?
-                .to_bytes();
+            let raw = read_body(response, encoding.as_deref(), limit, &method).await?;
             connection.release();
             let body = match encoding {
                 Some(encoding) if method != Method::HEAD => {
-                    decode(raw, encoding, self.zstd).await?
+                    decode(raw, encoding, self.zstd, limit).await?
                 }
                 _ => Vec::from(raw),
             };
@@ -303,20 +307,77 @@ impl Transport {
     }
 }
 
+/// Read a whole body. With a limit (on the decompressed size), a declared
+/// `Content-Length` over it fails before reading, and reading stops past it;
+/// a compressed body gets some slack, since its decompression is bounded too.
+async fn read_body(
+    response: hyper::Response<Incoming>,
+    encoding: Option<&str>,
+    limit: Option<u64>,
+    method: &Method,
+) -> Result<Bytes, String> {
+    let incomplete = |e: &dyn std::error::Error| {
+        format!(
+            "The connection closed before the response body was complete: {}",
+            error_message(e)
+        )
+    };
+    let Some(limit) = limit.filter(|_| method != Method::HEAD) else {
+        let body = response.into_body().collect().await;
+        return Ok(body.map_err(|e| incomplete(&e))?.to_bytes());
+    };
+    let encoded = encoding.is_some_and(|e| e.trim() != "identity");
+    let raw_limit = if encoded {
+        limit.saturating_add(COMPRESSED_SLACK)
+    } else {
+        limit
+    };
+    let declared = response
+        .headers()
+        .get(hyper::header::CONTENT_LENGTH)
+        .and_then(|length| length.to_str().ok()?.trim().parse::<u64>().ok());
+    if declared.is_some_and(|declared| declared > raw_limit) {
+        return Err(too_large(limit));
+    }
+    let limited = http_body_util::Limited::new(
+        response.into_body(),
+        usize::try_from(raw_limit).unwrap_or(usize::MAX),
+    );
+    match limited.collect().await {
+        Ok(body) => Ok(body.to_bytes()),
+        Err(e) if e.is::<http_body_util::LengthLimitError>() => Err(too_large(limit)),
+        Err(e) => Err(incomplete(&*e)),
+    }
+}
+
+fn too_large(limit: u64) -> String {
+    format!("{TOO_LARGE} ({limit} bytes)")
+}
+
 /// Decompress a body; large ones on the blocking pool, so the runtime's
 /// thread keeps serving other connections
-async fn decode(raw: Bytes, encoding: String, zstd: bool) -> Result<Vec<u8>, String> {
+async fn decode(
+    raw: Bytes,
+    encoding: String,
+    zstd: bool,
+    limit: Option<u64>,
+) -> Result<Vec<u8>, String> {
     if raw.len() <= BLOCKING_DECOMPRESS {
-        return decompress(raw, &encoding, zstd);
+        return decompress(raw, &encoding, zstd, limit);
     }
-    tokio::task::spawn_blocking(move || decompress(raw, &encoding, zstd))
+    tokio::task::spawn_blocking(move || decompress(raw, &encoding, zstd, limit))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Undo the Content-Encodings in reverse order, like `decompress` in `node.js`;
 /// unknown encodings are passed through, like `fetch()`
-fn decompress(raw: Bytes, content_encoding: &str, zstd: bool) -> Result<Vec<u8>, String> {
+fn decompress(
+    raw: Bytes,
+    content_encoding: &str,
+    zstd: bool,
+    limit: Option<u64>,
+) -> Result<Vec<u8>, String> {
     let mut body = Vec::from(raw);
     if body.is_empty() {
         return Ok(body);
@@ -327,12 +388,17 @@ fn decompress(raw: Bytes, content_encoding: &str, zstd: bool) -> Result<Vec<u8>,
         .filter(|e| !e.is_empty() && *e != "identity");
     for encoding in encodings.collect::<Vec<_>>().into_iter().rev() {
         body = match encoding {
-            "gzip" | "x-gzip" => read_all(flate2::read::MultiGzDecoder::new(&body[..]))?,
+            "gzip" | "x-gzip" => read_all(flate2::read::MultiGzDecoder::new(&body[..]), limit)?,
             // Servers send both zlib-wrapped and raw deflate under this name
-            "deflate" if body[0] == 0x78 => read_all(flate2::read::ZlibDecoder::new(&body[..]))?,
-            "deflate" => read_all(flate2::read::DeflateDecoder::new(&body[..]))?,
-            "br" => read_all(brotli::Decompressor::new(&body[..], 4096))?,
-            "zstd" if zstd => zstd::stream::decode_all(&body[..]).map_err(|e| e.to_string())?,
+            "deflate" if body[0] == 0x78 => {
+                read_all(flate2::read::ZlibDecoder::new(&body[..]), limit)?
+            }
+            "deflate" => read_all(flate2::read::DeflateDecoder::new(&body[..]), limit)?,
+            "br" => read_all(brotli::Decompressor::new(&body[..], 4096), limit)?,
+            "zstd" if zstd => read_all(
+                zstd::stream::read::Decoder::new(&body[..]).map_err(|e| e.to_string())?,
+                limit,
+            )?,
             _ => body,
         };
     }
@@ -360,12 +426,18 @@ fn http_request(
     Ok(request)
 }
 
-fn read_all(mut reader: impl Read) -> Result<Vec<u8>, String> {
+/// Decompress everything, or stop one byte past `limit` (so a decompression
+/// bomb never expands in memory)
+fn read_all(reader: impl Read, limit: Option<u64>) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     reader
+        .take(limit.map_or(u64::MAX, |limit| limit.saturating_add(1)))
         .read_to_end(&mut out)
         .map_err(|e| format!("Decompression failed: {e}"))?;
-    Ok(out)
+    match limit {
+        Some(limit) if out.len() as u64 > limit => Err(too_large(limit)),
+        _ => Ok(out),
+    }
 }
 
 fn header_map(pairs: &[String]) -> Result<HeaderMap, String> {

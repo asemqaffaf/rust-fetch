@@ -296,18 +296,20 @@ function decodeBody(bytes, contentType, bodyType) {
 }
 
 /** Undo one Content-Encoding; unknown encodings are passed through, like fetch() */
-function decode(body, encoding) {
+function decode(body, encoding, limit) {
+  // With a limit, zlib stops one byte past it, so a decompression bomb never expands in memory
+  const bounded = limit === undefined ? {} : { maxOutputLength: limit + 1 };
   switch (encoding) {
     case 'gzip':
     case 'x-gzip':
-      return zlib.gunzipSync(body, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      return zlib.gunzipSync(body, { finishFlush: zlib.constants.Z_SYNC_FLUSH, ...bounded });
     case 'deflate':
       // Servers send both zlib-wrapped and raw deflate under this name
-      return body[0] === 0x78 ? zlib.inflateSync(body) : zlib.inflateRawSync(body);
+      return body[0] === 0x78 ? zlib.inflateSync(body, bounded) : zlib.inflateRawSync(body, bounded);
     case 'br':
-      return zlib.brotliDecompressSync(body);
+      return zlib.brotliDecompressSync(body, bounded);
     case 'zstd':
-      return typeof zlib.zstdDecompressSync === 'function' ? zlib.zstdDecompressSync(body) : body;
+      return typeof zlib.zstdDecompressSync === 'function' ? zlib.zstdDecompressSync(body, bounded) : body;
     default:
       return body;
   }
@@ -363,13 +365,29 @@ function bodyStream(response, method) {
   return Readable.toWeb(source, { strategy: new CountQueuingStrategy({ highWaterMark: 16 }) });
 }
 
-function decompress(body, contentEncoding) {
+function decompress(body, contentEncoding, limit) {
   if (!contentEncoding || body.length === 0) return body;
   // Encodings are listed in the order they were applied
   const encodings = contentEncoding.toLowerCase().split(',').map((e) => e.trim()).filter((e) => e && e !== 'identity');
-  for (let i = encodings.length - 1; i >= 0; i--) body = decode(body, encodings[i]);
+  for (let i = encodings.length - 1; i >= 0; i--) {
+    try {
+      body = decode(body, encodings[i], limit);
+    } catch (error) {
+      throw error.code === 'ERR_BUFFER_TOO_LARGE' ? tooLarge(limit) : error;
+    }
+  }
   return body;
 }
+
+/** The error for a body larger than `maxResponseBytes` (a NetworkError with the limit) */
+function tooLarge(limit) {
+  const error = coded(new RangeError(`Response body larger than maxResponseBytes (${limit} bytes)`), 'RUST_FETCH_TOO_LARGE');
+  error.maxResponseBytes = limit;
+  return error;
+}
+
+// Compressed bodies may be this much larger than the decompressed limit before reading stops
+const COMPRESSED_SLACK = 1024 * 1024;
 
 /** Response headers as one string per name; repeated headers joined with ", " */
 function flattenHeaders(raw) {
@@ -482,6 +500,16 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     // With a Content-Length, fill one preallocated buffer (a single copy);
     // otherwise collect chunks and join them at the end.
     const expected = Number(response.headers['content-length']);
+    // maxResponseBytes limits the decompressed body: check what the server
+    // declares, then what arrives (a compressed body gets some slack, and its
+    // decompression is bounded too)
+    const limit = state.maxResponseBytes;
+    const encoded = !!response.headers['content-encoding'] && response.headers['content-encoding'].trim().toLowerCase() !== 'identity';
+    const rawLimit = limit === undefined ? Infinity : encoded ? limit + COMPRESSED_SLACK : limit;
+    if (Number.isSafeInteger(expected) && expected > rawLimit && method !== 'HEAD') {
+      response.destroy();
+      return reject(tooLarge(limit));
+    }
     const preallocated = !response.headers['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
     const buffer = preallocated ? new Uint8Array(expected) : undefined;
     let received = 0;
@@ -492,6 +520,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       if (buffer && received + chunk.length <= expected) buffer.set(chunk, received);
       else chunks.push(chunk);
       received += chunk.length;
+      if (received > rawLimit) {
+        response.destroy();
+        return reject(tooLarge(limit));
+      }
       if (onProgress) report(onProgress, received, total);
     });
     response.on('error', reject);
@@ -507,7 +539,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
           body = buffer;
         } else {
           const raw = buffer ? Buffer.concat([buffer.subarray(0, Math.min(received, expected)), ...chunks]) : Buffer.concat(chunks);
-          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding']));
+          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding'], limit));
+          if (body.length > (limit ?? Infinity)) throw tooLarge(limit);
         }
         resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body });
       } catch (error) {
@@ -523,7 +556,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 /**
  * One attempt, called by the Rust core with `{ method, url, headers, body?,
  * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
- * maxRedirects?, proxy?, stream? }` (`redirect` is only ever `'manual'`;
+ * maxRedirects?, proxy?, stream?, maxResponseBytes? }` (`redirect` is only ever `'manual'`;
  * `maxRedirects: 0` fails on any redirect; `proxy` is `'env'` or a proxy URL).
  * With `stream`, a successful response resolves as soon as its headers
  * arrive, with `body` a `ReadableStream` of the decompressed bytes. Resolves to the finished `{ status, statusText,
@@ -556,6 +589,7 @@ function nodeTransport(request) {
     maxRedirects: request.maxRedirects ?? MAX_REDIRECTS,
     proxy,
     stream: request.stream === true,
+    maxResponseBytes: request.maxResponseBytes,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -637,6 +671,7 @@ function nativeTransport(request) {
     timeout: request.timeout,
     manual,
     maxRedirects: request.maxRedirects,
+    maxResponseBytes: request.maxResponseBytes,
   };
   let dispatched = false;
   let giveUp;
@@ -666,6 +701,7 @@ function nativeTransport(request) {
     }
   });
   const finished = sent.then((response) => {
+    if (response.code === 'RUST_FETCH_TOO_LARGE') throw tooLarge(options.maxResponseBytes);
     if (response.error != null) throw coded(new Error(response.error), response.code);
     const headers = {};
     const raw = response.headers;

@@ -39,6 +39,7 @@ pub(crate) struct ClientConfig {
     redirect: Redirect,
     max_redirects: u32,
     pub(crate) allow_absolute_urls: bool,
+    max_response_bytes: Option<u64>,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -94,6 +95,7 @@ pub struct StreamingResponse {
     pub url: String,
     inner: StreamBody,
     progress: Option<ProgressFn>,
+    limit: Option<u64>,
 }
 
 /// The unread body of a streamed response: reqwest's on native targets,
@@ -127,10 +129,20 @@ impl StreamingResponse {
     pub fn into_stream(self) -> impl Stream<Item = Result<Vec<u8>>> {
         let total = self.inner.content_length();
         let progress = self.progress;
+        let limit = self.limit;
         let mut loaded = 0u64;
+        // A Content-Length over the limit fails on the first read
+        let declared_too_large =
+            matches!((limit, total), (Some(limit), Some(total)) if total > limit);
         body_chunks(self.inner).map(move |chunk| {
+            if let (true, Some(limit)) = (declared_too_large, limit) {
+                return Err(Error::too_large(limit));
+            }
             let chunk = chunk?;
             loaded += chunk.len() as u64;
+            if let Some(limit) = limit.filter(|limit| loaded > *limit) {
+                return Err(Error::too_large(limit));
+            }
             if let Some(progress) = &progress {
                 progress(Progress { loaded, total });
             }
@@ -223,6 +235,7 @@ impl Client {
             redirect,
             max_redirects,
             allow_absolute_urls: self.config.allow_absolute_urls,
+            max_response_bytes: self.config.max_response_bytes,
             #[cfg(target_arch = "wasm32")]
             fetch_options: self.config.fetch_options.clone(),
         }
@@ -265,10 +278,13 @@ impl Client {
         config: &RequestConfig,
         stream: bool,
         progress: Option<&ProgressFn>,
+        limit: Option<u64>,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         self.execute_retrying(config.method, config.timeout, || async {
-            let raw = self.execute_once(&url, config, stream, progress).await?;
+            let raw = self
+                .execute_once(&url, config, stream, progress, limit)
+                .await?;
             if is_success(raw.status, config) {
                 Ok(Attempt::Success(raw))
             } else {
@@ -364,6 +380,7 @@ impl Client {
         config: &RequestConfig,
         stream: bool,
         progress: Option<&ProgressFn>,
+        limit: Option<u64>,
     ) -> Result<RawResponse> {
         let mut request = self
             .http_client(config)?
@@ -399,7 +416,7 @@ impl Client {
         } else {
             // Only report progress for the body the caller asked for
             let progress = progress.filter(|_| success);
-            (read_body(response, progress).await?, None)
+            (read_body(response, progress, limit).await?, None)
         };
 
         Ok(RawResponse {
@@ -512,9 +529,19 @@ pub(crate) fn resolve_url(
 }
 
 /// Read a whole body chunk by chunk, reporting progress after each chunk
-async fn read_body(response: reqwest::Response, progress: Option<&ProgressFn>) -> Result<Vec<u8>> {
+async fn read_body(
+    response: reqwest::Response,
+    progress: Option<&ProgressFn>,
+    limit: Option<u64>,
+) -> Result<Vec<u8>> {
     const MAX_PREALLOCATION: u64 = 64 * 1024 * 1024;
     let total = response.content_length();
+    // Fail before reading when the server says the body is too large
+    if let (Some(limit), Some(total)) = (limit, total) {
+        if total > limit {
+            return Err(Error::too_large(limit));
+        }
+    }
     let capacity = usize::try_from(total.unwrap_or(0).min(MAX_PREALLOCATION)).unwrap_or(0);
     let mut body = Vec::with_capacity(capacity);
 
@@ -522,6 +549,9 @@ async fn read_body(response: reqwest::Response, progress: Option<&ProgressFn>) -
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk.map_err(|e| Error::network("Failed to read response body", e))?;
         body.extend_from_slice(&chunk);
+        if let Some(limit) = limit.filter(|limit| body.len() as u64 > *limit) {
+            return Err(Error::too_large(limit));
+        }
         if let Some(progress) = progress {
             progress(Progress {
                 loaded: body.len() as u64,
@@ -627,6 +657,7 @@ pub struct ClientBuilder {
     redirect: Redirect,
     max_redirects: u32,
     allow_absolute_urls: bool,
+    max_response_bytes: Option<u64>,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
@@ -644,6 +675,7 @@ impl ClientBuilder {
             redirect: Redirect::Follow,
             max_redirects: DEFAULT_MAX_REDIRECTS,
             allow_absolute_urls: true,
+            max_response_bytes: None,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
@@ -682,6 +714,14 @@ impl ClientBuilder {
     /// headers (default: `true`). Use it when paths come from input.
     pub fn allow_absolute_urls(mut self, allow: bool) -> Self {
         self.allow_absolute_urls = allow;
+        self
+    }
+
+    /// Fail requests whose (decompressed) response body is larger than this
+    /// many bytes, reading no more than that (default: no limit). The error
+    /// is a network error; see [`Error::response_too_large`].
+    pub fn max_response_bytes(mut self, limit: u64) -> Self {
+        self.max_response_bytes = Some(limit);
         self
     }
 
@@ -759,6 +799,7 @@ impl ClientBuilder {
                 redirect: self.redirect,
                 max_redirects: self.max_redirects,
                 allow_absolute_urls: self.allow_absolute_urls,
+                max_response_bytes: self.max_response_bytes,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
@@ -786,6 +827,7 @@ pub struct RequestBuilder {
     redirect: Redirect,
     max_redirects: u32,
     allow_absolute_urls: bool,
+    pub(crate) max_response_bytes: Option<u64>,
     /// Browser `fetch()` options: the client's, with this request's overrides
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -811,6 +853,7 @@ impl RequestBuilder {
             &self.config,
             self.fetch_options.as_ref(),
             self.client.config.proxy.as_deref(),
+            self.max_response_bytes,
             body_type,
             progress,
         )?;
@@ -925,6 +968,13 @@ impl RequestBuilder {
         self
     }
 
+    /// Limit the (decompressed) response body to this many bytes, overriding
+    /// the client's setting; `None` for no limit
+    pub fn max_response_bytes(mut self, limit: Option<u64>) -> Self {
+        self.max_response_bytes = limit;
+        self
+    }
+
     fn check_absolute_url(&self) -> Result<()> {
         check_absolute_url(
             self.client.config.base_url.as_deref(),
@@ -950,6 +1000,7 @@ impl RequestBuilder {
                 &self.config,
                 false,
                 self.progress.as_ref(),
+                self.max_response_bytes,
             )
             .await?;
         let content_type = raw.headers.get_first("content-type").unwrap_or("");
@@ -982,6 +1033,7 @@ impl RequestBuilder {
             &self.config,
             self.fetch_options.as_ref(),
             self.client.config.proxy.as_deref(),
+            self.max_response_bytes,
         )?;
         let response = self
             .client
@@ -998,6 +1050,7 @@ impl RequestBuilder {
             url: response.url,
             inner: response.body,
             progress: self.progress,
+            limit: self.max_response_bytes,
         })
     }
 
@@ -1011,7 +1064,14 @@ impl RequestBuilder {
         self.check_absolute_url()?;
         let raw = self
             .client
-            .execute(&self.url, &self.query, &self.config, true, None)
+            .execute(
+                &self.url,
+                &self.query,
+                &self.config,
+                true,
+                None,
+                self.max_response_bytes,
+            )
             .await?;
         Ok(StreamingResponse {
             status: raw.status,
@@ -1022,6 +1082,7 @@ impl RequestBuilder {
                 .stream
                 .expect("successful streaming attempts keep their body unread"),
             progress: self.progress,
+            limit: self.max_response_bytes,
         })
     }
 }

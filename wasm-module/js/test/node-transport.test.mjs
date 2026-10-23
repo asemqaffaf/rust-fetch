@@ -355,6 +355,82 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     });
   });
 
+  describe('maxResponseBytes', () => {
+    let s;
+    const payload = Buffer.alloc(64 * 1024, 7);
+    // 64 MB of zeros, compressed to a few kB each
+    const bomb = Buffer.alloc(64 * 1024 * 1024);
+    const bombs = {
+      gzip: zlib.gzipSync(bomb),
+      deflate: zlib.deflateSync(bomb),
+      'raw-deflate': zlib.deflateRawSync(bomb),
+      br: zlib.brotliCompressSync(bomb),
+      ...(zlib.zstdCompressSync ? { zstd: zlib.zstdCompressSync(bomb) } : {}),
+    };
+    before(async () => {
+      s = await startServer((req, res) => {
+        const url = new URL(req.url, 'http://x');
+        const encoding = url.searchParams.get('encoding');
+        if (url.pathname === '/bomb') {
+          res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-encoding': encoding === 'raw-deflate' ? 'deflate' : encoding });
+          return res.end(bombs[encoding]);
+        }
+        if (url.pathname === '/chunked') {
+          res.writeHead(200, { 'content-type': 'application/octet-stream' });
+          res.write(payload.subarray(0, 32 * 1024));
+          return res.end(payload.subarray(32 * 1024));
+        }
+        res.writeHead(url.pathname === '/error' ? 500 : 200, { 'content-type': 'application/octet-stream', 'content-length': payload.length });
+        res.end(payload);
+      });
+    });
+    after(() => s.close());
+
+    const tooLarge = (error, limit) => {
+      assert.equal(error.kind, 'NetworkError', error.message);
+      assert.equal(error.maxResponseBytes, limit);
+      assert.match(error.message, new RegExp(`maxResponseBytes \\(${limit} bytes\\)`));
+    };
+
+    it('rejects bodies over the limit: declared, chunked and error responses', async () => {
+      const c = new WasmClient({ maxResponseBytes: 1000 });
+      for (const path of ['/declared', '/chunked', '/error']) tooLarge(await rejection(c.get(s.url(path), { responseType: 'binary' })), 1000);
+      // Per request, and null removes the client's limit
+      assert.equal((await c.get(s.url('/declared'), { maxResponseBytes: payload.length })).body.length, payload.length);
+      assert.equal((await c.get(s.url('/chunked'), { maxResponseBytes: null })).body.length, payload.length);
+      assert.equal((await client().get(s.url('/chunked'))).body.length, payload.length);
+    });
+
+    it('stops decompression bombs before they expand in memory', async () => {
+      const c = new WasmClient({ maxResponseBytes: 1024 * 1024 });
+      global.gc?.();
+      const before = process.memoryUsage().rss;
+      for (const encoding of Object.keys(bombs)) {
+        tooLarge(await rejection(c.get(s.url(`/bomb?encoding=${encoding}`), { responseType: 'binary' })), 1024 * 1024);
+      }
+      const grown = (process.memoryUsage().rss - before) / 1e6;
+      assert.ok(grown < 48, `memory grew ${grown.toFixed(0)} MB for ${Object.keys(bombs).length} 64 MB bombs`);
+      // A body that decompresses to within the limit is fine
+      const small = await new WasmClient({ maxResponseBytes: 64 * 1024 * 1024 }).get(s.url('/bomb?encoding=gzip'), { responseType: 'binary' });
+      assert.equal(small.body.length, 64 * 1024 * 1024);
+    });
+
+    it('errors streamed bodies once they pass the limit', async () => {
+      const c = new WasmClient({ maxResponseBytes: 1000 });
+      for (const path of ['/declared', '/chunked', '/bomb?encoding=gzip']) {
+        const res = await c.get(s.url(path), { responseType: 'stream' });
+        tooLarge(await rejection(new Response(res.body).arrayBuffer()), 1000);
+      }
+    });
+
+    it('is validated', async () => {
+      for (const value of [-1, 1.5, '10', Infinity]) {
+        assert.throws(() => new WasmClient({ maxResponseBytes: value }), (e) => e.kind === 'InvalidInputError' && e.parameter === 'maxResponseBytes', String(value));
+        assert.equal((await rejection(client().get(s.url('/declared'), { maxResponseBytes: value }))).parameter, 'maxResponseBytes');
+      }
+    });
+  });
+
   describe('request queue', () => {
     // Beyond 1,024 requests in flight, the rest wait in order in node.js
     it('completes every request when far more are sent than run at once', async () => {

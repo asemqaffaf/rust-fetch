@@ -8,6 +8,43 @@ use std::fmt;
 /// Result type alias for the library
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// The source of an [`Error::Network`] when a response body is larger than
+/// the request allows (`max_response_bytes`, `maxResponseBytes` in JavaScript)
+#[derive(Debug)]
+pub struct ResponseTooLarge {
+    /// The limit, in bytes, of the decompressed body
+    pub limit: u64,
+}
+
+impl fmt::Display for ResponseTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the response body is larger than {} bytes", self.limit)
+    }
+}
+
+impl std::error::Error for ResponseTooLarge {}
+
+impl Error {
+    /// A response body larger than `limit` bytes
+    pub(crate) fn too_large(limit: u64) -> Self {
+        Error::Network {
+            message: format!("Response body larger than maxResponseBytes ({limit} bytes)"),
+            source: Some(Box::new(ResponseTooLarge { limit })),
+        }
+    }
+
+    /// The limit, when this is a response that was too large
+    pub fn response_too_large(&self) -> Option<u64> {
+        match self {
+            Error::Network {
+                source: Some(source),
+                ..
+            } => source.downcast_ref::<ResponseTooLarge>().map(|e| e.limit),
+            _ => None,
+        }
+    }
+}
+
 /// Main error type for the library
 #[derive(Debug)]
 pub enum Error {
@@ -98,7 +135,8 @@ impl fmt::Display for Error {
         match self {
             Error::Network { message, source } => {
                 write!(f, "Network error: {}", message)?;
-                if let Some(src) = source {
+                // A too-large body's message already says everything
+                if let Some(src) = source.as_ref().filter(|s| !s.is::<ResponseTooLarge>()) {
                     write!(f, " (caused by: {})", src)?;
                 }
                 Ok(())
@@ -219,6 +257,20 @@ impl From<serde_json::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_too_large_reads_on_its_own_and_in_the_error() {
+        assert_eq!(
+            ResponseTooLarge { limit: 5 }.to_string(),
+            "the response body is larger than 5 bytes"
+        );
+        let error = Error::too_large(5);
+        assert_eq!(
+            error.to_string(),
+            "Network error: Response body larger than maxResponseBytes (5 bytes)"
+        );
+        assert_eq!(error.response_too_large(), Some(5));
+    }
 
     #[test]
     fn test_error_display() {
