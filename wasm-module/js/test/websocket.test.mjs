@@ -3,6 +3,9 @@
 // "not available" error is tested.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import net from 'node:net';
+import { ProxyAgent } from 'undici';
 import { WasmClient } from '../../pkg/node.js';
 import { rejection, sleep, startServer, startWebSocketServer } from './helpers.mjs';
 
@@ -72,6 +75,41 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     assert.equal(handshake.headers['sec-websocket-protocol'], 'chat.v2, chat.v1');
     socket.close();
     await socket.closed;
+  });
+
+  it('connects through a proxy with a dispatcher', { timeout: 5000 }, async () => {
+    const tunnels = [];
+    const proxy = http.createServer();
+    proxy.on('connect', (req, socket, head) => {
+      tunnels.push({ target: req.url, auth: req.headers['proxy-authorization'] });
+      const { hostname, port } = new URL(`http://${req.url}`);
+      const upstream = net.connect(Number(port), hostname, () => {
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        upstream.write(head);
+        upstream.pipe(socket);
+        socket.pipe(upstream);
+      });
+      socket.on('error', () => upstream.destroy());
+      upstream.on('error', () => socket.destroy());
+    });
+    await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    const dispatcher = new ProxyAgent({ uri: `http://127.0.0.1:${proxy.address().port}`, token: 'Basic dXNlcjpwdw==' });
+    try {
+      const client = new WasmClient({ headers: { 'x-default': '1' } });
+      const onMessage = nextCall();
+      const greeting = onMessage.next();
+      const socket = client.websocket(server.url('/greet'), { dispatcher, protocols: 'chat', onMessage });
+      await socket.opened;
+      assert.equal(await greeting, 'hello');
+      assert.equal(server.handshakes.at(-1).headers['x-default'], '1');
+      assert.deepEqual(tunnels, [{ target: new URL(server.url()).host, auth: 'Basic dXNlcjpwdw==' }]);
+      socket.close();
+      await socket.closed;
+    } finally {
+      await dispatcher.close();
+      proxy.closeAllConnections?.();
+      proxy.close();
+    }
   });
 
   it('accepts ws: URLs and a single protocol string', async () => {
@@ -276,6 +314,7 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     invalid(() => client.websocket(server.url(), { timeoutMs: -1 }), 'timeoutMs');
     invalid(() => client.websocket(server.url(), { onMessage: 'x' }), 'onMessage');
     invalid(() => client.websocket(server.url(), { signal: {} }), 'signal');
+    invalid(() => client.websocket(server.url(), { dispatcher: 'http://proxy' }), 'dispatcher');
 
     const socket = client.websocket(server.url(), { reconnect: Infinity });
     await socket.opened;
