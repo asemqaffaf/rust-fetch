@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-23
+
 ### Added
 - Web Workers and service workers are tested in CI in Chromium, Firefox and WebKit: requests, typed errors, upload progress (one report in service workers, which have no `XMLHttpRequest`), Server-Sent Events and WebSockets.
 - **Server-Sent Events:** `client.events(url, options)` reads an event stream in browsers and Node.js, with any method, headers and body (as streaming LLM APIs need), the client's base URL, interceptors, timeouts and typed errors. Events are parsed in Rust to the WHATWG spec (`event`, multi-line `data`, `id`, `retry`, comments, BOM, CR/LF/CRLF, characters split across chunks). Reconnection sends `Last-Event-ID` and honours `retry:`, on by default for `GET`. `messageType: 'json'` parses `data` and stops at `data: [DONE]`. Use callbacks (`onEvent`, …) or `for await`; `break` closes the stream. `opened`/`closed` promises, `signal`, `close()`.
@@ -160,7 +162,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.0.0...v2.1.0

@@ -1,7 +1,7 @@
 {
   "name": "rust-fetch-workspace",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Development workspace for the rust-fetch npm package (published from wasm-module/pkg)",
   "type": "module",
   "scripts": {
