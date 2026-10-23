@@ -39,7 +39,7 @@ export interface ServerSentEvent<T = any> {
 
 export type EventStreamState = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
-export interface EventStreamOptions {
+export interface EventStreamOptions extends BrowserRequestOptions {
   /** HTTP method. Default: `GET` */
   method?: string;
   /** Request body, as for other requests; sent again on each reconnection */

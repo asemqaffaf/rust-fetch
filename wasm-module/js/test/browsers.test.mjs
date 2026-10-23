@@ -28,7 +28,10 @@ function readBody(req) {
 function handler(cors) {
   return async (req, res) => {
     const url = new URL(req.url, 'http://x');
-    const headers = cors ? { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-trace' } : {};
+    // The exact origin, so credentialed requests are allowed too
+    const headers = cors
+      ? { 'access-control-allow-origin': req.headers.origin ?? '*', 'access-control-allow-credentials': 'true', 'access-control-expose-headers': 'x-trace' }
+      : {};
     if (req.method === 'OPTIONS') {
       preflights.push(url.pathname);
       res.writeHead(204, { ...headers, 'access-control-allow-methods': 'GET, POST, PUT', 'access-control-allow-headers': 'content-type, x-trace' });
@@ -65,6 +68,16 @@ function handler(cors) {
         const json = JSON.stringify({ method: req.method, length: body.length, type: req.headers['content-type'] ?? null, trace: req.headers['x-trace'] ?? null });
         res.writeHead(200, { ...headers, 'content-type': 'application/json', 'content-length': Buffer.byteLength(json), 'x-trace': 'abc' });
         return res.end(json);
+      }
+      case '/cookie':
+        res.writeHead(200, { ...headers, 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ cookie: req.headers.cookie ?? null, length: body.length }));
+      case '/cached': {
+        // Cacheable for a minute; the count (per id) shows when the browser asked again
+        const id = `cached:${url.searchParams.get('id')}`;
+        attempts.set(id, (attempts.get(id) ?? 0) + 1);
+        res.writeHead(200, { ...headers, 'content-type': 'application/json', 'cache-control': 'max-age=60' });
+        return res.end(JSON.stringify({ hits: attempts.get(id) }));
       }
       case '/moved':
         res.writeHead(302, { ...headers, location: '/echo', 'content-type': 'text/plain' });
@@ -171,13 +184,18 @@ function listen(server) {
 
 const pageServer = http.createServer(handler(false));
 const crossServer = http.createServer(handler(true));
+// Another port on the page's host: cross-origin but same-site, so cookies
+// follow `credentials` without SameSite rules getting in the way
+const siblingServer = http.createServer(handler(true));
 let origin;
 let crossOrigin;
+let siblingOrigin;
 let ws;
 
 before(async () => {
   origin = `http://127.0.0.1:${await listen(pageServer)}`;
   crossOrigin = `http://localhost:${await listen(crossServer)}`;
+  siblingOrigin = `http://127.0.0.1:${await listen(siblingServer)}`;
   ws = await startWebSocketServer((peer, req) => {
     if (req.url.includes('/drop')) setTimeout(() => peer.drop(), 50);
     peer.onmessage = (message) => peer.send(message);
@@ -187,6 +205,7 @@ before(async () => {
 after(async () => {
   pageServer.close();
   crossServer.close();
+  siblingServer.close();
   await ws.close();
 });
 
@@ -199,7 +218,7 @@ function inPage(page, fn) {
       // eslint-disable-next-line no-new-func
       return new Function('rf', 'config', `return (${source})(rf, config);`)(module, config);
     },
-    { source: fn.toString(), config: { origin, crossOrigin, wsBase: `http://127.0.0.1:${ws.port}` } },
+    { source: fn.toString(), config: { origin, crossOrigin, siblingOrigin, wsBase: `http://127.0.0.1:${ws.port}` } },
   );
 }
 
@@ -276,6 +295,50 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },
         { kind: 'NetworkError', message: 'Network error: Redirect not allowed' },
       ]);
+    });
+
+    it('applies credentials, mode, cache and keepalive', async () => {
+      await page.context().addCookies([{ name: 'session', value: 'abc', url: origin }]);
+      const result = await inPage(page, async ({ WasmClient }, { origin, siblingOrigin }) => {
+        const cookie = async (client, url, options) => (await client.get(url, options)).body.cookie;
+        const page = new WasmClient({ baseUrl: origin });
+        const sibling = new WasmClient({ baseUrl: siblingOrigin });
+        const out = {
+          sameOrigin: await cookie(page, '/cookie'),
+          omitted: await cookie(page, '/cookie', { credentials: 'omit' }),
+          crossOrigin: await cookie(sibling, '/cookie'),
+          included: await cookie(sibling, '/cookie', { credentials: 'include' }),
+          clientDefault: await cookie(new WasmClient({ baseUrl: siblingOrigin, credentials: 'include' }), '/cookie'),
+        };
+        // XMLHttpRequest (upload progress) sends them with withCredentials
+        const uploads = [];
+        const xhr = await sibling.post('/cookie', { body: new Uint8Array(1000), credentials: 'include', onUploadProgress: (p) => uploads.push(p) });
+        out.xhr = { cookie: xhr.body.cookie, uploaded: uploads.at(-1)?.loaded };
+        const events = [];
+        const stream = sibling.events('/sse', { credentials: 'include', reconnect: false, onEvent: (e) => events.push(e.data) });
+        await stream.closed;
+        out.sse = events.length;
+        const opaque = await sibling.get('/echo', { mode: 'no-cors' });
+        out.opaque = { status: opaque.status, ok: opaque.ok, headers: opaque.headers, body: opaque.body };
+        out.cached = [];
+        const cachedUrl = `/cached?id=${crypto.randomUUID()}`;
+        for (const cache of ['default', 'default', 'no-store']) out.cached.push((await page.get(cachedUrl, { cache })).body.hits);
+        out.keepalive = (await page.post('/cookie', { body: 'beacon', keepalive: true })).body.length;
+        return out;
+      });
+      assert.equal(result.sameOrigin, 'session=abc');
+      assert.equal(result.omitted, null);
+      assert.equal(result.crossOrigin, null);
+      assert.equal(result.included, 'session=abc');
+      assert.equal(result.clientDefault, 'session=abc');
+      assert.deepEqual(result.xhr, { cookie: 'session=abc', uploaded: 1000 });
+      assert.equal(result.sse, 2);
+      assert.deepEqual(result.opaque, { status: 0, ok: false, headers: {}, body: null });
+      // 'no-store' always goes to the server. Chromium and Firefox serve the
+      // second request from their HTTP cache; Playwright's WebKit doesn't cache it.
+      assert.equal(result.cached[2], result.cached[1] + 1, String(result.cached));
+      if (name !== 'webkit') assert.deepEqual(result.cached, [1, 1, 2]);
+      assert.equal(result.keepalive, 6);
     });
 
     it('enforces timeouts, retries with Retry-After, and cancels', async () => {

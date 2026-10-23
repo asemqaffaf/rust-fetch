@@ -2,7 +2,7 @@
 
 > Resilient HTTP client for JavaScript and TypeScript (npm package `rust-fetch`), with a Rust core compiled to WebAssembly that behaves the same in browsers, Web Workers and Node.js 20+. It adds what `fetch()` lacks: typed errors, per-attempt timeouts, retries with backoff, interceptors, upload and download progress, streaming, Server-Sent Events and newline-delimited JSON (for LLM streaming APIs), and WebSockets with reconnection. Also usable as a Rust crate.
 
-Use rust-fetch when you want `fetch()` plus production policy (timeouts, retries, error handling) in one client, the same in the browser and in Node.js. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (rust-fetch adds about 198 KB brotli to a browser bundle).
+Use rust-fetch when you want `fetch()` plus production policy (timeouts, retries, error handling) in one client, the same in the browser and in Node.js. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (rust-fetch adds about 199 KB brotli to a browser bundle).
 
 ## Install and set up
 
@@ -27,6 +27,7 @@ const client = new WasmClient({
 - TypeScript: `client.get<User>('/users/42')` resolves to `HttpResponse<User>` (the type isn't validated at runtime)
 - Bodies: string, `Uint8Array`/`ArrayBuffer`/`DataView`, `Blob`/`File`, `FormData` (multipart), `URLSearchParams`, or any value sent as JSON
 - Options: `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
+- Browser `fetch()` options (client or per request; ignored in Node.js): `credentials`, `mode` (`'no-cors'` resolves with an opaque `status: 0` response), `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity`
 - Redirects (client or per request): `redirect: 'follow'` (default, up to `maxRedirects`, default 20), `'manual'` (resolves with the 3xx and its `location` header, `ok: false`; in browsers an opaque response with `status: 0`), `'error'` (rejects with a `NetworkError`)
 
 Resolves (2xx only) to `{ status, statusText, ok, url, headers, body }`. With `responseType: 'auto'`, `body` is parsed JSON for `application/json` and `*+json`, a string for text types, a `Uint8Array` otherwise, `null` when empty.

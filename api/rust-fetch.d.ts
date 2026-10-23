@@ -54,6 +54,28 @@ export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 
  */
 export type RedirectMode = 'follow' | 'manual' | 'error';
 
+/**
+ * `fetch()` options for browsers, Web Workers and other `fetch()` runtimes (Deno, Bun).
+ * Node.js requests don't use them; they're still validated there.
+ */
+export interface BrowserRequestOptions {
+    /** Send cookies and HTTP authentication: `same-origin` (default), `include` (also cross-origin) or `omit` */
+    credentials?: 'omit' | 'same-origin' | 'include';
+    /** `cors` (default), `same-origin`, or `no-cors`, which resolves with an opaque response (`status: 0`, no headers, no body) */
+    mode?: 'cors' | 'no-cors' | 'same-origin';
+    /** How the browser's HTTP cache is used */
+    cache?: 'default' | 'no-store' | 'reload' | 'no-cache' | 'force-cache' | 'only-if-cached';
+    /** Let the request outlive the page, e.g. for analytics on unload (bodies up to 64 KB) */
+    keepalive?: boolean;
+    /** Fetch priority, where the browser supports it */
+    priority?: 'high' | 'low' | 'auto';
+    /** A same-origin URL, `''` for none, or `about:client` (default) */
+    referrer?: string;
+    referrerPolicy?: '' | 'no-referrer' | 'no-referrer-when-downgrade' | 'same-origin' | 'origin' | 'strict-origin' | 'origin-when-cross-origin' | 'strict-origin-when-cross-origin' | 'unsafe-url';
+    /** Subresource integrity metadata, e.g. `sha384-…` */
+    integrity?: string;
+}
+
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
     loaded: number;
@@ -85,7 +107,7 @@ export interface RetryOptions {
     retryNonIdempotent?: boolean;
 }
 
-export interface ClientOptions {
+export interface ClientOptions extends BrowserRequestOptions {
     /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
     baseUrl?: string;
     /** Headers sent with every request; per-request headers with the same name replace them */
@@ -100,7 +122,8 @@ export interface ClientOptions {
     maxRedirects?: number;
 }
 
-export interface RequestOptions {
+/** Per request; `BrowserRequestOptions` set here override the client's one by one */
+export interface RequestOptions extends BrowserRequestOptions {
     headers?: HeadersLike;
     params?: QueryParams;
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
@@ -197,7 +220,7 @@ export interface ServerSentEvent<T = any> {
 
 export type EventStreamState = 'connecting' | 'open' | 'reconnecting' | 'closed';
 
-export interface EventStreamOptions {
+export interface EventStreamOptions extends BrowserRequestOptions {
     /** HTTP method. Default: `GET` */
     method?: string;
     /** Request body, as for other requests; sent again on each reconnection */

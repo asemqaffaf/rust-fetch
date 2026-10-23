@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Browser `fetch()` options:** `credentials`, `mode`, `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy` and `integrity`, as client defaults and per request (each overriding the client's), for buffered and streamed requests and `client.events()`. `mode: 'no-cors'` resolves with the opaque response (`status: 0`). With upload progress, `credentials: 'include'` sets `XMLHttpRequest.withCredentials`; other options send the request with `fetch()`, which reports upload progress once. Node.js requests don't use them (they're validated). Tested with real cookies, the HTTP cache and `no-cors` in Chromium, Firefox and WebKit. Adds 1.4 kB brotli to the module.
 - **Redirect control:** `redirect: 'follow' | 'manual' | 'error'` and `maxRedirects`, as client options and per request, with `fetch()`'s semantics. `'manual'` resolves with the redirect response (`ok: false`, with its `Location` header); `'error'` rejects with a `NetworkError` on any redirect; `maxRedirects` (default 20, as before) limits how many are followed in Node.js, on both transports. In browsers, `fetch()` hides redirects from scripts, so `'manual'` resolves with `status: 0` and no headers, and the browser's own limit applies. In the Rust API: `Redirect`, and `redirect()` / `max_redirects()` on `ClientBuilder` and `RequestBuilder`.
 
 ### Changed

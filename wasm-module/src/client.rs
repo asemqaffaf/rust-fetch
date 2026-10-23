@@ -38,6 +38,9 @@ pub(crate) struct ClientConfig {
     pub(crate) base_url: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
+    /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fetch_options: Option<js_sys::Object>,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -215,6 +218,8 @@ impl Client {
             progress: None,
             redirect,
             max_redirects,
+            #[cfg(target_arch = "wasm32")]
+            fetch_options: self.config.fetch_options.clone(),
         }
     }
 
@@ -602,6 +607,8 @@ pub struct ClientBuilder {
     base_url: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
+    #[cfg(target_arch = "wasm32")]
+    fetch_options: Option<js_sys::Object>,
 }
 
 impl ClientBuilder {
@@ -614,7 +621,16 @@ impl ClientBuilder {
             base_url: None,
             redirect: Redirect::Follow,
             max_redirects: DEFAULT_MAX_REDIRECTS,
+            #[cfg(target_arch = "wasm32")]
+            fetch_options: None,
         }
+    }
+
+    /// Browser `fetch()` options for every request, validated by the bindings
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn fetch_options(mut self, options: Option<js_sys::Object>) -> Self {
+        self.fetch_options = options;
+        self
     }
 
     /// What to do when the server redirects (default: [`Redirect::Follow`])
@@ -702,6 +718,8 @@ impl ClientBuilder {
                 base_url: self.base_url,
                 redirect: self.redirect,
                 max_redirects: self.max_redirects,
+                #[cfg(target_arch = "wasm32")]
+                fetch_options: self.fetch_options,
             }),
             #[cfg(not(target_arch = "wasm32"))]
             redirect_clients: Arc::default(),
@@ -724,6 +742,9 @@ pub struct RequestBuilder {
     progress: Option<ProgressFn>,
     redirect: Redirect,
     max_redirects: u32,
+    /// Browser `fetch()` options: the client's, with this request's overrides
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fetch_options: Option<js_sys::Object>,
 }
 
 impl RequestBuilder {
@@ -743,6 +764,7 @@ impl RequestBuilder {
         let request = crate::wasm::transport::PreparedRequest::new(
             url.as_str(),
             &self.config,
+            self.fetch_options.as_ref(),
             body_type,
             progress,
         )?;
@@ -892,7 +914,11 @@ impl RequestBuilder {
             &self.url,
             &self.query,
         )?;
-        let request = crate::wasm::transport::StreamingRequest::new(url.as_str(), &self.config)?;
+        let request = crate::wasm::transport::StreamingRequest::new(
+            url.as_str(),
+            &self.config,
+            self.fetch_options.as_ref(),
+        )?;
         let response = self
             .client
             .execute_retrying(self.config.method, self.config.timeout, || request.send())
