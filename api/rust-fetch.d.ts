@@ -39,10 +39,11 @@ export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | 
  * - `text`: always a string
  * - `binary`: always a `Uint8Array`
  * - `stream`: a `ReadableStream<Uint8Array>`, returned as soon as the headers arrive
+ * - `ndjson`: a `ReadableStream` of parsed JSON values, one per line of newline-delimited JSON, returned as soon as the headers arrive
  *
  * Empty bodies are `null` for `auto`/`json`, `""` for `text` and an empty `Uint8Array` for `binary`.
  */
-export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream';
+export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
 
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
@@ -167,6 +168,52 @@ export interface RustFetchError extends Error {
 
 
 
+/** One Server-Sent Event */
+export interface ServerSentEvent<T = any> {
+    /** The `event:` field; `'message'` when the server didn't set one */
+    event: string;
+    /** The `data:` lines joined with `\n`, or parsed JSON with `messageType: 'json'` */
+    data: T;
+    /** The last event ID (`id:` field) in effect, or `''` */
+    id: string;
+}
+
+export type EventStreamState = 'connecting' | 'open' | 'reconnecting' | 'closed';
+
+export interface EventStreamOptions {
+    /** HTTP method. Default: `GET` */
+    method?: string;
+    /** Request body, as for other requests; sent again on each reconnection */
+    body?: RequestBody;
+    headers?: HeadersLike;
+    params?: QueryParams;
+    /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
+    timeoutMs?: number;
+    /**
+     * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
+     * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).
+     */
+    reconnect?: boolean | number | ReconnectOptions;
+    /** `auto` (default): `data` is a string. `json`: `data` is parsed JSON */
+    messageType?: 'auto' | 'json';
+    /** Close the stream normally when an event's raw `data` equals this. Default: `'[DONE]'` with `messageType: 'json'`, otherwise none */
+    end?: string | null;
+    /** Closes the stream and stops reconnecting when aborted */
+    signal?: AbortSignal;
+    /** Called each time a connection opens, including after reconnecting */
+    onOpen?: () => void;
+    /** Called for each event. Without it, events are buffered for `for await … of stream` */
+    onEvent?: (event: ServerSentEvent) => void;
+    /** Called on every failure: a failed attempt, a dropped stream, a `data` that isn't JSON */
+    onError?: (error: RustFetchError) => void;
+    /** Called before waiting to reconnect */
+    onReconnect?: (info: WebSocketReconnectInfo) => void;
+    /** Called once, when the stream is closed for good */
+    onClose?: () => void;
+}
+
+
+
 /** Reconnection after a connection fails or drops, with jittered exponential backoff. */
 export interface ReconnectOptions {
     /** Reconnection attempts in a row before giving up; reset once a connection opens. Default: unlimited */
@@ -231,6 +278,48 @@ export interface WebSocketOptions {
 
 
 
+/**
+ * A Server-Sent Events stream created by `WasmClient.events()`; also an async iterator of events
+ */
+export class EventStream {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;
+    /**
+     * Close the stream and stop reconnecting
+     */
+    close(): void;
+    /**
+     * The next buffered event (async iterator protocol)
+     */
+    next(): Promise<IteratorResult<ServerSentEvent>>;
+    /**
+     * Stop iterating: closes the stream (async iterator protocol, e.g. `break`)
+     */
+    return(): Promise<IteratorResult<ServerSentEvent>>;
+    /**
+     * Resolves once the stream is closed for good
+     */
+    readonly closed: Promise<void>;
+    /**
+     * The last event ID received, sent as `Last-Event-ID` when reconnecting
+     */
+    readonly lastEventId: string;
+    /**
+     * Resolves when the first connection opens; rejects if it never does
+     */
+    readonly opened: Promise<void>;
+    /**
+     * `connecting`, `open`, `reconnecting` or `closed`
+     */
+    readonly state: EventStreamState;
+    /**
+     * The stream's URL, resolved against the client's base URL
+     */
+    readonly url: string;
+}
+
 export class IntoUnderlyingByteSource {
     private constructor();
     free(): void;
@@ -286,6 +375,10 @@ export class WasmClient {
      * Remove an interceptor; returns whether it was registered
      */
     ejectInterceptor(id: number): boolean;
+    /**
+     * Open a Server-Sent Events stream. Relative URLs are resolved against the base URL.
+     */
+    events(url: string, options?: EventStreamOptions | null): EventStream;
     /**
      * Make a request described by a `fetch`-style init object
      */

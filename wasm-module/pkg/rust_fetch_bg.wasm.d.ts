@@ -1,12 +1,21 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_eventstream_free: (a: number, b: number) => void;
 export const __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
 export const __wbg_intounderlyingsink_free: (a: number, b: number) => void;
 export const __wbg_intounderlyingsource_free: (a: number, b: number) => void;
 export const __wbg_wasmclient_free: (a: number, b: number) => void;
 export const __wbg_websocketconnection_free: (a: number, b: number) => void;
 export const create_client: () => [number, number, number];
+export const eventstream_close: (a: number) => void;
+export const eventstream_closed: (a: number) => any;
+export const eventstream_last_event_id: (a: number) => [number, number];
+export const eventstream_next: (a: number) => any;
+export const eventstream_opened: (a: number) => any;
+export const eventstream_return: (a: number) => any;
+export const eventstream_state: (a: number) => any;
+export const eventstream_url: (a: number) => [number, number];
 export const fetch_json: (a: number, b: number) => any;
 export const fetch_json_promise: (a: number, b: number) => any;
 export const fetch_text: (a: number, b: number) => any;
@@ -30,6 +39,7 @@ export const wasmclient_addResponseInterceptor: (a: number, b: number, c: number
 export const wasmclient_clearInterceptors: (a: number) => void;
 export const wasmclient_delete: (a: number, b: number, c: number, d: number) => any;
 export const wasmclient_ejectInterceptor: (a: number, b: number) => number;
+export const wasmclient_events: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const wasmclient_fetch: (a: number, b: number, c: number, d: number) => any;
 export const wasmclient_get: (a: number, b: number, c: number, d: number) => any;
 export const wasmclient_head: (a: number, b: number, c: number, d: number) => any;

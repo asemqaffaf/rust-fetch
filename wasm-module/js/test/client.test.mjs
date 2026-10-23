@@ -97,6 +97,18 @@ before(async () => {
         }
         return json(res, { received: req.body.length });
       }
+      case '/ndjson': {
+        // Lines split across writes, a CRLF, an empty line and no final newline
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+        res.write('{"n":1}\n{"n"');
+        await sleep(10);
+        res.write(':2}\r\n\n{"text":"Zo');
+        await sleep(10);
+        return res.end('ë 🦀"}');
+      }
+      case '/ndjson-bad':
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+        return res.end('{"ok":true}\nnot json\n{"ok":false}\n');
       case '/large': {
         const size = Number(url.searchParams.get('mb')) * 1024 * 1024;
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': size });
@@ -647,6 +659,33 @@ describe('streaming and progress', () => {
     // A throwing callback doesn't break the request
     const ok = await client().get(server.url('/json'), { onDownloadProgress: () => { throw new Error('ignored'); } });
     assert.equal(ok.status, 200);
+  });
+});
+
+describe('newline-delimited JSON', () => {
+  it("parses each line as it arrives with responseType: 'ndjson'", async () => {
+    const res = await client().get(server.url('/ndjson'), { responseType: 'ndjson' });
+    assert.ok(res.body instanceof ReadableStream);
+    const values = [];
+    for await (const value of res.body) values.push(value);
+    assert.deepEqual(values, [{ n: 1 }, { n: 2 }, { text: 'Zoë 🦀' }]);
+  });
+
+  it('errors the stream on a line that is not JSON, with its line number', async () => {
+    const res = await client().get(server.url('/ndjson-bad'), { responseType: 'ndjson' });
+    const values = [];
+    const error = await rejection((async () => {
+      for await (const value of res.body) values.push(value);
+    })());
+    assert.deepEqual(values, [{ ok: true }]);
+    assert.equal(error.kind, 'ParseError');
+    assert.match(error.message, /line 2/);
+  });
+
+  it('rejects onUploadProgress with a streamed response type', async () => {
+    const error = await rejection(client().post(server.url('/echo'), { body: 'x', responseType: 'ndjson', onUploadProgress() {} }));
+    assert.equal(error.kind, 'InvalidInputError');
+    assert.equal(error.parameter, 'onUploadProgress');
   });
 });
 

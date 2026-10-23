@@ -47,7 +47,9 @@ pub mod types;
 
 pub mod http;
 
+mod lines;
 mod runtime;
+mod sse;
 mod wasm;
 
 pub use wasm::WasmClient;

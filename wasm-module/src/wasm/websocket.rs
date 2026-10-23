@@ -150,7 +150,7 @@ extern "C" {
 thread_local! {
     /// A shared no-op rejection handler, so an `opened` promise nobody
     /// awaits doesn't become an unhandled rejection
-    static IGNORE: Closure<dyn FnMut(JsValue)> = Closure::new(|_| {});
+    pub(crate) static IGNORE: Closure<dyn FnMut(JsValue)> = Closure::new(|_| {});
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -564,7 +564,7 @@ fn websocket_url(base: Option<&str>, url: &str, params: &[(String, String)]) -> 
 }
 
 /// `true`, a maximum number of attempts, or `ReconnectOptions`; `None` for off
-fn parse_reconnect(value: &JsValue) -> Result<Option<RetryConfig>> {
+pub(crate) fn parse_reconnect(value: &JsValue) -> Result<Option<RetryConfig>> {
     let mut config = RetryConfig {
         max_retries: u32::MAX,
         initial_delay: Duration::from_secs(1),
@@ -946,7 +946,7 @@ fn js_get(target: &JsValue, name: &str) -> JsValue {
 /// Call a user callback. Its exceptions are reported as unhandled
 /// rejections, as they would be from an async function, so they're visible
 /// without breaking the connection.
-fn call(callback: Option<&js_sys::Function>, argument: Option<&JsValue>) {
+pub(crate) fn call(callback: Option<&js_sys::Function>, argument: Option<&JsValue>) {
     let Some(callback) = callback else {
         return;
     };
@@ -959,12 +959,12 @@ fn call(callback: Option<&js_sys::Function>, argument: Option<&JsValue>) {
     }
 }
 
-fn report(on_error: Option<&js_sys::Function>, error: &JsValue) {
+pub(crate) fn report(on_error: Option<&js_sys::Function>, error: &JsValue) {
     call(on_error, Some(error));
 }
 
 impl Error {
-    fn into_js(self) -> JsValue {
+    pub(crate) fn into_js(self) -> JsValue {
         self.into()
     }
 }
