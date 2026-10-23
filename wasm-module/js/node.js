@@ -198,6 +198,49 @@ function requestOptions(url, method, headers, proxy) {
   return [proxy.protocol === 'https:' ? https : http, proxy, options];
 }
 
+// --- Request queue --------------------------------------------------------------
+//
+// At most MAX_IN_FLIGHT requests are handed to a transport at once; the rest
+// wait here, in order, as plain closures. Under overload a backlog inside a
+// transport costs far more: a ClientRequest each in Node's agent (which also
+// dequeues with Array#shift), or a Tokio task and copies of the request in
+// the addon. Both transports run at most 256 connections per origin anyway.
+// Time spent waiting here counts towards the request's timeout.
+const MAX_IN_FLIGHT = 1024;
+let inFlight = 0;
+const waiting = [];
+let waitingHead = 0;
+
+/** Call `start` now, or once a slot frees up; returns the waiting entry, to cancel it */
+function whenFree(start) {
+  if (inFlight < MAX_IN_FLIGHT) {
+    inFlight++;
+    start();
+    return undefined;
+  }
+  const entry = { start, cancelled: false };
+  waiting.push(entry);
+  return entry;
+}
+
+/** Free a slot, starting the next waiting request that wasn't cancelled */
+function release() {
+  inFlight--;
+  while (inFlight < MAX_IN_FLIGHT && waitingHead < waiting.length) {
+    const entry = waiting[waitingHead];
+    waiting[waitingHead++] = undefined;
+    if (!entry.cancelled) {
+      inFlight++;
+      entry.start();
+    }
+  }
+  // Drop the started entries now and then, so a sustained backlog doesn't grow the array
+  if (waitingHead > 4096 && waitingHead * 2 > waiting.length) {
+    waiting.splice(0, waitingHead);
+    waitingHead = 0;
+  }
+}
+
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const ACCEPT_ENCODING = typeof zlib.zstdDecompressSync === 'function' ? 'gzip, deflate, br, zstd' : 'gzip, deflate, br';
@@ -385,7 +428,8 @@ function withoutHeaders(headers, names) {
 }
 
 function send(state, method, url, headers, body, redirects, resolve, reject) {
-  if (state.cancelled) return;
+  // Settle even when cancelled, so the request's slot is released
+  if (state.cancelled) return reject(new Error('The request was cancelled'));
   let args;
   try {
     args = requestOptions(url, method, headers, proxyFor(url, state.proxy));
@@ -529,14 +573,21 @@ function nodeTransport(request) {
       clearTimeout(timer);
       return reject(error);
     }
+    let released = false;
     const settle = (fn) => (value) => {
       clearTimeout(timer);
+      if (!released) {
+        released = true;
+        release();
+      }
       fn(value);
     };
-    send(state, request.method, url, withDefaultHeaders(request), request.body, 0, settle(resolve), settle(reject));
+    const headers = withDefaultHeaders(request);
+    state.waiting = whenFree(() => send(state, request.method, url, headers, request.body, 0, settle(resolve), settle(reject)));
   });
   const cancel = () => {
     state.cancelled = true;
+    if (state.waiting) state.waiting.cancelled = true;
     state.request?.destroy();
   };
   // Decode only after the socket's event handlers have returned: decoding
@@ -577,28 +628,57 @@ function nativeTransport(request) {
   }
   const bodyType = request.bodyType ?? AUTO;
   const manual = request.redirect === 'manual';
-  const finished = native
-    .send({
-      id,
-      method: request.method,
-      url: request.url,
-      headers: pairs,
-      body: request.body,
-      timeout: request.timeout,
-      manual,
-      maxRedirects: request.maxRedirects,
-    })
-    .then((response) => {
-      if (response.error != null) throw coded(new Error(response.error), response.code);
-      const headers = {};
-      const raw = response.headers;
-      for (let i = 0; i < raw.length; i += 2) {
-        const name = raw[i];
-        headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
-      }
-      return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
+  const options = {
+    id,
+    method: request.method,
+    url: request.url,
+    headers: pairs,
+    body: request.body,
+    timeout: request.timeout,
+    manual,
+    maxRedirects: request.maxRedirects,
+  };
+  let dispatched = false;
+  let giveUp;
+  const sent = new Promise((resolve) => {
+    let timer;
+    const queuedAt = performance.now();
+    const entry = whenFree(() => {
+      dispatched = true;
+      clearTimeout(timer);
+      // The timeout covers the wait here too
+      const timeout = options.timeout > 0 ? Math.max(1, options.timeout - (performance.now() - queuedAt)) : options.timeout;
+      native.send(timeout === options.timeout ? options : { ...options, timeout }).then((response) => {
+        release();
+        resolve(response);
+      });
     });
-  finished.cancel = () => native.cancel(id);
+    if (!entry) return;
+    // Still waiting here: a timeout or cancellation drops it without involving the addon
+    giveUp = (response) => {
+      if (entry.cancelled) return;
+      entry.cancelled = true;
+      clearTimeout(timer);
+      resolve(response);
+    };
+    if (options.timeout > 0) {
+      timer = setTimeout(() => giveUp({ error: `Request timeout after ${options.timeout}ms`, code: 'RUST_FETCH_TIMEOUT' }), options.timeout);
+    }
+  });
+  const finished = sent.then((response) => {
+    if (response.error != null) throw coded(new Error(response.error), response.code);
+    const headers = {};
+    const raw = response.headers;
+    for (let i = 0; i < raw.length; i += 2) {
+      const name = raw[i];
+      headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
+    }
+    return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
+  });
+  finished.cancel = () => {
+    if (dispatched) native.cancel(id);
+    else giveUp({ error: 'The request was cancelled', code: 'ABORT_ERR' });
+  };
   return finished;
 }
 

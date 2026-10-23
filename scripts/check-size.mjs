@@ -11,7 +11,7 @@ const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
   'rust_fetch_bg.wasm': { raw: 575_000, gzip: 228_000, brotli: 180_000 },
   'rust_fetch.js': { raw: 70_000, gzip: 11_500, brotli: 10_000 },
-  'node.js': { raw: 26_000, gzip: 9_000, brotli: 8_000 }, // includes the Node.js transports and the native addon's loader
+  'node.js': { raw: 30_000, gzip: 10_000, brotli: 9_000 }, // includes the Node.js transports, the request queue and the native addon's loader
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);
