@@ -41,7 +41,7 @@ await init();
 const client = new WasmClient();
 ```
 
-`init()` is safe to call more than once, and calling it in Node.js is harmless, so shared code can always call it.
+`init()` is safe to call more than once, and calling it in Node.js is harmless, so shared code can always call it. Serve the `.wasm` file with `Content-Type: application/wasm`, so the browser compiles it while it downloads, and consider preloading it (see [Startup](#startup)).
 
 **A client set up for production**, with a base URL, timeouts, retries and error handling:
 
@@ -290,6 +290,31 @@ The [aakjp/stress-test](https://github.com/aakjp/stress-test) harness (60 s, six
 Event-loop delay is how late the harness's 10 ms scheduler ran: how long your own code would wait behind the HTTP client.
 
 In both harnesses, the native transport sustained approximately the target rate and `fetch()` didn't. In the independent harness, both rust-fetch transports still show a p99 stall of about 565 ms even though the native transport's p95 was 4.8 ms. Its cause hasn't been verified.
+
+### Startup
+
+How long until the first response, from a fresh Node.js process or a fresh page (`npm run bench:cold`; median of 7 samples, local server, Apple M1 Pro, Node.js 22.13). *Import* is importing the package, or `init()` in browsers; *first request* is the first `get()` of a small JSON response.
+
+| Runtime | Client | Import / `init()` | First request | Total |
+| --- | --- | ---: | ---: | ---: |
+| Node.js | `fetch()` | — | 21.9 ms | 21.9 ms |
+| Node.js | rust-fetch, node:http transport | 18.3 ms | 9.3 ms | 27.6 ms |
+| Node.js | rust-fetch, native transport | 20.2 ms | 5.3 ms | 25.5 ms |
+| Chromium | rust-fetch, empty cache | 8.3 ms | 6.6 ms | 14.9 ms |
+| Chromium | rust-fetch, cached | 2.4 ms | 1.3 ms | 3.7 ms |
+| Firefox | rust-fetch, empty cache | 15.0 ms | 3.0 ms | 18.0 ms |
+| Firefox | rust-fetch, cached | 13.0 ms | 3.0 ms | 16.0 ms |
+| WebKit | rust-fetch, empty cache | 10.0 ms | 5.0 ms | 15.0 ms |
+| WebKit | rust-fetch, cached | 7.0 ms | 3.0 ms | 10.0 ms |
+
+- **Node.js:** about 13 ms of the import is Node.js loading `node:http`, which `fetch()` pays too, on its first call (it loads undici lazily). rust-fetch's own share is about 7 ms: compiling the WebAssembly module (about 1 ms, since V8 compiles functions on first use), its JS glue, and loading the native addon. All told, the first response arrives 4 to 6 ms later than with `fetch()`.
+- **Browsers:** `init()` streams the module into the compiler as it downloads (`WebAssembly.instantiateStreaming`, which needs `Content-Type: application/wasm`). Chromium also caches the compiled code, so a returning visit costs a few milliseconds. The numbers above don't include download time. On a real network, start the download early by preloading the file from your page's `<head>`:
+
+  ```html
+  <link rel="preload" href="/assets/rust_fetch_bg.wasm" as="fetch" type="application/wasm" crossorigin>
+  ```
+
+  Use the URL your bundler gives the file. With Vite, for example, `import wasmUrl from 'rust-fetch/rust_fetch_bg.wasm?url'` returns it, and `init({ module_or_path: wasmUrl })` then loads that same URL.
 
 ### Reading these results
 
@@ -892,7 +917,7 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 
 ### Benchmarks
 
-`npm run bench` compares rust-fetch with Node's `fetch()` on a local server. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. For sustained load and overload, the [aakjp/stress-test](https://github.com/aakjp/stress-test) harness runs against any installed version of rust-fetch.
+`npm run bench` compares rust-fetch with Node's `fetch()` on a local server, and `npm run bench:cold` measures [startup](#startup) in Node.js and, when Playwright's browsers are installed, Chromium, Firefox and WebKit. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. For sustained load and overload, the [aakjp/stress-test](https://github.com/aakjp/stress-test) harness runs against any installed version of rust-fetch.
 
 ## FAQ
 
