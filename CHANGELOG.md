@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-10-23
+
 ### Fixed
 - **Requests are about 5% faster again: 2.4.0 had made every request slower.** Every request looked up the eight browser `fetch()` options (`credentials`, `mode`, …), one call into JavaScript each, even when none were set and in Node.js, where they're only validated. One `Object.keys` call now skips them when none are set. Published 2.4.0 against this fix (fresh processes, 9 interleaved rounds, node:http transport): small JSON sequential +2.7%, 50 concurrent +5.2%, back to 2.3.0's level. Found by comparing the published 2.3.0 and 2.4.0 packages, and swapping their WebAssembly modules and JS transports, to isolate the cause.
 
@@ -187,7 +189,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...v2.2.0
