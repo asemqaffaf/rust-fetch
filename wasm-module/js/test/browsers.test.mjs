@@ -53,6 +53,10 @@ function handler(cors) {
       case '/':
         res.writeHead(200, { 'content-type': 'text/html' });
         return res.end('<!doctype html><title>rust-fetch browser tests</title>');
+      case '/worker.js':
+      case '/sw.js':
+        res.writeHead(200, { 'content-type': 'text/javascript', 'service-worker-allowed': '/' });
+        return res.end(workerSource(url.pathname === '/sw.js'));
       case '/rust_fetch.js':
       case '/rust_fetch_bg.wasm':
         res.writeHead(200, { 'content-type': url.pathname.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
@@ -112,6 +116,50 @@ function handler(cors) {
         return res.end('not found');
     }
   };
+}
+
+/**
+ * A module worker (dedicated or service) that runs rust-fetch and posts back
+ * what happened. Service workers have no XMLHttpRequest, so upload progress
+ * falls back to fetch() and reports once.
+ */
+function workerSource(service) {
+  return `
+import init, { WasmClient } from '/rust_fetch.js';
+
+async function run({ origin, wsBase }) {
+  const out = { hasXhr: typeof XMLHttpRequest === 'function' };
+  try {
+    await init();
+    const client = new WasmClient({ baseUrl: origin });
+    out.json = (await client.post('/echo', { body: { a: 1 } })).body;
+    try {
+      await client.get('/status?code=500');
+    } catch (error) {
+      out.error = error.kind;
+    }
+    const uploads = [];
+    await client.put('/echo', { body: new Uint8Array(100000), onUploadProgress: (p) => uploads.push(p) });
+    out.uploads = { count: uploads.length, last: uploads.at(-1) };
+    const events = [];
+    const stream = client.events('/sse', { reconnect: false, onEvent: (e) => events.push(e.data) });
+    await stream.closed;
+    out.sse = events;
+    const socket = new WasmClient({ baseUrl: wsBase }).websocket('/worker');
+    await socket.opened;
+    socket.close();
+    out.ws = (await socket.closed).code;
+  } catch (error) {
+    out.failure = String(error);
+  }
+  return out;
+}
+${service
+    ? `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('message', (event) => event.waitUntil(run(event.data).then((out) => event.ports[0].postMessage(out))));`
+    : `self.onmessage = async (event) => self.postMessage(await run(event.data));`}
+`;
 }
 
 function listen(server) {
@@ -312,6 +360,56 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       ]);
       assert.equal(result.text, 'Hi!');
       assert.deepEqual(result.values, [{ n: 1 }, { n: 2 }]);
+    });
+
+    it('works in a dedicated Web Worker', async () => {
+      const result = await page.evaluate(async (config) => {
+        const worker = new Worker('/worker.js', { type: 'module' });
+        const out = await new Promise((resolve, reject) => {
+          worker.onmessage = (event) => resolve(event.data);
+          worker.onerror = (event) => reject(new Error(event.message));
+          worker.postMessage(config);
+        });
+        worker.terminate();
+        return out;
+      }, { origin, wsBase: `http://127.0.0.1:${ws.port}` });
+      assert.equal(result.failure, undefined);
+      assert.equal(result.hasXhr, true);
+      assert.deepEqual(result.json, { method: 'POST', length: 7, type: 'application/json', trace: null });
+      assert.equal(result.error, 'HttpError');
+      assert.ok(result.uploads.count >= 1);
+      assert.deepEqual(result.uploads.last, { loaded: 100000, total: 100000 });
+      assert.deepEqual(result.sse, ['hello', '{"token":"Hi"}']);
+      assert.equal(result.ws, 1000);
+    });
+
+    it('works in a service worker, where upload progress falls back to fetch()', async (t) => {
+      const result = await page.evaluate(async (config) => {
+        if (!('serviceWorker' in navigator)) return { unsupported: 'no navigator.serviceWorker' };
+        let registration;
+        try {
+          registration = await navigator.serviceWorker.register('/sw.js', { type: 'module', scope: '/' });
+        } catch (error) {
+          return { unsupported: String(error) };
+        }
+        await navigator.serviceWorker.ready;
+        const worker = registration.active;
+        const channel = new MessageChannel();
+        const out = await new Promise((resolve) => {
+          channel.port1.onmessage = (event) => resolve(event.data);
+          worker.postMessage(config, [channel.port2]);
+        });
+        await registration.unregister();
+        return out;
+      }, { origin, wsBase: `http://127.0.0.1:${ws.port}` });
+      if (result.unsupported) return t.skip(`module service workers unavailable: ${result.unsupported}`);
+      assert.equal(result.failure, undefined);
+      assert.equal(result.hasXhr, false);
+      assert.deepEqual(result.json, { method: 'POST', length: 7, type: 'application/json', trace: null });
+      assert.equal(result.error, 'HttpError');
+      assert.deepEqual(result.uploads, { count: 1, last: { loaded: 100000, total: 100000 } });
+      assert.deepEqual(result.sse, ['hello', '{"token":"Hi"}']);
+      assert.equal(result.ws, 1000);
     });
 
     it('opens WebSockets, exchanges messages, reconnects and closes', async () => {

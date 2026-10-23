@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Web Workers and service workers are tested in CI in Chromium, Firefox and WebKit: requests, typed errors, upload progress (one report in service workers, which have no `XMLHttpRequest`), Server-Sent Events and WebSockets.
 - **Server-Sent Events:** `client.events(url, options)` reads an event stream in browsers and Node.js, with any method, headers and body (as streaming LLM APIs need), the client's base URL, interceptors, timeouts and typed errors. Events are parsed in Rust to the WHATWG spec (`event`, multi-line `data`, `id`, `retry`, comments, BOM, CR/LF/CRLF, characters split across chunks). Reconnection sends `Last-Event-ID` and honours `retry:`, on by default for `GET`. `messageType: 'json'` parses `data` and stops at `data: [DONE]`. Use callbacks (`onEvent`, …) or `for await`; `break` closes the stream. `opened`/`closed` promises, `signal`, `close()`.
 - **Newline-delimited JSON:** `responseType: 'ndjson'` returns a `ReadableStream` of parsed values, one per line, as lines arrive. A line that isn't JSON errors the stream with a `ParseError` naming the line.
 - The browser bundle grows by about 10 kB brotli for these two features, from 206.8 to 217.4 kB (WebAssembly 197.7 → 207.8 kB, JS glue 9.1 → 9.5 kB); the size budgets are now 700 kB raw / 275 kB gzip for the `.wasm` and 70 kB / 12 kB for `rust_fetch.js`.
