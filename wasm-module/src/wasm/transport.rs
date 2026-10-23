@@ -128,33 +128,18 @@ impl PreparedRequest {
         let redirect = redirect_mode(config);
 
         if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
-            let js_headers = js_sys::Object::new();
-            for &(name, value) in &headers {
-                // Repeated headers are sent as an array, one line each
-                let existing = js_sys::Reflect::get(&js_headers, &name.into())?;
-                let value = if existing.is_undefined() {
-                    JsValue::from_str(value)
-                } else if js_sys::Array::is_array(&existing) {
-                    js_sys::Array::from(&existing).push(&value.into());
-                    existing
-                } else {
-                    js_sys::Array::of2(&existing, &value.into()).into()
-                };
-                set(&js_headers, name, &value)?;
-            }
-            if let Some(content_type) = default_content_type {
-                set(&js_headers, "content-type", &content_type.into())?;
-            }
+            let request = node_request(
+                url,
+                method.as_str(),
+                &headers,
+                default_content_type,
+                body.as_ref(),
+                config,
+                proxy,
+            )?;
             let timeout_ms = config
                 .timeout
                 .map_or(0, |t| u64::try_from(t.as_millis()).unwrap_or(u64::MAX));
-            let request = js_sys::Object::new();
-            set(&request, "method", &method.as_str().into())?;
-            set(&request, "url", &url.into())?;
-            set(&request, "headers", &js_headers)?;
-            if let Some(body) = &body {
-                set(&request, "body", body)?;
-            }
             if timeout_ms > 0 {
                 #[allow(clippy::cast_precision_loss)]
                 set(&request, "timeout", &JsValue::from_f64(timeout_ms as f64))?;
@@ -165,15 +150,6 @@ impl PreparedRequest {
             }
             if let Some(callback) = &progress.download {
                 set(&request, "onDownloadProgress", callback)?;
-            }
-            if redirect == Redirect::Manual {
-                set(&request, "redirect", &"manual".into())?;
-            }
-            if config.max_redirects != DEFAULT_MAX_REDIRECTS {
-                set(&request, "maxRedirects", &config.max_redirects.into())?;
-            }
-            if let Some(proxy) = proxy {
-                set(&request, "proxy", &proxy.into())?;
             }
             return Ok(Self::Node {
                 transport,
@@ -274,10 +250,19 @@ impl PreparedRequest {
 /// A request whose response is returned as soon as its headers arrive
 /// (`responseType: 'stream' | 'ndjson'` and `events()`), sent with `fetch()`
 /// in every runtime
-pub(crate) struct StreamingRequest {
-    url: String,
-    init: web_sys::RequestInit,
-    redirect: Redirect,
+pub(crate) enum StreamingRequest {
+    Fetch {
+        url: String,
+        init: web_sys::RequestInit,
+        redirect: Redirect,
+    },
+    /// Node.js: the Node transport, with `stream: true`. The core's timer
+    /// covers the attempt until the headers arrive.
+    Node {
+        transport: js_sys::Function,
+        request: js_sys::Object,
+        manual: bool,
+    },
 }
 
 /// The head of a streamed response, and its unread body
@@ -293,6 +278,7 @@ impl StreamingRequest {
         url: &str,
         config: &RequestConfig,
         fetch_options: Option<&js_sys::Object>,
+        proxy: Option<&str>,
     ) -> Result<Self> {
         let headers = validated_headers(config)?;
         let body = match &config.body {
@@ -308,15 +294,33 @@ impl StreamingRequest {
             .filter(|bytes| !bytes.is_empty())
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let redirect = redirect_mode(config);
+        let method = config.method.to_reqwest();
+        if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
+            let request = node_request(
+                url,
+                method.as_str(),
+                &headers,
+                default_content_type,
+                body.as_ref(),
+                config,
+                proxy,
+            )?;
+            set(&request, "stream", &JsValue::TRUE)?;
+            return Ok(Self::Node {
+                transport,
+                request,
+                manual: redirect == Redirect::Manual,
+            });
+        }
         let init = fetch_init(
-            config.method.to_reqwest().as_str(),
+            method.as_str(),
             &headers,
             default_content_type,
             body.as_ref(),
             redirect,
             fetch_options,
         )?;
-        Ok(Self {
+        Ok(Self::Fetch {
             url: url.to_string(),
             init,
             redirect,
@@ -326,47 +330,164 @@ impl StreamingRequest {
     /// One attempt, until the response headers arrive. Error statuses are
     /// read in full, as for other requests.
     pub(crate) async fn send(&self) -> Result<Attempt<StreamedResponse>> {
-        let controller = web_sys::AbortController::new().map_err(network_error)?;
-        self.init.set_signal(Some(&controller.signal()));
-        let guard = CancelGuard::new(move || controller.abort());
-        let request = web_sys::Request::new_with_str_and_init(&self.url, &self.init)
-            .map_err(invalid_request)?;
-        let response: web_sys::Response =
-            JsFuture::from(fetch_native(&request).map_err(network_error)?)
-                .await
-                .map_err(network_error)?
-                .unchecked_into();
-        let status = response.status();
-        let headers = response.headers();
-        let redirected = check_redirect(&response, &headers, self.redirect)?;
-        if !(200..300).contains(&status) && !redirected {
-            let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
-                .await
-                .map_err(network_error)?;
-            guard.disarm();
-            let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
-            let retry_after = headers.get("retry-after")?;
-            return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
+        match self {
+            Self::Fetch {
+                url,
+                init,
+                redirect,
+            } => send_fetch_streaming(url, init, *redirect).await,
+            Self::Node {
+                transport,
+                request,
+                manual,
+            } => send_node_streaming(transport, request, *manual).await,
         }
-        // From here on, the body is cancelled when it's dropped
-        guard.disarm();
-        let length = headers
-            .get("content-length")?
-            .and_then(|length| length.trim().parse::<u64>().ok());
-        let url = match response.url() {
-            response_url if response_url.is_empty() => self.url.clone(),
-            response_url => response_url,
-        };
-        Ok(Attempt::Success(StreamedResponse {
-            status,
-            url,
-            headers: rust_headers(&headers)?,
-            body: FetchBody {
-                body: response.body(),
-                length,
-            },
-        }))
     }
+}
+
+async fn send_fetch_streaming(
+    url: &str,
+    init: &web_sys::RequestInit,
+    redirect: Redirect,
+) -> Result<Attempt<StreamedResponse>> {
+    let controller = web_sys::AbortController::new().map_err(network_error)?;
+    init.set_signal(Some(&controller.signal()));
+    let guard = CancelGuard::new(move || controller.abort());
+    let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
+    let response: web_sys::Response =
+        JsFuture::from(fetch_native(&request).map_err(network_error)?)
+            .await
+            .map_err(network_error)?
+            .unchecked_into();
+    let status = response.status();
+    let headers = response.headers();
+    let redirected = check_redirect(&response, &headers, redirect)?;
+    if !(200..300).contains(&status) && !redirected {
+        let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
+            .await
+            .map_err(network_error)?;
+        guard.disarm();
+        let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
+        let retry_after = headers.get("retry-after")?;
+        return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
+    }
+    // From here on, the body is cancelled when it's dropped
+    guard.disarm();
+    let length = headers
+        .get("content-length")?
+        .and_then(|length| length.trim().parse::<u64>().ok());
+    let response_url = match response.url() {
+        response_url if response_url.is_empty() => url.to_string(),
+        response_url => response_url,
+    };
+    Ok(Attempt::Success(StreamedResponse {
+        status,
+        url: response_url,
+        headers: rust_headers(&headers)?,
+        body: FetchBody {
+            body: response.body(),
+            length,
+        },
+    }))
+}
+
+/// A streamed attempt through the Node transport, which resolves once the
+/// headers arrive with `{ status, url, headers, body }`: a `ReadableStream`
+/// for a successful response (or a manual redirect), else the text
+async fn send_node_streaming(
+    transport: &js_sys::Function,
+    request: &js_sys::Object,
+    manual: bool,
+) -> Result<Attempt<StreamedResponse>> {
+    let pending = transport
+        .call1(&JsValue::UNDEFINED, request)
+        .map_err(network_error)?;
+    let cancel: js_sys::Function =
+        js_sys::Reflect::get(&pending, &"cancel".into())?.unchecked_into();
+    let guard = CancelGuard::new(move || {
+        let _ = cancel.call0(&JsValue::UNDEFINED);
+    });
+    let response = JsFuture::from(js_sys::Promise::from(pending))
+        .await
+        .map_err(|error| node_error(&error, 0))?;
+    guard.disarm();
+
+    let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let status = get(&response, "status")?.as_f64().unwrap_or(0.0) as u16;
+    let js_headers = get(&response, "headers")?;
+    let body = get(&response, "body")?;
+    if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
+        let retry_after = get(&js_headers, "retry-after")?.as_string();
+        return Ok(http_error(status, body.as_string(), retry_after.as_deref()));
+    }
+    let mut headers = Headers::new();
+    let entries = js_sys::Object::entries(js_headers.unchecked_ref());
+    for entry in entries.iter() {
+        let entry: js_sys::Array = entry.unchecked_into();
+        headers.insert(
+            entry.get(0).as_string().unwrap_or_default(),
+            entry.get(1).as_string().unwrap_or_default(),
+        );
+    }
+    let length = headers
+        .get_first("content-length")
+        .and_then(|length| length.trim().parse::<u64>().ok());
+    Ok(Attempt::Success(StreamedResponse {
+        status,
+        url: get(&response, "url")?.as_string().unwrap_or_default(),
+        headers,
+        body: FetchBody {
+            body: body.dyn_into().ok(),
+            length,
+        },
+    }))
+}
+
+/// The Node transport's request object, without per-attempt settings
+fn node_request(
+    url: &str,
+    method: &str,
+    headers: &[(&str, &str)],
+    default_content_type: Option<&str>,
+    body: Option<&js_sys::Uint8Array>,
+    config: &RequestConfig,
+    proxy: Option<&str>,
+) -> Result<js_sys::Object> {
+    let js_headers = js_sys::Object::new();
+    for &(name, value) in headers {
+        // Repeated headers are sent as an array, one line each
+        let existing = js_sys::Reflect::get(&js_headers, &name.into())?;
+        let value = if existing.is_undefined() {
+            JsValue::from_str(value)
+        } else if js_sys::Array::is_array(&existing) {
+            js_sys::Array::from(&existing).push(&value.into());
+            existing
+        } else {
+            js_sys::Array::of2(&existing, &value.into()).into()
+        };
+        set(&js_headers, name, &value)?;
+    }
+    if let Some(content_type) = default_content_type {
+        set(&js_headers, "content-type", &content_type.into())?;
+    }
+    let request = js_sys::Object::new();
+    set(&request, "method", &method.into())?;
+    set(&request, "url", &url.into())?;
+    set(&request, "headers", &js_headers)?;
+    if let Some(body) = body {
+        set(&request, "body", body)?;
+    }
+    if !config.follow_redirects {
+        set(&request, "redirect", &"manual".into())?;
+    }
+    if config.max_redirects != DEFAULT_MAX_REDIRECTS {
+        set(&request, "maxRedirects", &config.max_redirects.into())?;
+    }
+    if let Some(proxy) = proxy {
+        set(&request, "proxy", &proxy.into())?;
+    }
+    Ok(request)
 }
 
 /// A streamed response body; cancelled if dropped unread
