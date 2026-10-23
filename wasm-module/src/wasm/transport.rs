@@ -87,6 +87,8 @@ pub(crate) enum PreparedRequest {
         body: Option<js_sys::Uint8Array>,
         body_type: BodyType,
         progress: ProgressCallbacks,
+        /// `credentials: 'include'`
+        with_credentials: bool,
     },
     Node {
         transport: js_sys::Function,
@@ -103,6 +105,7 @@ impl PreparedRequest {
     pub(crate) fn new(
         url: &str,
         config: &RequestConfig,
+        fetch_options: Option<&js_sys::Object>,
         body_type: BodyType,
         progress: ProgressCallbacks,
     ) -> Result<Self> {
@@ -176,24 +179,28 @@ impl PreparedRequest {
             });
         }
 
-        // XMLHttpRequest always follows redirects; fetch() reports progress less often
-        if progress.upload.is_some() && redirect == Redirect::Follow && has_global("XMLHttpRequest")
-        {
-            let mut headers: Vec<(String, String)> = headers
-                .iter()
-                .map(|&(name, value)| (name.to_string(), value.to_string()))
-                .collect();
-            if let Some(content_type) = default_content_type {
-                headers.push(("content-type".to_string(), content_type.to_string()));
+        // XMLHttpRequest always follows redirects and has no equivalent for
+        // most fetch() options; fetch() reports upload progress only once
+        let xhr = progress.upload.is_some() && redirect == Redirect::Follow;
+        if let (true, Some(with_credentials)) = (xhr, xhr_credentials(fetch_options)) {
+            if has_global("XMLHttpRequest") {
+                let mut headers: Vec<(String, String)> = headers
+                    .iter()
+                    .map(|&(name, value)| (name.to_string(), value.to_string()))
+                    .collect();
+                if let Some(content_type) = default_content_type {
+                    headers.push(("content-type".to_string(), content_type.to_string()));
+                }
+                return Ok(Self::Xhr {
+                    method: method.as_str().to_string(),
+                    url: url.to_string(),
+                    headers,
+                    body,
+                    body_type,
+                    progress,
+                    with_credentials,
+                });
             }
-            return Ok(Self::Xhr {
-                method: method.as_str().to_string(),
-                url: url.to_string(),
-                headers,
-                body,
-                body_type,
-                progress,
-            });
         }
 
         let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
@@ -203,6 +210,7 @@ impl PreparedRequest {
             default_content_type,
             body.as_ref(),
             redirect,
+            fetch_options,
         )?;
         Ok(Self::Fetch {
             url: url.to_string(),
@@ -236,7 +244,19 @@ impl PreparedRequest {
                 body,
                 body_type,
                 progress,
-            } => send_xhr(method, url, headers, body.as_ref(), *body_type, progress).await,
+                with_credentials,
+            } => {
+                send_xhr(
+                    method,
+                    url,
+                    headers,
+                    body.as_ref(),
+                    *body_type,
+                    progress,
+                    *with_credentials,
+                )
+                .await
+            }
             Self::Node {
                 transport,
                 request,
@@ -265,7 +285,11 @@ pub(crate) struct StreamedResponse {
 }
 
 impl StreamingRequest {
-    pub(crate) fn new(url: &str, config: &RequestConfig) -> Result<Self> {
+    pub(crate) fn new(
+        url: &str,
+        config: &RequestConfig,
+        fetch_options: Option<&js_sys::Object>,
+    ) -> Result<Self> {
         let headers = validated_headers(config)?;
         let body = match &config.body {
             Some(body) => Some((body.content_type(), body.to_bytes()?)),
@@ -286,6 +310,7 @@ impl StreamingRequest {
             default_content_type,
             body.as_ref(),
             redirect,
+            fetch_options,
         )?;
         Ok(Self {
             url: url.to_string(),
@@ -411,6 +436,7 @@ fn fetch_init(
     default_content_type: Option<&str>,
     body: Option<&js_sys::Uint8Array>,
     redirect: Redirect,
+    fetch_options: Option<&js_sys::Object>,
 ) -> Result<web_sys::RequestInit> {
     let js_headers = web_sys::Headers::new().map_err(invalid_request)?;
     for (name, value) in headers {
@@ -430,11 +456,36 @@ fn fetch_init(
     if redirect != Redirect::Follow {
         init.set_redirect(web_sys::RequestRedirect::Manual);
     }
+    // Validated by the bindings, so they're copied as they are
+    if let Some(options) = fetch_options {
+        js_sys::Object::assign(&init, options);
+    }
     Ok(init)
 }
 
-/// Whether a `fetch()` response sent with `redirect: 'manual'` is a redirect
-/// to return; fails for `redirect: 'error'`. Browsers hide a redirect behind
+/// Whether `XMLHttpRequest` can apply these `fetch()` options, and if so its
+/// `withCredentials`. It can only send cross-origin credentials, not omit
+/// same-origin ones, and has nothing like the other options.
+fn xhr_credentials(fetch_options: Option<&js_sys::Object>) -> Option<bool> {
+    let Some(options) = fetch_options else {
+        return Some(false);
+    };
+    let credentials = js_sys::Reflect::get(options, &"credentials".into())
+        .ok()
+        .and_then(|value| value.as_string());
+    match (
+        js_sys::Object::keys(options).length(),
+        credentials.as_deref(),
+    ) {
+        (0, _) | (1, Some("same-origin")) => Some(false),
+        (1, Some("include")) => Some(true),
+        _ => None,
+    }
+}
+
+/// Whether a `fetch()` response is returned whatever its status: a redirect
+/// with `redirect: 'manual'` (failing for `redirect: 'error'`), or an opaque
+/// response. Browsers hide a redirect behind
 /// an opaque response with status 0; other runtimes (e.g. Deno) return the
 /// redirect itself.
 fn check_redirect(
@@ -455,7 +506,8 @@ fn check_redirect(
             source: None,
         });
     }
-    Ok(redirected)
+    // `mode: 'no-cors'`: the browser hides a cross-origin response the same way
+    Ok(redirected || response.type_() == web_sys::ResponseType::Opaque)
 }
 
 /// Read a body chunk by chunk, reporting download progress after each one,
@@ -599,10 +651,14 @@ async fn send_xhr(
     body: Option<&js_sys::Uint8Array>,
     body_type: BodyType,
     progress: &ProgressCallbacks,
+    with_credentials: bool,
 ) -> Result<Attempt<JsValue>> {
     let xhr = web_sys::XmlHttpRequest::new().map_err(network_error)?;
     xhr.open_with_async(method, url, true)
         .map_err(invalid_request)?;
+    if with_credentials {
+        xhr.set_with_credentials(true);
+    }
     for (name, value) in headers {
         xhr.set_request_header(name, value)
             .map_err(invalid_request)?;

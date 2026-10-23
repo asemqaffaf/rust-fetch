@@ -73,6 +73,28 @@ export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 
  */
 export type RedirectMode = 'follow' | 'manual' | 'error';
 
+/**
+ * `fetch()` options for browsers, Web Workers and other `fetch()` runtimes (Deno, Bun).
+ * Node.js requests don't use them; they're still validated there.
+ */
+export interface BrowserRequestOptions {
+  /** Send cookies and HTTP authentication: `same-origin` (default), `include` (also cross-origin) or `omit` */
+  credentials?: 'omit' | 'same-origin' | 'include';
+  /** `cors` (default), `same-origin`, or `no-cors`, which resolves with an opaque response (`status: 0`, no headers, no body) */
+  mode?: 'cors' | 'no-cors' | 'same-origin';
+  /** How the browser's HTTP cache is used */
+  cache?: 'default' | 'no-store' | 'reload' | 'no-cache' | 'force-cache' | 'only-if-cached';
+  /** Let the request outlive the page, e.g. for analytics on unload (bodies up to 64 KB) */
+  keepalive?: boolean;
+  /** Fetch priority, where the browser supports it */
+  priority?: 'high' | 'low' | 'auto';
+  /** A same-origin URL, `''` for none, or `about:client` (default) */
+  referrer?: string;
+  referrerPolicy?: '' | 'no-referrer' | 'no-referrer-when-downgrade' | 'same-origin' | 'origin' | 'strict-origin' | 'origin-when-cross-origin' | 'strict-origin-when-cross-origin' | 'unsafe-url';
+  /** Subresource integrity metadata, e.g. `sha384-…` */
+  integrity?: string;
+}
+
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
   loaded: number;
@@ -104,7 +126,7 @@ export interface RetryOptions {
   retryNonIdempotent?: boolean;
 }
 
-export interface ClientOptions {
+export interface ClientOptions extends BrowserRequestOptions {
   /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
   baseUrl?: string;
   /** Headers sent with every request; per-request headers with the same name replace them */
@@ -119,7 +141,8 @@ export interface ClientOptions {
   maxRedirects?: number;
 }
 
-export interface RequestOptions {
+/** Per request; `BrowserRequestOptions` set here override the client's one by one */
+export interface RequestOptions extends BrowserRequestOptions {
   headers?: HeadersLike;
   params?: QueryParams;
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
@@ -290,6 +313,10 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxRedirects") {
                 builder = builder.max_redirects(parse_max_redirects(&max)?);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                builder = builder.fetch_options(parse_fetch_options(options, None)?);
             }
         }
 
@@ -745,7 +772,87 @@ pub(crate) fn request_builder(
             None => builder.no_timeout(),
         };
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
+    }
     Ok((builder, body))
+}
+
+/// `BrowserRequestOptions`, validated and merged over the client's. Node.js
+/// requests don't use them, so there they're only validated.
+#[cfg(target_arch = "wasm32")]
+fn parse_fetch_options(
+    options: &JsValue,
+    base: Option<&js_sys::Object>,
+) -> Result<Option<js_sys::Object>> {
+    const CHOICES: [(&str, &[&str]); 5] = [
+        ("credentials", &["omit", "same-origin", "include"]),
+        ("mode", &["cors", "no-cors", "same-origin"]),
+        (
+            "cache",
+            &[
+                "default",
+                "no-store",
+                "reload",
+                "no-cache",
+                "force-cache",
+                "only-if-cached",
+            ],
+        ),
+        ("priority", &["high", "low", "auto"]),
+        (
+            "referrerPolicy",
+            &[
+                "",
+                "no-referrer",
+                "no-referrer-when-downgrade",
+                "same-origin",
+                "origin",
+                "strict-origin",
+                "origin-when-cross-origin",
+                "strict-origin-when-cross-origin",
+                "unsafe-url",
+            ],
+        ),
+    ];
+    let mut merged: Option<js_sys::Object> = None;
+    let mut add = |name: &str, value: &JsValue| {
+        let target = merged.get_or_insert_with(|| {
+            js_sys::Object::assign(
+                &js_sys::Object::new(),
+                base.unwrap_or(&js_sys::Object::new()),
+            )
+        });
+        set(target, name, value)
+    };
+    for (name, allowed) in CHOICES {
+        if let Some(value) = prop(options, name) {
+            if !value
+                .as_string()
+                .is_some_and(|v| allowed.contains(&v.as_str()))
+            {
+                let choices = allowed.join("', '");
+                return Err(invalid(name, &format!("must be one of '{choices}'")));
+            }
+            add(name, &value)?;
+        }
+    }
+    for name in ["referrer", "integrity"] {
+        if let Some(value) = prop(options, name) {
+            if !value.is_string() {
+                return Err(invalid(name, "must be a string"));
+            }
+            add(name, &value)?;
+        }
+    }
+    if let Some(value) = prop(options, "keepalive") {
+        add("keepalive", &parse_bool(&value, "keepalive")?.into())?;
+    }
+    if transport::is_node() {
+        return Ok(None);
+    }
+    Ok(merged.or_else(|| base.cloned()))
 }
 
 /// Report download progress to a JS callback (`{ loaded, total }`).

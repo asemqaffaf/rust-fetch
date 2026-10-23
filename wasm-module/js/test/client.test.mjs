@@ -235,6 +235,49 @@ describe('responses', () => {
   });
 });
 
+describe('browser fetch() options in Node.js', () => {
+  const valid = {
+    credentials: 'include',
+    mode: 'same-origin',
+    cache: 'no-store',
+    keepalive: true,
+    priority: 'high',
+    referrer: '',
+    referrerPolicy: 'no-referrer',
+    integrity: '',
+  };
+
+  it('are accepted on the client and per request, and ignored', async () => {
+    const res = await new WasmClient(valid).get(server.url('/echo'), valid);
+    assert.equal(res.body.method, 'GET');
+    const events = [];
+    const stream = new WasmClient(valid).events(server.url('/echo'), { ...valid, reconnect: false, onError: (e) => events.push(e.kind) });
+    await stream.closed;
+    assert.deepEqual(events, ['ParseError']); // /echo isn't an event stream; the request itself went through
+  });
+
+  it('are validated', async () => {
+    const invalid = {
+      credentials: 'all',
+      mode: 'navigate',
+      cache: 'none',
+      keepalive: 'yes',
+      priority: 1,
+      referrer: 1,
+      referrerPolicy: 'never',
+      integrity: 42,
+    };
+    for (const [parameter, value] of Object.entries(invalid)) {
+      assert.throws(() => new WasmClient({ [parameter]: value }), (error) => error.kind === 'InvalidInputError' && error.parameter === parameter);
+      const error = await rejection(client().get(server.url('/echo'), { [parameter]: value }));
+      assert.equal(error.kind, 'InvalidInputError', parameter);
+      assert.equal(error.parameter, parameter);
+    }
+    const error = await rejection(client().get(server.url('/echo'), { cache: 'none' }));
+    assert.match(error.message, /must be one of 'default', 'no-store'/);
+  });
+});
+
 describe('requests', () => {
   it('sends every HTTP method', async () => {
     const c = client();

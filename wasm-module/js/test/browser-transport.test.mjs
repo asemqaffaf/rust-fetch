@@ -187,6 +187,62 @@ describe('redirect modes through fetch()', () => {
   });
 });
 
+describe('browser fetch() options', () => {
+  /** Run `fn` with fetch() wrapped to record each Request it sends */
+  async function capture(fn) {
+    const original = globalThis.fetch;
+    const requests = [];
+    globalThis.fetch = (request) => {
+      requests.push(request);
+      return original(request);
+    };
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+    return requests;
+  }
+  const fields = (r) => ({ credentials: r.credentials, mode: r.mode, cache: r.cache, keepalive: r.keepalive, referrerPolicy: r.referrerPolicy, integrity: r.integrity });
+
+  it('are passed to fetch(), with request options overriding the client', async () => {
+    const client = new WasmClient({ credentials: 'include', cache: 'no-store', referrerPolicy: 'origin' });
+    const [defaults, overridden, untouched] = await capture(async () => {
+      await client.get(server.url('/echo'));
+      await client.post(server.url('/echo'), { body: 'x', cache: 'reload', keepalive: true, integrity: '' });
+      await new WasmClient().get(server.url('/echo'));
+    });
+    assert.deepEqual(fields(defaults), { credentials: 'include', mode: 'cors', cache: 'no-store', keepalive: false, referrerPolicy: 'origin', integrity: '' });
+    assert.deepEqual(fields(overridden), { credentials: 'include', mode: 'cors', cache: 'reload', keepalive: true, referrerPolicy: 'origin', integrity: '' });
+    assert.deepEqual(fields(untouched), { credentials: 'same-origin', mode: 'cors', cache: 'default', keepalive: false, referrerPolicy: '', integrity: '' });
+  });
+
+  it('apply to streamed responses and Server-Sent Events', async () => {
+    const client = new WasmClient({ credentials: 'omit' });
+    const requests = await capture(async () => {
+      const res = await client.get(server.url('/bytes'), { responseType: 'stream', cache: 'no-cache' });
+      await new Response(res.body).arrayBuffer();
+      await client.events(server.url('/echo'), { reconnect: false }).closed;
+    });
+    assert.deepEqual(requests.map((r) => [r.credentials, r.cache]), [['omit', 'no-cache'], ['omit', 'default']]);
+  });
+
+  it('keep XMLHttpRequest for upload progress only when it can apply them', async () => {
+    globalThis.XMLHttpRequest = FakeXMLHttpRequest;
+    const upload = (options) => new WasmClient().post(server.url('/echo'), { body: 'abc', onUploadProgress: () => {}, ...options });
+    await upload({ credentials: 'include' });
+    await upload({ credentials: 'same-origin' });
+    assert.deepEqual(FakeXMLHttpRequest.instances.map((xhr) => xhr.withCredentials ?? false), [true, false]);
+    // XMLHttpRequest can't omit credentials or apply the other options
+    const requests = await capture(async () => {
+      await upload({ credentials: 'omit' });
+      await upload({ cache: 'no-store' });
+    });
+    assert.equal(FakeXMLHttpRequest.instances.length, 2);
+    assert.deepEqual(requests.map((r) => [r.credentials, r.cache]), [['omit', 'default'], ['same-origin', 'no-store']]);
+  });
+});
+
 describe('upload progress with XMLHttpRequest', () => {
   beforeEach(() => {
     globalThis.XMLHttpRequest = FakeXMLHttpRequest;
