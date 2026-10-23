@@ -88,6 +88,20 @@ function handler(cors) {
         res.write('first,');
         await new Promise((r) => setTimeout(r, 100));
         return res.end('second');
+      case '/sse':
+        res.writeHead(200, { ...headers, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        res.write('event: greeting\ndata: hello\nid: 1\n\n');
+        res.write('data: {"token":"Hi"}\n\n');
+        return res.end();
+      case '/sse-json':
+        res.writeHead(200, { ...headers, 'content-type': 'text/event-stream' });
+        res.write('data: {"token":"Hi"}\n\ndata: {"token":"!"}\n\ndata: [DONE]\n\n');
+        return res.end();
+      case '/ndjson':
+        res.writeHead(200, { ...headers, 'content-type': 'application/x-ndjson' });
+        res.write('{"n":1}\n{"n"');
+        await new Promise((r) => setTimeout(r, 20));
+        return res.end(':2}\n');
       case '/large': {
         const size = 2 * 1024 * 1024;
         res.writeHead(200, { ...headers, 'content-type': 'application/octet-stream', 'content-length': size });
@@ -263,6 +277,41 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.match(result.cross.type, /^multipart\/form-data; boundary=/);
       assert.equal(result.crossLast.loaded, result.crossLast.total);
       assert.ok(preflights.length > before, 'the cross-origin upload was preflighted');
+    });
+
+    it('reads Server-Sent Events and newline-delimited JSON', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin, crossOrigin }) => {
+        const client = new WasmClient({ baseUrl: origin });
+        const raw = [];
+        const first = client.events('/sse', { reconnect: false, onEvent: (e) => raw.push(e) });
+        await first.closed;
+
+        // A streaming-API style request: POST, JSON data, ends at [DONE]
+        let text = '';
+        const stream = new WasmClient({ baseUrl: crossOrigin }).events('/sse-json', { method: 'POST', body: { prompt: 'hi' }, messageType: 'json' });
+        const reader = { next: () => stream.next() };
+        for (;;) {
+          const { value, done } = await reader.next();
+          if (done) break;
+          if (value.event === 'message') text += value.data.token;
+        }
+
+        const res = await client.get('/ndjson', { responseType: 'ndjson' });
+        const values = [];
+        const r = res.body.getReader();
+        for (;;) {
+          const { value, done } = await r.read();
+          if (done) break;
+          values.push(value);
+        }
+        return { raw: raw.slice(0, 2), text, values };
+      });
+      assert.deepEqual(result.raw, [
+        { event: 'greeting', data: 'hello', id: '1' },
+        { event: 'message', data: '{"token":"Hi"}', id: '1' },
+      ]);
+      assert.equal(result.text, 'Hi!');
+      assert.deepEqual(result.values, [{ n: 1 }, { n: 2 }]);
     });
 
     it('opens WebSockets, exchanges messages, reconnects and closes', async () => {

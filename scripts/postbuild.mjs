@@ -31,6 +31,26 @@ if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
   throw new Error('postbuild: no WasmClient request methods found to make generic');
 }
 types = types.replace(generic, '$1<T = any>($2): Promise<HttpResponse<T>>;');
+// EventStream is an async iterator: its next() and return() come from Rust,
+// but wasm-bindgen can't declare symbol-named methods, so add
+// [Symbol.asyncIterator] to the generated class and its declaration.
+const glueUrl = new URL('rust_fetch.js', pkgDir);
+const glue = readFileSync(glueUrl, 'utf8');
+const iterable = 'EventStream.prototype[Symbol.asyncIterator] = function () { return this; };';
+if (!glue.includes('export class EventStream')) {
+  throw new Error('postbuild: EventStream not found in rust_fetch.js');
+}
+if (!glue.includes(iterable)) {
+  writeFileSync(glueUrl, `${glue}\n// Added by scripts/postbuild.mjs\n${iterable}\n`);
+}
+types = types.replace(
+  /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
+  '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',
+);
+if (!types.includes('[Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;')) {
+  throw new Error('postbuild: could not declare EventStream as an async iterator');
+}
+
 writeFileSync(typesUrl, types);
 
 const manifestUrl = new URL('package.json', pkgDir);

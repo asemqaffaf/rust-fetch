@@ -12,7 +12,7 @@
 - **Errors you can branch on.** Every failure rejects with a typed `Error`: `HttpError` (with the status and response body), `TimeoutError`, `NetworkError`, `CancelledError` and [more](#errors), so one `catch` handles them all.
 - **Timeouts and retries done right.** `timeoutMs` covers each attempt up to the last byte of the body. Retries back off with jitter, honour `Retry-After`, and never repeat a POST or PATCH unless you allow it.
 - **One core, every runtime.** The request policy is written once in Rust and compiled to WebAssembly, so a request is validated, retried and timed out the same way in a browser tab and in a Node.js service.
-- **More than `fetch()` offers.** Interceptors, streaming, and download and upload progress.
+- **More than `fetch()` offers.** Interceptors, streaming, Server-Sent Events and newline-delimited JSON (for LLM and other streaming APIs), and download and upload progress.
 - **One client for HTTP and WebSockets.** `client.websocket()` shares the client's base URL, timeouts and typed errors, and adds reconnection with backoff.
 - **Steady under load.** In an [independent benchmark](#independent-benchmark-of-rust-fetch-210) at 15,000 requests per second, the published client's p99 latency was **11.2 ms against 450 ms** for Node.js `fetch()`, with a third of the memory. The native transport, not in the npm package yet, reached up to **1.95×** `fetch()`'s throughput ([performance](#performance)).
 
@@ -76,7 +76,7 @@ try {
 - [Why rust-fetch?](#why-rust-fetch)
 - [Features](#features)
 - [Performance](#performance)
-- [Usage and configuration](#usage-and-configuration): [client options](#client-options) · [requests](#making-requests) · [bodies](#request-bodies) · [responses](#responses) · [errors](#errors) · [timeouts](#timeouts) · [retries](#retries) · [cancellation](#cancellation) · [interceptors](#interceptors) · [streaming](#streaming) · [download progress](#download-progress) · [uploads](#file-uploads) · [upload progress](#upload-progress) · [WebSockets](#websockets) · [TypeScript](#typescript) · [legacy functions](#legacy-functions)
+- [Usage and configuration](#usage-and-configuration): [client options](#client-options) · [requests](#making-requests) · [bodies](#request-bodies) · [responses](#responses) · [errors](#errors) · [timeouts](#timeouts) · [retries](#retries) · [cancellation](#cancellation) · [interceptors](#interceptors) · [streaming](#streaming) · [Server-Sent Events](#server-sent-events) · [download progress](#download-progress) · [uploads](#file-uploads) · [upload progress](#upload-progress) · [WebSockets](#websockets) · [TypeScript](#typescript) · [legacy functions](#legacy-functions)
 - [Using it from Rust](#using-it-from-rust)
 - [Architecture](#architecture)
 - [Compatibility and limitations](#compatibility-and-limitations)
@@ -96,10 +96,11 @@ try {
 | Timeouts | Wire up `AbortSignal.timeout()` | `timeout` option | `timeoutMs` per attempt, including the body; 30 s by default |
 | Retries with backoff | No | With a plugin (`axios-retry`) | Built in: jitter, `Retry-After`, no POST or PATCH retries unless enabled |
 | Interceptors | No | Yes | Yes |
+| Server-Sent Events | `EventSource`: browsers only, `GET` only, no custom headers | No | `client.events()`: any method, headers and body, reconnection, browsers and Node.js |
 | Download progress | Read the stream yourself | Yes | Yes |
 | Upload progress | No | Yes | Yes |
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 207 KB: the WebAssembly module (198 KB) and its JS glue |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 217 KB: the WebAssembly module (208 KB) and its JS glue |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](#using-it-from-rust)).
 
@@ -113,7 +114,7 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 ### When to choose something else
 
-- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 198 KB brotli-compressed.
+- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 208 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
 - **Your Node.js code makes one request at a time** and you're considering the native transport for speed: it's about 6% slower there.
 
@@ -132,6 +133,7 @@ Unless noted, each of these works the same in browsers, Web Workers and Node.js 
 - **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams` or JSON, with the matching `Content-Type` set for you. [Request bodies](#request-bodies)
 - **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`. [Responses](#responses)
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks, for large downloads. [Streaming](#streaming)
+- **Server-Sent Events** with `client.events()`: in browsers and Node.js, with any method, headers and body (as streaming LLM APIs need), JSON data, reconnection with `Last-Event-ID`, and `for await`. **Newline-delimited JSON** with `responseType: 'ndjson'`. [Server-Sent Events](#server-sent-events)
 - **Upload progress** callbacks, for progress bars on large uploads, which `fetch()` can't report. [Upload progress](#upload-progress)
 
 **Real-time**
@@ -343,7 +345,7 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `headers` | object, `Headers`, `Map` or `[name, value][]` | Override client headers with the same name. Numbers and booleans are converted to strings. |
 | `params` | object or `URLSearchParams` | Appended to the query string. Arrays repeat the key; `null`/`undefined` are skipped. |
 | `timeoutMs` | number | Overrides the client timeout; `0` disables it |
-| `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` | See [Responses](#responses) |
+| `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` \| `'ndjson'` | See [Responses](#responses) |
 | `signal` | `AbortSignal` | See [Cancellation](#cancellation) |
 | `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](#download-progress) |
 | `onUploadProgress` | `({ loaded, total }) => void` | See [Upload progress](#upload-progress) |
@@ -384,7 +386,7 @@ With the default `responseType: 'auto'`, `body` is:
 - **a `Uint8Array`** for anything else
 - **`null`** when the body is empty (e.g. `204` or `HEAD`)
 
-Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'` or `'stream'`. JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
+Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'`, `'stream'` or `'ndjson'` (see [Streaming](#streaming)). JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
 
 ### Errors
 
@@ -505,6 +507,55 @@ console.log(`${received} bytes`);
 
 `for await` over a stream works in Node.js, Chrome and Firefox. Safari doesn't support it yet, so use `res.body.getReader()` there. Retries apply until the headers arrive, and error statuses still reject with an `HttpError`.
 
+**Newline-delimited JSON** (NDJSON, JSON Lines), as streamed by Ollama, many search and log APIs, and Kubernetes watches: with `responseType: 'ndjson'`, `body` is a `ReadableStream` of parsed values, one per line, as each line arrives:
+
+```js
+const res = await client.post('/api/generate', { body: { model: 'llama3', prompt: 'Why is the sky blue?' }, responseType: 'ndjson' });
+for await (const chunk of res.body) {
+  console.log(chunk.response);
+}
+```
+
+Lines may be split across network chunks, end in `\n` or `\r\n`, and the last one doesn't need a newline; empty lines are skipped. A line that isn't JSON errors the stream with a `ParseError` naming the line number.
+
+### Server-Sent Events
+
+`client.events()` reads a [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html) stream. Unlike the browser's `EventSource`, it works in Node.js too, sends any method, headers and body, and uses the client's base URL, interceptors, timeouts and typed errors.
+
+```js
+// A streaming LLM API: POST a JSON body, read JSON events until `data: [DONE]`
+const stream = client.events('/v1/chat/completions', {
+  method: 'POST',
+  body: { model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'Hello' }], stream: true },
+  headers: { authorization: 'Bearer your-api-key' },
+  messageType: 'json',
+});
+for await (const { data } of stream) {
+  console.log(data.choices[0].delta.content ?? '');
+}
+
+// A notification feed: callbacks, reconnecting with Last-Event-ID
+const feed = client.events('/notifications', {
+  onEvent: ({ event, data, id }) => console.log(event, data, id),
+  onError: (error) => console.warn(error.kind, error.message),
+});
+await feed.opened;
+feed.close();
+```
+
+Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream.
+
+| Option | Description |
+| --- | --- |
+| `method`, `body`, `headers`, `params`, `timeoutMs` | As for requests. `timeoutMs` covers each connection attempt until the response headers arrive |
+| `reconnect` | Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and waiting the server's `retry:` delay (otherwise backing off like WebSockets). `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }`. Default: on for `GET`, off for other methods, which would resend their body |
+| `messageType` | `'auto'` (default: `data` is a string) or `'json'` |
+| `end` | Close the stream normally when an event's `data` equals this. Default: `'[DONE]'` with `messageType: 'json'` |
+| `signal` | Closes the stream and stops reconnecting when aborted |
+| `onOpen`, `onEvent`, `onError`, `onReconnect`, `onClose` | Callbacks; `onClose` runs once, when the stream is closed for good |
+
+The stream also has `url`, `state` (`'connecting'`, `'open'`, `'reconnecting'` or `'closed'`), `lastEventId`, and `opened` and `closed` promises. Failures are typed: a refused connection or dropped stream is a `NetworkError`, a response that isn't `text/event-stream` a `ParseError`, an error status an `HttpError` (408, 429 and 5xx are reconnected after, others end the stream), and a `204 No Content` ends it normally. With `messageType: 'json'`, a `data` that isn't JSON goes to `onError`; when iterating, it ends the stream with the `ParseError`. Request interceptors run before each connection.
+
 ### Download progress
 
 ```js
@@ -598,7 +649,7 @@ Failures are typed like request errors: a refused or failed connection is a `Net
 
 ### TypeScript
 
-Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `FetchInit`, `RetryOptions`, `HttpResponse`, `RustFetchError`, `DownloadProgress`, `UploadProgress` and `InterceptedRequest`, and for WebSockets `WebSocketConnection`, `WebSocketOptions`, `ReconnectOptions`, `WebSocketCloseInfo`, `WebSocketReconnectInfo`, `WebSocketState` and `WebSocketData`.
+Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `FetchInit`, `RetryOptions`, `HttpResponse`, `RustFetchError`, `DownloadProgress`, `UploadProgress` and `InterceptedRequest`, for WebSockets `WebSocketConnection`, `WebSocketOptions`, `ReconnectOptions`, `WebSocketCloseInfo`, `WebSocketReconnectInfo`, `WebSocketState` and `WebSocketData`, and for Server-Sent Events `EventStream`, `EventStreamOptions`, `EventStreamState` and `ServerSentEvent`.
 
 Every request method takes the response body's type as a type parameter, defaulting to `any`:
 
@@ -680,7 +731,7 @@ Everything that decides what happens to a request (URL handling, validation, ret
 | --- | --- | --- |
 | Most requests | `fetch()` | The native transport where it's built and Node's global agents are untouched; otherwise `node:http` |
 | With `onUploadProgress` (with or without `onDownloadProgress`) | `XMLHttpRequest`, or `fetch()` where there's none | `node:http` |
-| With `onDownloadProgress` only, or `responseType: 'stream'` | `fetch()` | Node's `fetch()` |
+| With `onDownloadProgress` only, `responseType: 'stream'` or `'ndjson'`, and `client.events()` | `fetch()` | Node's `fetch()` |
 
 **What the native transport changes.** Connection handling, TLS, HTTP parsing and decompression move from the JavaScript event loop to Tokio threads; JavaScript only builds requests and decodes their bodies. That's why it gains most with many requests in flight, and why the hand-off between threads likely contributes to its slower sequential results ([measurements](#the-native-transport-not-in-the-npm-package-yet)).
 
@@ -705,7 +756,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 
 ### Limitations
 
-- **Bundle size:** the WebAssembly module adds about 198 KB (brotli) to a browser bundle.
+- **Bundle size:** the WebAssembly module adds about 208 KB (brotli) to a browser bundle.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, install a proxy agent as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`). In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. It's about 6% slower than `fetch()` for sequential requests, isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
@@ -782,7 +833,7 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3 })` times out each attempt (including the body) and retries network errors, timeouts and 408/429/5xx responses with exponential backoff and jitter, honouring `Retry-After`. POST and PATCH aren't retried unless you opt in. See [Timeouts](#timeouts) and [Retries](#retries).
 
 **Is rust-fetch an alternative to axios?**
-Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 207 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
+Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 217 KB brotli). See [Compared with `fetch()` and axios](#compared-with-fetch-and-axios).
 
 **Does it work in browsers and Node.js?**
 Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](#supported-environments).
@@ -792,6 +843,9 @@ In Node.js, the published client matches `fetch()` one request at a time and is 
 
 **How do I track upload progress?**
 Pass `onUploadProgress: ({ loaded, total }) => …` to `post`, `put` or `patch`. See [Upload progress](#upload-progress).
+
+**How do I stream a response from an LLM API?**
+For Server-Sent Events APIs (OpenAI-compatible and others), use `client.events(url, { method: 'POST', body, messageType: 'json' })` and `for await` over it; it stops at `data: [DONE]`. For newline-delimited JSON APIs such as Ollama, use `responseType: 'ndjson'`. Both work in browsers and Node.js. See [Server-Sent Events](#server-sent-events).
 
 **How do I reconnect a WebSocket automatically?**
 `client.websocket(url, { reconnect: true })` reconnects after failures and unexpected drops with exponential backoff, and reports failures as typed errors. See [WebSockets](#websockets).

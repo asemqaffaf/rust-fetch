@@ -5,8 +5,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 660_000, gzip: 260_000 },
-  'rust_fetch.js': { raw: 65_000, gzip: 11_500 },
+  'rust_fetch_bg.wasm': { raw: 700_000, gzip: 275_000 },
+  'rust_fetch.js': { raw: 70_000, gzip: 12_000 },
   'node.js': { raw: 17_000, gzip: 6_500 }, // includes the Node.js transports and the native addon's loader
 };
 

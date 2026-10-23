@@ -1,5 +1,106 @@
 /* @ts-self-types="./rust_fetch.d.ts" */
 
+/**
+ * A Server-Sent Events stream created by `WasmClient.events()`; also an async iterator of events
+ */
+export class EventStream {
+    static __wrap(ptr) {
+        const obj = Object.create(EventStream.prototype);
+        obj.__wbg_ptr = ptr;
+        EventStreamFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EventStreamFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_eventstream_free(ptr, 0);
+    }
+    /**
+     * Close the stream and stop reconnecting
+     */
+    close() {
+        wasm.eventstream_close(this.__wbg_ptr);
+    }
+    /**
+     * Resolves once the stream is closed for good
+     * @returns {Promise<void>}
+     */
+    get closed() {
+        const ret = wasm.eventstream_closed(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * The last event ID received, sent as `Last-Event-ID` when reconnecting
+     * @returns {string}
+     */
+    get lastEventId() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.eventstream_last_event_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The next buffered event (async iterator protocol)
+     * @returns {Promise<IteratorResult<ServerSentEvent>>}
+     */
+    next() {
+        const ret = wasm.eventstream_next(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Resolves when the first connection opens; rejects if it never does
+     * @returns {Promise<void>}
+     */
+    get opened() {
+        const ret = wasm.eventstream_opened(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Stop iterating: closes the stream (async iterator protocol, e.g. `break`)
+     * @returns {Promise<IteratorResult<ServerSentEvent>>}
+     */
+    return() {
+        const ret = wasm.eventstream_return(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * `connecting`, `open`, `reconnecting` or `closed`
+     * @returns {EventStreamState}
+     */
+    get state() {
+        const ret = wasm.eventstream_state(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * The stream's URL, resolved against the client's base URL
+     * @returns {string}
+     */
+    get url() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.eventstream_url(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) EventStream.prototype[Symbol.dispose] = EventStream.prototype.free;
+
 export class IntoUnderlyingByteSource {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -183,6 +284,21 @@ export class WasmClient {
     ejectInterceptor(id) {
         const ret = wasm.wasmclient_ejectInterceptor(this.__wbg_ptr, id);
         return ret !== 0;
+    }
+    /**
+     * Open a Server-Sent Events stream. Relative URLs are resolved against the base URL.
+     * @param {string} url
+     * @param {EventStreamOptions | null} [options]
+     * @returns {EventStream}
+     */
+    events(url, options) {
+        const ptr0 = passStringToWasm0(url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmclient_events(this.__wbg_ptr, ptr0, len0, isLikeNone(options) ? 0 : addToExternrefTable0(options));
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return EventStream.__wrap(ret[0]);
     }
     /**
      * Make a request described by a `fetch`-style init object
@@ -1204,22 +1320,22 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 253, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 267, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hee4dc590ff76ee6a);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 376, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 390, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9);
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 154, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 204, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hd0ea8bfc4af5d405);
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 217, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 231, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h5f968e02a5abe20b);
             return ret;
         },
@@ -1289,6 +1405,9 @@ const __wbindgen_enum_RequestMode = ["same-origin", "no-cors", "cors", "navigate
 
 
 const __wbindgen_enum_XmlHttpRequestResponseType = ["", "arraybuffer", "blob", "document", "json", "text"];
+const EventStreamFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_eventstream_free(ptr, 1));
 const IntoUnderlyingByteSourceFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_intounderlyingbytesource_free(ptr, 1));
@@ -1615,3 +1734,6 @@ async function __wbg_init(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
+
+// Added by scripts/postbuild.mjs
+EventStream.prototype[Symbol.asyncIterator] = function () { return this; };

@@ -1,0 +1,256 @@
+//! Server-Sent Events parsing, as specified by the WHATWG HTML standard
+//! ("Server-sent events", *Parsing an event stream*).
+//!
+//! Bytes are fed in chunks as they arrive; lines are split on `\r\n`, `\n`
+//! or `\r` (also across chunk boundaries) and decoded as UTF-8 only once
+//! complete, so a multi-byte character split between chunks is never broken.
+#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
+/// One dispatched event
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Event {
+    /// The `event:` field, or `"message"`
+    pub(crate) event: String,
+    /// The `data:` lines, joined with `\n`
+    pub(crate) data: String,
+    /// The last event ID in effect when the event was dispatched
+    pub(crate) id: String,
+}
+
+/// An incremental event stream parser
+#[derive(Debug, Default)]
+pub(crate) struct Parser {
+    /// Bytes of the current, incomplete line
+    line: Vec<u8>,
+    /// The previous chunk ended with `\r`, so a leading `\n` belongs to it
+    after_cr: bool,
+    /// Whether the start of the stream has been checked for a BOM
+    started: bool,
+    event: String,
+    data: String,
+    has_data: bool,
+    last_event_id: String,
+    retry: Option<u64>,
+}
+
+impl Parser {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// The last event ID seen; the client reads it from each event instead
+    #[cfg(test)]
+    pub(crate) fn last_event_id(&self) -> &str {
+        &self.last_event_id
+    }
+
+    /// The reconnection time from the latest `retry:` field, once
+    pub(crate) fn take_retry(&mut self) -> Option<u64> {
+        self.retry.take()
+    }
+
+    /// Feed a chunk of the stream; returns the events it completes
+    pub(crate) fn feed(&mut self, mut chunk: &[u8]) -> Vec<Event> {
+        let mut events = Vec::new();
+        if !self.started && !chunk.is_empty() {
+            // A UTF-8 BOM at the very start of the stream is skipped
+            self.line.extend_from_slice(chunk);
+            if self.line.len() < 3 && b"\xEF\xBB\xBF".starts_with(&self.line) {
+                return events;
+            }
+            self.started = true;
+            let buffered = std::mem::take(&mut self.line);
+            let rest = buffered.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buffered);
+            return self.feed_lines(rest);
+        }
+        if self.after_cr {
+            if let Some(rest) = chunk.strip_prefix(b"\n") {
+                chunk = rest;
+            }
+            self.after_cr = false;
+        }
+        events.extend(self.feed_lines(chunk));
+        events
+    }
+
+    fn feed_lines(&mut self, chunk: &[u8]) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut rest = chunk;
+        while let Some(end) = rest.iter().position(|&b| b == b'\n' || b == b'\r') {
+            self.line.extend_from_slice(&rest[..end]);
+            let line = std::mem::take(&mut self.line);
+            if let Some(event) = self.process_line(&line) {
+                events.push(event);
+            }
+            if rest[end] == b'\r' {
+                match rest.get(end + 1) {
+                    Some(b'\n') => rest = &rest[end + 2..],
+                    Some(_) => rest = &rest[end + 1..],
+                    None => {
+                        self.after_cr = true;
+                        rest = &[];
+                    }
+                }
+            } else {
+                rest = &rest[end + 1..];
+            }
+        }
+        self.line.extend_from_slice(rest);
+        events
+    }
+
+    fn process_line(&mut self, line: &[u8]) -> Option<Event> {
+        if line.is_empty() {
+            return self.dispatch();
+        }
+        if line[0] == b':' {
+            return None; // comment
+        }
+        let line = String::from_utf8_lossy(line);
+        let (field, value) = match line.split_once(':') {
+            Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
+            None => (line.as_ref(), ""),
+        };
+        match field {
+            "event" => self.event = value.to_string(),
+            "data" => {
+                if self.has_data {
+                    self.data.push('\n');
+                }
+                self.data.push_str(value);
+                self.has_data = true;
+            }
+            "id" if !value.contains('\0') => self.last_event_id = value.to_string(),
+            "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
+                self.retry = value.parse().ok();
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn dispatch(&mut self) -> Option<Event> {
+        let event = std::mem::take(&mut self.event);
+        if !self.has_data {
+            return None;
+        }
+        self.has_data = false;
+        Some(Event {
+            event: if event.is_empty() {
+                "message".to_string()
+            } else {
+                event
+            },
+            data: std::mem::take(&mut self.data),
+            id: self.last_event_id.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_all(chunks: &[&[u8]]) -> (Vec<Event>, Parser) {
+        let mut parser = Parser::new();
+        let mut events = Vec::new();
+        for chunk in chunks {
+            events.extend(parser.feed(chunk));
+        }
+        (events, parser)
+    }
+
+    fn event(event: &str, data: &str, id: &str) -> Event {
+        Event {
+            event: event.to_string(),
+            data: data.to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn parses_events_with_types_ids_and_multiline_data() {
+        let (events, parser) =
+            parse_all(&[b"data: first\n\nevent: update\ndata: line 1\ndata: line 2\nid: 7\n\n"]);
+        assert_eq!(
+            events,
+            vec![
+                event("message", "first", ""),
+                event("update", "line 1\nline 2", "7")
+            ]
+        );
+        assert_eq!(parser.last_event_id(), "7");
+    }
+
+    #[test]
+    fn splits_lines_on_lf_cr_and_crlf_even_across_chunks() {
+        let (events, _) = parse_all(&[b"data: a\r\n\r", b"\ndata: b\r\rdata: c\n", b"\n"]);
+        assert_eq!(
+            events,
+            vec![
+                event("message", "a", ""),
+                event("message", "b", ""),
+                event("message", "c", "")
+            ]
+        );
+        // A chunk ending in \r followed by one that doesn't start with \n
+        let (events, _) = parse_all(&[b"data: d\r", b"\r"]);
+        assert_eq!(events, vec![event("message", "d", "")]);
+    }
+
+    #[test]
+    fn keeps_multibyte_characters_split_across_chunks() {
+        let bytes = "data: Zoë 🦀\n\n".as_bytes();
+        let chunks: Vec<&[u8]> = bytes.chunks(1).collect();
+        let (events, _) = parse_all(&chunks);
+        assert_eq!(events, vec![event("message", "Zoë 🦀", "")]);
+    }
+
+    #[test]
+    fn skips_a_leading_bom_only_once() {
+        let (events, _) = parse_all(&[b"\xEF\xBB", b"\xBFdata: x\n\n"]);
+        assert_eq!(events, vec![event("message", "x", "")]);
+        let (events, _) = parse_all(&[b"\xEF\xBB\xBFdata: y\n\n"]);
+        assert_eq!(events, vec![event("message", "y", "")]);
+        // Not a BOM: the bytes are kept as the start of the stream
+        let (events, _) = parse_all(&[b"\xEF", b"data: z\n\n"]);
+        assert!(events.is_empty());
+        let (events, _) = parse_all(&[b"", b"data: w\n\n"]);
+        assert_eq!(events, vec![event("message", "w", "")]);
+    }
+
+    #[test]
+    fn handles_comments_fields_without_values_and_unknown_fields() {
+        let (events, _) = parse_all(&[b": keep-alive\ndata\nfoo: bar\ndata:no space\n\n"]);
+        assert_eq!(events, vec![event("message", "\nno space", "")]);
+    }
+
+    #[test]
+    fn ignores_empty_events_and_resets_the_type() {
+        let (events, _) = parse_all(&[b"event: ignored\n\ndata: x\n\n"]);
+        assert_eq!(events, vec![event("message", "x", "")]);
+    }
+
+    #[test]
+    fn tracks_ids_and_retry() {
+        let (events, mut parser) = parse_all(&[
+            b"id: 1\ndata: a\n\nid\ndata: b\n\nid: bad\0id\nretry: 2500\nretry: soon\nretry:\ndata: c\n\n",
+        ]);
+        assert_eq!(
+            events,
+            vec![
+                event("message", "a", "1"),
+                event("message", "b", ""),
+                event("message", "c", "")
+            ]
+        );
+        assert_eq!(parser.take_retry(), Some(2500));
+        assert_eq!(parser.take_retry(), None);
+    }
+
+    #[test]
+    fn discards_an_incomplete_event_at_the_end() {
+        let (events, _) = parse_all(&[b"data: complete\n\ndata: partial"]);
+        assert_eq!(events, vec![event("message", "complete", "")]);
+    }
+}

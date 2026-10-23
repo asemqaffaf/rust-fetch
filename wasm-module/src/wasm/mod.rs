@@ -4,6 +4,8 @@
 //! Everything in this module needs a JavaScript engine to run. It's tested
 //! with `wasm-pack test --node` and the JS test suite in `js/test`.
 
+#[cfg(target_arch = "wasm32")]
+mod events;
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
@@ -59,10 +61,11 @@ export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | 
  * - `text`: always a string
  * - `binary`: always a `Uint8Array`
  * - `stream`: a `ReadableStream<Uint8Array>`, returned as soon as the headers arrive
+ * - `ndjson`: a `ReadableStream` of parsed JSON values, one per line of newline-delimited JSON, returned as soon as the headers arrive
  *
  * Empty bodies are `null` for `auto`/`json`, `""` for `text` and an empty `Uint8Array` for `binary`.
  */
-export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream';
+export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
 
 /** Download progress; `total` comes from `Content-Length` and is `null` when unknown. */
 export interface DownloadProgress {
@@ -603,6 +606,7 @@ impl JsRequest {
 }
 
 /// How to interpret a JS request body
+#[derive(Clone)]
 pub(crate) enum BodyMode {
     /// Infer from the value's type (see `RequestBody` in the TypeScript definitions)
     Auto(JsValue),
@@ -619,6 +623,7 @@ pub(crate) enum BodyType {
     Text = 2,
     Binary = 3,
     Stream = 4,
+    Ndjson = 5,
 }
 
 /// Build, send and convert a request coming from JavaScript
@@ -627,27 +632,7 @@ pub(crate) async fn send(
     request: JsRequest,
     options: &JsValue,
 ) -> Result<JsValue> {
-    let JsRequest {
-        method,
-        url,
-        headers,
-        body,
-    } = request;
-    let mut builder = client
-        .request(method, &url)
-        // Decode here rather than in Rust, so JSON is parsed by the JS engine
-        .response_format(ResponseFormat::Binary)
-        .headers(headers);
-
-    if let Some(params) = prop(options, "params") {
-        builder = builder.query(parse_params(&params)?);
-    }
-    if let Some(timeout) = prop(options, "timeoutMs") {
-        builder = match parse_timeout(&timeout)? {
-            Some(timeout) => builder.timeout(timeout),
-            None => builder.no_timeout(),
-        };
-    }
+    let (mut builder, body) = request_builder(client, request, options)?;
     let body_type = match prop(options, "responseType") {
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
@@ -666,14 +651,17 @@ pub(crate) async fn send(
     let upload_progress = callback_option(options, "onUploadProgress")?;
 
     builder = apply_body(builder, body).await?;
-    if let BodyType::Stream = body_type {
+    if let BodyType::Stream | BodyType::Ndjson = body_type {
         if upload_progress.is_some() {
             return Err(invalid(
                 "onUploadProgress",
-                "can't be combined with responseType: 'stream'",
+                "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
+        if let BodyType::Ndjson = body_type {
+            return ndjson_response_to_js(response, signal);
+        }
         return streaming_response_to_js(response, signal);
     }
     // The JS transports report upload progress; reqwest's fetch() can't
@@ -698,6 +686,37 @@ fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Funct
                 .map_err(|_| invalid(name, "must be a function"))
         })
         .transpose()
+}
+
+/// A request's method, URL, headers, query parameters and timeout; the body
+/// is returned separately, to attach once the other options are validated
+pub(crate) fn request_builder(
+    client: &Client,
+    request: JsRequest,
+    options: &JsValue,
+) -> Result<(RequestBuilder, BodyMode)> {
+    let JsRequest {
+        method,
+        url,
+        headers,
+        body,
+    } = request;
+    let mut builder = client
+        .request(method, &url)
+        // Decode here rather than in Rust, so JSON is parsed by the JS engine
+        .response_format(ResponseFormat::Binary)
+        .headers(headers);
+
+    if let Some(params) = prop(options, "params") {
+        builder = builder.query(parse_params(&params)?);
+    }
+    if let Some(timeout) = prop(options, "timeoutMs") {
+        builder = match parse_timeout(&timeout)? {
+            Some(timeout) => builder.timeout(timeout),
+            None => builder.no_timeout(),
+        };
+    }
+    Ok((builder, body))
 }
 
 /// Report download progress to a JS callback (`{ loaded, total }`).
@@ -918,6 +937,59 @@ fn streaming_response_to_js(
     Ok(obj.into())
 }
 
+/// A newline-delimited JSON response: `body` is a `ReadableStream` of parsed
+/// values. A line that isn't JSON errors the stream with a `ParseError`.
+fn ndjson_response_to_js(
+    response: StreamingResponse,
+    signal: Option<web_sys::AbortSignal>,
+) -> Result<JsValue> {
+    let obj = response_head_to_js(
+        response.status,
+        &response.status_text,
+        &response.url,
+        &response.headers,
+    )?;
+    let mut lines = crate::lines::Lines::new();
+    // Each chunk, then a final None to flush a last line without a newline
+    let chunks = AbortableStream::new(response.into_stream(), signal)
+        .map(Some)
+        .chain(futures_util::stream::once(async { None }));
+    let parsed = chunks.flat_map(move |chunk| {
+        let lines: Vec<std::result::Result<crate::lines::Line, Error>> = match chunk {
+            Some(Ok(bytes)) => lines.feed(&bytes).into_iter().map(Ok).collect(),
+            Some(Err(error)) => vec![Err(error)],
+            None => lines.finish().into_iter().map(Ok).collect(),
+        };
+        futures_util::stream::iter(lines.into_iter().map(|line| {
+            let line = line.map_err(JsValue::from)?;
+            parse_json_line(&line).map_err(JsValue::from)
+        }))
+    });
+    let stream = wasm_streams::ReadableStream::from_stream(parsed).into_raw();
+    set(&obj, "body", &stream)?;
+    Ok(obj.into())
+}
+
+/// Parse one NDJSON line with the JS engine's `JSON.parse`
+fn parse_json_line(line: &crate::lines::Line) -> Result<JsValue> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        transport::parse_native_json(&JsValue::from_str(&line.text)).map_err(|error| Error::Parse {
+            message: format!(
+                "Failed to parse line {} as JSON: {}",
+                line.number,
+                js_error_message(&error)
+            ),
+            source: None,
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = line;
+        Ok(JsValue::UNDEFINED)
+    }
+}
+
 /// Decode a body into a JS value, mirroring the Rust `ResponseFormat` rules
 pub(crate) fn decode_js_body(
     bytes: Vec<u8>,
@@ -927,7 +999,9 @@ pub(crate) fn decode_js_body(
     if bytes.is_empty() {
         return Ok(match body_type {
             BodyType::Text => JsValue::from_str(""),
-            BodyType::Binary | BodyType::Stream => js_sys::Uint8Array::new_with_length(0).into(),
+            BodyType::Binary | BodyType::Stream | BodyType::Ndjson => {
+                js_sys::Uint8Array::new_with_length(0).into()
+            }
             BodyType::Auto | BodyType::Json => JsValue::NULL,
         });
     }
@@ -935,7 +1009,7 @@ pub(crate) fn decode_js_body(
     match body_type {
         BodyType::Json => parse_json(&bytes_to_text(bytes)),
         BodyType::Text => Ok(bytes_to_text(bytes).into()),
-        BodyType::Binary | BodyType::Stream => {
+        BodyType::Binary | BodyType::Stream | BodyType::Ndjson => {
             Ok(js_sys::Uint8Array::from(bytes.as_slice()).into())
         }
         BodyType::Auto if is_json_content_type(content_type) => {
@@ -1095,9 +1169,10 @@ fn parse_body_type(value: &JsValue) -> Result<BodyType> {
         Some("text") => Ok(BodyType::Text),
         Some("binary") => Ok(BodyType::Binary),
         Some("stream") => Ok(BodyType::Stream),
+        Some("ndjson") => Ok(BodyType::Ndjson),
         _ => Err(invalid(
             "responseType",
-            "must be 'auto', 'json', 'text', 'binary' or 'stream'",
+            "must be 'auto', 'json', 'text', 'binary', 'stream' or 'ndjson'",
         )),
     }
 }

@@ -578,7 +578,9 @@ fn decode_body(
     if length == 0 {
         return Ok(match body_type {
             BodyType::Text => JsValue::from_str(""),
-            BodyType::Binary | BodyType::Stream => js_sys::Uint8Array::new_with_length(0).into(),
+            BodyType::Binary | BodyType::Stream | BodyType::Ndjson => {
+                js_sys::Uint8Array::new_with_length(0).into()
+            }
             BodyType::Auto | BodyType::Json => JsValue::NULL,
         });
     }
