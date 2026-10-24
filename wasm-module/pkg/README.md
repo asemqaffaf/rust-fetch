@@ -105,6 +105,7 @@ try {
 | Reuses connections in Node.js by default | Yes | No, needs a keep-alive agent | Yes, up to 256 per origin |
 | Blocks requests to private networks (SSRF) | No | No | `allowPrivateNetwork: false` (Node.js) |
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
+| Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
 | Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 188 KB: the WebAssembly module (179 KB) and its JS glue |
 
@@ -876,6 +877,28 @@ The limit is on the decompressed body, and it's enforced on every transport (nod
 - Error responses and streamed bodies (`responseType: 'stream' | 'ndjson'`) are limited the same way; a stream errors once it passes the limit. In browsers, a request with `onUploadProgress` and a limit uses `fetch()` instead of `XMLHttpRequest`, which can't stop at a limit.
 
 The default is no limit, as before. For servers that fetch URLs they don't control, set one.
+
+### Limiting pending requests (load shedding)
+
+If requests arrive faster than an upstream answers, they pile up: in Node.js, at most 1,024 are handed to a transport at once and the rest wait in memory, without limit. A caller that can't keep up should refuse work rather than run out of memory. Set `maxPendingRequests`:
+
+```js
+const client = new WasmClient({ maxPendingRequests: 500 });
+try {
+  await client.get('/search');
+} catch (error) {
+  if (error.maxPendingRequests) return reply503(); // refused at once, nothing was sent
+  throw error;
+}
+// → NetworkError "Too many pending requests (maxPendingRequests is 500)", error.maxPendingRequests === 500
+```
+
+- A request is pending from the call until it settles, retries and their delays included. A streamed response (`'stream'`, `'ndjson'`) counts until its headers arrive.
+- A request beyond the limit rejects at once, before anything is sent (request interceptors have already run), so the rejection costs almost nothing.
+- Failures, timeouts and cancellation free the place like successes do.
+- The count is per client, and it applies on every transport (node:http, native, browser `fetch()` and `XMLHttpRequest`) and in the Rust crate (`ClientBuilder::max_pending_requests`). `client.events()` and `client.websocket()` aren't counted.
+
+The default is no limit, as before.
 
 ### Fetching user-supplied URLs (SSRF)
 

@@ -13,6 +13,7 @@ use crate::{
     },
 };
 use futures_util::{Stream, StreamExt};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,6 +24,9 @@ pub use crate::wasm::WasmClient;
 pub struct Client {
     inner: reqwest::Client,
     pub(crate) config: Arc<ClientConfig>,
+    /// Requests started and not yet settled, shared by clones (counted only
+    /// with `max_pending_requests`)
+    pending: Arc<AtomicUsize>,
     /// Clients for requests that override the redirect settings: reqwest
     /// sets the redirect policy per client (and connection pool)
     #[cfg(not(target_arch = "wasm32"))]
@@ -40,6 +44,7 @@ pub(crate) struct ClientConfig {
     max_redirects: u32,
     pub(crate) allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
+    max_pending_requests: Option<usize>,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -321,6 +326,7 @@ impl Client {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<Attempt<T>>>,
     {
+        let _pending = self.admit()?;
         let mut attempt = 0;
 
         loop {
@@ -344,6 +350,19 @@ impl Client {
                 None => return Err(error),
             }
         }
+    }
+
+    /// Count a request as pending until it settles or is dropped, or refuse
+    /// it at once when the client already has `max_pending_requests`
+    fn admit(&self) -> Result<Option<Pending>> {
+        let Some(limit) = self.config.max_pending_requests else {
+            return Ok(None);
+        };
+        let pending = Pending(Arc::clone(&self.pending));
+        if self.pending.fetch_add(1, Ordering::Relaxed) >= limit {
+            return Err(Error::too_many_pending(limit));
+        }
+        Ok(Some(pending))
     }
 
     /// Decide whether a failed attempt should be retried, and after how long
@@ -653,6 +672,16 @@ pub(crate) fn bytes_to_text(bytes: Vec<u8>) -> String {
     }
 }
 
+/// A request counted as pending; dropping it (when the request settles, or
+/// its future is dropped) frees its place
+struct Pending(Arc<AtomicUsize>);
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Builder for creating HTTP clients
 pub struct ClientBuilder {
     headers: Headers,
@@ -663,6 +692,7 @@ pub struct ClientBuilder {
     max_redirects: u32,
     allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
+    max_pending_requests: Option<usize>,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
@@ -683,6 +713,7 @@ impl ClientBuilder {
             max_redirects: DEFAULT_MAX_REDIRECTS,
             allow_absolute_urls: true,
             max_response_bytes: None,
+            max_pending_requests: None,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
@@ -741,6 +772,17 @@ impl ClientBuilder {
         self
     }
 
+    /// Refuse a request at once while the client (and its clones) already
+    /// has this many started and not yet settled, retries included, so a
+    /// caller that can't keep up sheds load instead of queuing without bound
+    /// (default: no limit). A streamed response counts until its headers
+    /// arrive. The error is a network error; see
+    /// [`Error::too_many_pending_requests`]. Must be at least 1.
+    pub fn max_pending_requests(mut self, limit: usize) -> Self {
+        self.max_pending_requests = Some(limit);
+        self
+    }
+
     /// Set default header
     pub fn default_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(name, value);
@@ -787,6 +829,12 @@ impl ClientBuilder {
 
     /// Build the client
     pub fn build(self) -> Result<Client> {
+        if self.max_pending_requests == Some(0) {
+            return Err(Error::InvalidInput {
+                parameter: "maxPendingRequests".to_string(),
+                reason: "must be at least 1".to_string(),
+            });
+        }
         if let Some(base) = &self.base_url {
             let parsed = reqwest::Url::parse(base).map_err(|e| Error::InvalidInput {
                 parameter: "baseUrl".to_string(),
@@ -816,6 +864,7 @@ impl ClientBuilder {
                 max_redirects: self.max_redirects,
                 allow_absolute_urls: self.allow_absolute_urls,
                 max_response_bytes: self.max_response_bytes,
+                max_pending_requests: self.max_pending_requests,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
@@ -823,6 +872,7 @@ impl ClientBuilder {
                 #[cfg(target_arch = "wasm32")]
                 allow_private_network: self.allow_private_network,
             }),
+            pending: Arc::default(),
             #[cfg(not(target_arch = "wasm32"))]
             redirect_clients: Arc::default(),
         })
@@ -1142,6 +1192,31 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_requests_are_counted_until_dropped_and_shared_by_clones() {
+        assert!(
+            Client::new().unwrap().admit().unwrap().is_none(),
+            "no limit, no count"
+        );
+        assert!(Client::builder().max_pending_requests(0).build().is_err());
+
+        let client = Client::builder().max_pending_requests(2).build().unwrap();
+        let clone = client.clone();
+        let first = client.admit().unwrap();
+        let second = clone.admit().unwrap();
+        let refused = client.admit().err().unwrap();
+        assert_eq!(refused.too_many_pending_requests(), Some(2));
+        assert_eq!(
+            client.pending.load(Ordering::Relaxed),
+            2,
+            "a refusal isn't counted"
+        );
+        drop(first);
+        let third = clone.admit().unwrap();
+        drop((second, third));
+        assert_eq!(client.pending.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn test_client_builder() {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`maxPendingRequests`: load shedding.** A client option that refuses a request at once while the client already has that many started and not yet settled (retries included; a streamed response counts until its headers arrive). The rejection is a `NetworkError` with `maxPendingRequests` set to the limit, and nothing is sent. In Node.js, requests beyond the 1,024 handed to a transport used to wait in memory without limit; with this option, a caller that can't keep up sheds load instead. The count is per client (shared by Rust clones) and applies on every transport. Rust: `ClientBuilder::max_pending_requests` and `Error::too_many_pending_requests` (#117).
+
 ## [2.5.2] - 2026-10-24
 
 A security patch: a server can no longer tie up connections, or memory on the native transport, with a long or endless redirect body. Performance: the base-against-head benchmark detected no slowdown. Comparisons against `fetch()` and axios were not rerun, so the comparative results in the README remain tied to the versions they tested.

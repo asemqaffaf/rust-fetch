@@ -1309,3 +1309,49 @@ async fn requests_with_progress_callbacks_are_send() {
     });
     assert_eq!(task.await.unwrap().unwrap(), b"ok");
 }
+
+#[tokio::test]
+async fn max_pending_requests_refuses_requests_beyond_the_limit() {
+    let server = TestServer::start(|_, _| Reply::new(200, "ok").delay(Duration::from_millis(300)));
+    let client = Client::builder().max_pending_requests(1).build().unwrap();
+    let clone = client.clone();
+
+    let (first, refused) = tokio::join!(client.get(server.url("/first")), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // A clone shares the count, and a streamed request counts too
+        clone
+            .request(Method::Get, server.url("/refused"))
+            .send_streaming()
+            .await
+    });
+    assert_eq!(first.unwrap().status, 200);
+    let error = refused.err().unwrap();
+    assert_eq!(error.too_many_pending_requests(), Some(1));
+    assert_eq!(
+        server.requests().len(),
+        1,
+        "the refused request was never sent"
+    );
+
+    // The place is free again once the first request settles
+    assert_eq!(client.get(server.url("/next")).await.unwrap().status, 200);
+    assert_eq!(
+        Client::new()
+            .unwrap()
+            .get(server.url("/other"))
+            .await
+            .unwrap()
+            .status,
+        200
+    );
+}
+
+#[test]
+fn max_pending_requests_must_be_at_least_one() {
+    let error = Client::builder()
+        .max_pending_requests(0)
+        .build()
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("maxPendingRequests"), "{error}");
+}

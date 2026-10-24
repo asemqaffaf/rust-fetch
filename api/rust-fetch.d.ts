@@ -140,6 +140,13 @@ export interface ClientOptions extends BrowserRequestOptions {
      */
     maxResponseBytes?: number;
     /**
+     * Reject a request at once while this client already has this many started and not yet settled (retries
+     * included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
+     * response counts until its headers arrive. Rejects with a `NetworkError` whose `maxPendingRequests` is the
+     * limit, before anything is sent. Applies on every transport. Default: no limit
+     */
+    maxPendingRequests?: number;
+    /**
      * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
      * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
      * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
@@ -239,6 +246,8 @@ export interface RustFetchError extends Error {
     parameter?: string;
     /** NetworkError for a response larger than `maxResponseBytes`: the limit */
     maxResponseBytes?: number;
+    /** NetworkError for a request refused by `maxPendingRequests`: the limit */
+    maxPendingRequests?: number;
 }
 
 

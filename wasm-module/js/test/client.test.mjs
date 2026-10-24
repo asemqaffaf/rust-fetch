@@ -290,6 +290,83 @@ describe('allowAbsoluteUrls', () => {
   });
 });
 
+describe('maxPendingRequests', () => {
+  const slow = async () =>
+    startServer(async (req, res) => {
+      const url = new URL(req.url, 'http://x');
+      if (url.pathname === '/fail') {
+        res.writeHead(503);
+        return res.end('busy');
+      }
+      if (url.pathname !== '/hang') await sleep(200);
+      if (url.pathname !== '/hang') json(res, { path: url.pathname });
+    });
+
+  it('refuses a request beyond the limit at once, without sending it', async () => {
+    const s = await slow();
+    try {
+      const c = new WasmClient({ maxPendingRequests: 2 });
+      const first = [c.get(s.url('/a')), c.get(s.url('/b'), { responseType: 'stream' })];
+      const started = performance.now();
+      const error = await rejection(c.get(s.url('/c')));
+      assert.ok(performance.now() - started < 100, 'refused at once');
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal(error.maxPendingRequests, 2);
+      assert.match(error.message, /Too many pending requests \(maxPendingRequests is 2\)/);
+      await Promise.all(first);
+      assert.deepEqual(s.requests.map((r) => r.url).sort(), ['/a', '/b'], 'the refused request was never sent');
+      // Settled requests free their places
+      assert.deepEqual((await Promise.all([c.get(s.url('/d')), c.get(s.url('/e'))])).map((r) => r.body.path), ['/d', '/e']);
+      // Other clients have their own count
+      assert.equal((await new WasmClient().get(s.url('/f'))).body.path, '/f');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('frees a place when a request fails, times out or is cancelled', async () => {
+    const s = await slow();
+    try {
+      const c = new WasmClient({ maxPendingRequests: 1 });
+      assert.equal((await rejection(c.get(s.url('/fail')))).kind, 'HttpError');
+      assert.equal((await rejection(c.get(s.url('/hang'), { timeoutMs: 50 }))).kind, 'TimeoutError');
+      const controller = new AbortController();
+      const cancelled = c.get(s.url('/hang'), { signal: controller.signal });
+      assert.equal((await rejection(c.get(s.url('/x')))).maxPendingRequests, 1);
+      controller.abort();
+      assert.equal((await rejection(cancelled)).kind, 'CancelledError');
+      assert.equal((await c.get(s.url('/after'))).body.path, '/after');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('counts a request once across its retries', async () => {
+    const s = await slow();
+    try {
+      const c = new WasmClient({ maxPendingRequests: 1, retries: { maxRetries: 2, initialDelayMs: 100 } });
+      const retrying = rejection(c.get(s.url('/fail')));
+      await sleep(50);
+      assert.equal((await rejection(c.get(s.url('/x')))).maxPendingRequests, 1, 'still pending between attempts');
+      assert.equal((await retrying).kind, 'HttpError');
+      assert.equal(s.requests.filter((r) => r.url === '/fail').length, 3);
+      assert.equal((await c.get(s.url('/after'))).body.path, '/after');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('is validated', () => {
+    for (const value of [0, -1, 1.5, '2', Infinity]) {
+      assert.throws(
+        () => new WasmClient({ maxPendingRequests: value }),
+        (error) => error.kind === 'InvalidInputError' && error.parameter === 'maxPendingRequests',
+        String(value),
+      );
+    }
+  });
+});
+
 describe('browser fetch() options in Node.js', () => {
   const valid = {
     credentials: 'include',

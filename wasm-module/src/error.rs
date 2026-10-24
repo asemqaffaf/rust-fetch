@@ -24,6 +24,23 @@ impl fmt::Display for ResponseTooLarge {
 
 impl std::error::Error for ResponseTooLarge {}
 
+/// The source of an [`Error::Network`] when a client already has as many
+/// requests pending as it allows (`max_pending_requests`,
+/// `maxPendingRequests` in JavaScript)
+#[derive(Debug)]
+pub struct TooManyPendingRequests {
+    /// The client's limit
+    pub limit: usize,
+}
+
+impl fmt::Display for TooManyPendingRequests {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the client already has {} requests pending", self.limit)
+    }
+}
+
+impl std::error::Error for TooManyPendingRequests {}
+
 impl Error {
     /// A response body larger than `limit` bytes
     pub(crate) fn too_large(limit: u64) -> Self {
@@ -40,6 +57,28 @@ impl Error {
                 source: Some(source),
                 ..
             } => source.downcast_ref::<ResponseTooLarge>().map(|e| e.limit),
+            _ => None,
+        }
+    }
+
+    /// A request refused because the client already has `limit` pending
+    pub(crate) fn too_many_pending(limit: usize) -> Self {
+        Error::Network {
+            message: format!("Too many pending requests (maxPendingRequests is {limit})"),
+            source: Some(Box::new(TooManyPendingRequests { limit })),
+        }
+    }
+
+    /// The client's limit, when this request was refused because the client
+    /// already had that many pending (see `max_pending_requests`)
+    pub fn too_many_pending_requests(&self) -> Option<usize> {
+        match self {
+            Error::Network {
+                source: Some(source),
+                ..
+            } => source
+                .downcast_ref::<TooManyPendingRequests>()
+                .map(|e| e.limit),
             _ => None,
         }
     }
@@ -135,8 +174,11 @@ impl fmt::Display for Error {
         match self {
             Error::Network { message, source } => {
                 write!(f, "Network error: {}", message)?;
-                // A too-large body's message already says everything
-                if let Some(src) = source.as_ref().filter(|s| !s.is::<ResponseTooLarge>()) {
+                // These limits' messages already say everything
+                if let Some(src) = source
+                    .as_ref()
+                    .filter(|s| !s.is::<ResponseTooLarge>() && !s.is::<TooManyPendingRequests>())
+                {
                     write!(f, " (caused by: {})", src)?;
                 }
                 Ok(())
@@ -270,6 +312,26 @@ mod tests {
             "Network error: Response body larger than maxResponseBytes (5 bytes)"
         );
         assert_eq!(error.response_too_large(), Some(5));
+        assert_eq!(error.too_many_pending_requests(), None);
+    }
+
+    #[test]
+    fn too_many_pending_reads_on_its_own_and_in_the_error() {
+        assert_eq!(
+            TooManyPendingRequests { limit: 2 }.to_string(),
+            "the client already has 2 requests pending"
+        );
+        let error = Error::too_many_pending(2);
+        assert_eq!(
+            error.to_string(),
+            "Network error: Too many pending requests (maxPendingRequests is 2)"
+        );
+        assert_eq!(error.too_many_pending_requests(), Some(2));
+        assert_eq!(error.response_too_large(), None);
+        assert_eq!(
+            Error::Timeout { duration_ms: 1 }.too_many_pending_requests(),
+            None
+        );
     }
 
     #[test]
