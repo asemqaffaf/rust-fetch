@@ -69,6 +69,10 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | A streamed body arrives in full | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | A connection dropped mid-body errors the stream with a NetworkError | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A slow reader of a streamed body holds the server back, and cancel() closes the connection | ✓ | ✓ | ✓ | differs (5) | differs (5) | differs (5) |
+| A slow reader of NDJSON holds the server back, and cancel() closes the connection | ✓ | ✓ | ✓ | differs (5) | differs (5) | differs (5) |
+| Aborting mid-stream closes the connection | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| maxResponseBytes reached mid-stream closes the connection | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | NDJSON: \n and \r\n, empty lines skipped, a last line without a newline | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | maxLineBytes: the lines before a long one, then a NetworkError | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Server-Sent Events: types, ids and multi-line data, until [DONE] | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -80,7 +84,7 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Paths like //host stay under baseUrl | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | allowAbsoluteUrls: false refuses an absolute URL, before sending | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| allowPrivateNetwork: false blocks 127.0.0.1, before sending | ✓ | ✓ | differs (5) | differs (5) | differs (5) | differs (5) |
+| allowPrivateNetwork: false blocks 127.0.0.1, before sending | ✓ | ✓ | differs (6) | differs (6) | differs (6) | differs (6) |
 | maxPendingRequests refuses one more, without sending it | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | retryBudget refuses a retry, keeping the attempt’s error | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -90,4 +94,5 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 2. fetch() has no redirect-limit option; it applies its own limit (20) instead (documented)
 3. browsers return an opaque redirect: status 0 and an empty body (documented)
 4. WebKit decodes responses itself: on macOS a corrupt gzip body fails, but on Linux (libsoup) it's passed through as it arrived, which rust-fetch can't detect
-5. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)
+5. browsers read a response ahead of the page themselves, however slowly it's consumed: their own fetch() took 59–64 MB of 64 in this test, as rust-fetch did; how far varies by browser and machine
+6. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)

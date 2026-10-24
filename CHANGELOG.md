@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The WebAssembly module's budget is 190 kB brotli and 595 kB raw (from 183 kB and 580 kB). 2.6's limits and options add about 6 kB brotli: `maxPendingRequests`, SSE backpressure, `maxLineBytes` and the WebSocket queue limits about 2.6 kB (181.1 → 183.7 kB), the retry budget about 1.9 kB, and the redirect and WebSocket SSRF options the rest (187.2 kB on CI's Linux build, 0.3 kB more than a macOS build). #93 is expected to recover more than that by removing the URL parser's Unicode tables.
 
 ### Documentation
+- **Memory while streaming** (README, Streaming): what a slow reader keeps, what closes a connection, and who owns each chunk. The conformance suite now checks it on every transport: a slow reader holds the server back on Node.js (about 1.5 MB of 64 MB read ahead during a one-second pause), and `cancel()`, an aborted signal and `maxResponseBytes` each close the connection (#110).
 - **Hardened configurations** in the README's Security section: a fixed API with credentials, fetching URLs from users, and streaming APIs. Each turns on the protections that fit and says what it doesn't cover. A test reads each configuration from the README and exercises every protection its comments claim, so the README can't drift from the client (#122).
 
 ## [2.5.2] - 2026-10-24
