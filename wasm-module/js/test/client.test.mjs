@@ -853,6 +853,21 @@ describe('top-level functions', () => {
 });
 
 describe('streaming and progress', () => {
+  it('hands over each streamed chunk as a Uint8Array that owns its whole buffer, with or without a size limit', async () => {
+    // Without progress or a limit, chunks pass through from the transport; with them, they're copied
+    for (const options of [{}, { maxResponseBytes: 10 * 1024 * 1024 }, { onDownloadProgress: () => {} }]) {
+      const res = await client().get(server.url('/large?mb=2'), { responseType: 'stream', ...options });
+      let total = 0;
+      for await (const chunk of res.body) {
+        assert.equal(Object.getPrototypeOf(chunk), Uint8Array.prototype, 'a plain Uint8Array');
+        assert.equal(chunk.byteOffset, 0);
+        assert.equal(chunk.byteLength, chunk.buffer.byteLength, 'the chunk is its whole buffer');
+        total += chunk.byteLength;
+      }
+      assert.equal(total, 2 * 1024 * 1024, JSON.stringify(Object.keys(options)));
+    }
+  });
+
   it("responseType 'stream' resolves at the headers and streams the body", async () => {
     const started = Date.now();
     const res = await client().get(server.url('/stream'), { responseType: 'stream' });

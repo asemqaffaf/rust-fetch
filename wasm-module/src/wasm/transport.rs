@@ -620,6 +620,12 @@ impl FetchBody {
         self.length
     }
 
+    /// The transport's own stream, for handing to the caller without copying
+    /// each chunk through WebAssembly; `None` for a response without a body
+    pub(crate) fn into_raw(mut self) -> Option<web_sys::ReadableStream> {
+        self.body.take()
+    }
+
     /// The body, chunk by chunk; dropping the stream cancels the body
     pub(crate) fn chunks(mut self) -> impl futures_util::Stream<Item = Result<Vec<u8>>> {
         let chunks = match self.body.take() {
@@ -631,11 +637,16 @@ impl FetchBody {
         chunks.map(|chunk| {
             chunk
                 .map(|chunk| js_sys::Uint8Array::new(&chunk).to_vec())
-                .map_err(|error| Error::Network {
-                    message: format!("Failed to read response body: {}", js_error_message(&error)),
-                    source: None,
-                })
+                .map_err(|error| body_error(&error))
         })
+    }
+}
+
+/// A transport stream that failed while its body was read
+pub(crate) fn body_error(error: &JsValue) -> Error {
+    Error::Network {
+        message: format!("Failed to read response body: {}", js_error_message(error)),
+        source: None,
     }
 }
 

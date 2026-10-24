@@ -1349,6 +1349,31 @@ fn streaming_response_to_js(
         &response.url,
         &response.headers,
     )?;
+    // Without progress or a size limit the core doesn't need the bytes, so
+    // each chunk of the transport's stream passes through as an opaque JS
+    // value: no copy into WebAssembly and back. The signal, typed errors and
+    // backpressure (read only as the caller reads) work as on the copying path.
+    #[cfg(target_arch = "wasm32")]
+    let response = match response.into_raw() {
+        Ok(raw) => {
+            let chunks = raw.map(|raw| {
+                wasm_streams::ReadableStream::from_raw(raw)
+                    .into_stream()
+                    .map(|chunk| {
+                        chunk
+                            .map(own_chunk)
+                            .map_err(|error| transport::body_error(&error))
+                    })
+            });
+            let chunks = futures_util::stream::iter(chunks).flatten();
+            let chunks =
+                AbortableStream::new(chunks, signal).map(|chunk| chunk.map_err(JsValue::from));
+            let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
+            set(&obj, "body", &stream)?;
+            return Ok(obj.into());
+        }
+        Err(response) => response,
+    };
     let chunks = AbortableStream::new(response.into_stream(), signal).map(|chunk| {
         chunk
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()).into())
@@ -1357,6 +1382,20 @@ fn streaming_response_to_js(
     let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
     set(&obj, "body", &stream)?;
     Ok(obj.into())
+}
+
+/// A chunk that owns its whole buffer, as the copying path's do: a view into
+/// a larger buffer (which could hold other data) is copied
+#[cfg(target_arch = "wasm32")]
+fn own_chunk(chunk: JsValue) -> JsValue {
+    match chunk.dyn_ref::<js_sys::Uint8Array>() {
+        Some(view)
+            if view.byte_offset() != 0 || view.byte_length() != view.buffer().byte_length() =>
+        {
+            view.slice(0, view.length()).into()
+        }
+        _ => chunk,
+    }
 }
 
 /// A newline-delimited JSON response: `body` is a `ReadableStream` of parsed

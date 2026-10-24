@@ -169,6 +169,17 @@ impl StreamingResponse {
         })
     }
 
+    /// The transport's stream as it is, when nothing needs to see the bytes
+    /// on their way (no download progress, no size limit); otherwise the
+    /// response back, to read through [`StreamingResponse::into_stream`]
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn into_raw(self) -> std::result::Result<Option<web_sys::ReadableStream>, Self> {
+        if self.progress.is_some() || self.limit.is_some() {
+            return Err(self);
+        }
+        Ok(self.inner.into_raw())
+    }
+
     /// Read the remaining body into memory
     pub async fn bytes(self) -> Result<Vec<u8>> {
         let mut body = Vec::new();
