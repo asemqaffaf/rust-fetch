@@ -57,6 +57,55 @@ thread_local! {
     )
     .ok()
     .and_then(|transport| transport.dyn_into().ok());
+    /// The Node.js entry's check for `websocket()` with `allowPrivateNetwork: false`;
+    /// see `websocketGuard` in `js/node.js`
+    static WEBSOCKET_GUARD: Option<js_sys::Function> = js_sys::Reflect::get(
+        &js_sys::global(),
+        &js_sys::Symbol::for_("rust-fetch.websocketGuard"),
+    )
+    .ok()
+    .and_then(|guard| guard.dyn_into().ok());
+}
+
+/// Node.js: why the last WebSocket connection to `url`'s host was blocked,
+/// if it was (undici reports only a generic error)
+pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
+    let guard = WEBSOCKET_GUARD.with(Clone::clone)?;
+    let blocked: js_sys::Function = js_sys::Reflect::get(&guard, &"blocked".into())
+        .ok()?
+        .dyn_into()
+        .ok()?;
+    blocked
+        .call1(&JsValue::UNDEFINED, &url.into())
+        .ok()?
+        .as_string()
+}
+
+/// Node.js: check a WebSocket URL for `allowPrivateNetwork: false` and return
+/// the dispatcher that checks where it connects
+pub(crate) fn websocket_guard(url: &str) -> Result<JsValue> {
+    let guard = WEBSOCKET_GUARD.with(Clone::clone).ok_or_else(|| {
+        super::invalid(
+            "allowPrivateNetwork",
+            "needs the package's Node.js entry point to check WebSocket connections",
+        )
+    })?;
+    guard
+        .call1(&JsValue::UNDEFINED, &url.into())
+        .map_err(|error| {
+            let message = super::js_error_message(&error);
+            let code = js_sys::Reflect::get(&error, &"code".into())
+                .ok()
+                .and_then(|code| code.as_string());
+            if code.as_deref() == Some("RUST_FETCH_BLOCKED") {
+                Error::Network {
+                    message,
+                    source: None,
+                }
+            } else {
+                super::invalid("allowPrivateNetwork", &message)
+            }
+        })
 }
 
 /// `onUploadProgress` and `onDownloadProgress` for a request sent here

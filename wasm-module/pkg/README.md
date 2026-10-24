@@ -776,7 +776,7 @@ In Node.js you can authenticate the handshake with headers, which browsers don't
 const authed = client.websocket('/live', { headers: { authorization: 'Bearer your-access-token' } }); // Node.js only
 ```
 
-`websocket()` resolves relative URLs against `baseUrl`, turning `http:` into `ws:` and `https:` into `wss:`, and returns at once; messages sent before the connection opens (or while it reconnects) are queued. That queue has no limit unless you set one: with `maxQueuedMessages` and/or `maxQueuedBytes` (UTF-8 bytes for text, the size of binary data and Blobs), a `send()` that would go over throws a `NetworkError` carrying the limit it reached, and the message isn't queued. Once the connection is open, messages go to the runtime's socket, whose own buffer is `bufferedAmount`. `state` is `'connecting'`, `'open'`, `'reconnecting'`, `'closing'` or `'closed'`.
+Early Node.js 20 releases (20.11 tested) fail to connect when offered more than one subprotocol, a bug in their WebSocket that later 20.x releases fixed (20.20 tested). `websocket()` resolves relative URLs against `baseUrl`, turning `http:` into `ws:` and `https:` into `wss:`, and returns at once; messages sent before the connection opens (or while it reconnects) are queued. That queue has no limit unless you set one: with `maxQueuedMessages` and/or `maxQueuedBytes` (UTF-8 bytes for text, the size of binary data and Blobs), a `send()` that would go over throws a `NetworkError` carrying the limit it reached, and the message isn't queued. Once the connection is open, messages go to the runtime's socket, whose own buffer is `bufferedAmount`. `state` is `'connecting'`, `'open'`, `'reconnecting'`, `'closing'` or `'closed'`.
 
 | Option | Description |
 | --- | --- |
@@ -955,7 +955,8 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
   - IPv6: loopback, unspecified, unique-local, link-local and multicast, plus IPv4-mapped (`::ffff:10.0.0.1`) and NAT64 (`64:ff9b::…`) forms of the IPv4 ranges
 - **Separate connection pool:** checked requests never reuse a connection another client made to a private address.
 - **Proxies:** through a proxy, only IP-address targets are checked, since the proxy resolves names. Apply the same rule in the proxy's own configuration.
-- **Not covered:** `client.websocket()` connections (Node's built-in WebSocket). In browsers this option does nothing; they enforce their own private-network rules.
+- **WebSockets too:** `client.websocket()` (Node's built-in WebSocket, which connects through undici rather than `node:http`) gets its own checked connection pool. An IP address that is private or reserved throws a `NetworkError` from `websocket()` before anything connects; a host name is checked on every connection, reconnections included, and a blocked one fails the attempt with the same "Blocked: …" message. Set it per connection with `websocket(url, { allowPrivateNetwork })`. It can't be combined with your own `dispatcher` (whose connections it couldn't check), and while another undici global dispatcher is installed (for example a `ProxyAgent` from `setGlobalDispatcher`) `websocket()` throws an `InvalidInputError` instead of connecting unchecked.
+- **Not covered:** in browsers this option does nothing; they enforce their own private-network rules.
 - **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
 
 ### Hardened configurations
@@ -992,7 +993,7 @@ const fetcher = new WasmClient({
 });
 ```
 
-Not covered by this client, so handle them elsewhere: `websocket()` connections (#116); targets behind a proxy, where only IP addresses are checked (the proxy needs the same rule); and in browsers, where `allowPrivateNetwork` does nothing. Add an allowlist of hosts or schemes in your code if you can, and egress rules in your network.
+Not covered by this client, so handle them elsewhere: targets behind a proxy, where only IP addresses are checked (the proxy needs the same rule); and in browsers, where `allowPrivateNetwork` does nothing. Add an allowlist of hosts or schemes in your code if you can, and egress rules in your network.
 
 **Streaming APIs** (LLMs over Server-Sent Events or NDJSON). Long-lived responses, so the per-attempt timeout isn't enough.
 
