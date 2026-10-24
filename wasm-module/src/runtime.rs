@@ -46,6 +46,24 @@ pub(crate) async fn timeout<T>(
     }
 }
 
+/// Milliseconds on a clock that only matters for intervals (the retry budget)
+pub(crate) fn now_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f64()
+            * 1000.0
+    }
+}
+
 /// Random number in `[0, 1)`, used for retry jitter
 pub(crate) fn random() -> f64 {
     #[cfg(target_arch = "wasm32")]

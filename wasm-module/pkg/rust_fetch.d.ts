@@ -107,6 +107,19 @@ export interface RetryOptions {
     retryNonIdempotent?: boolean;
 }
 
+/**
+ * A client-wide limit on retries, so a failing upstream doesn't get every request retried at once. Retries may
+ * add `ratio` of the first attempts in the last `windowMs`, plus `minPerSecond` per second of the window.
+ */
+export interface RetryBudgetOptions {
+    /** Retries allowed per first attempt in the window, on top of the minimum. Default: 0.2 */
+    ratio?: number;
+    /** Retries allowed per second of the window whatever the traffic. Default: 10 */
+    minPerSecond?: number;
+    /** How far back first attempts and retries count, in ms; the budget refills as it slides. Default: 10000 */
+    windowMs?: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
     /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
     baseUrl?: string;
@@ -116,6 +129,13 @@ export interface ClientOptions extends BrowserRequestOptions {
     timeoutMs?: number;
     /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
     retries?: number | RetryOptions;
+    /**
+     * Limit retries across this client, for all origins: `true` for the defaults, or options. First attempts are
+     * always sent. The budget is checked before waiting to retry and spent when the retry is sent, so cancelling
+     * while waiting spends nothing. A refused retry rejects with the attempt's own error, with
+     * `retryBudgetExhausted: true`; `client.retriesRefused` counts refusals. Default: no budget
+     */
+    retryBudget?: boolean | RetryBudgetOptions;
     /** What to do when the server redirects. Default: `follow` */
     redirect?: RedirectMode;
     /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
@@ -259,6 +279,8 @@ export interface RustFetchError extends Error {
     maxPendingRequests?: number;
     /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
     maxLineBytes?: number;
+    /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
+    retryBudgetExhausted?: boolean;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
     maxQueuedMessages?: number;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -549,6 +571,10 @@ export class WasmClient {
      * base URL, with `http:` and `https:` becoming `ws:` and `wss:`.
      */
     websocket(url: string, options?: WebSocketOptions | null): WebSocketConnection;
+    /**
+     * Retries the client's `retryBudget` has refused so far (0 without a budget)
+     */
+    readonly retriesRefused: number;
 }
 
 /**
@@ -700,6 +726,7 @@ export interface InitOutput {
     readonly wasmclient_put: (a: number, b: number, c: number, d: number) => any;
     readonly wasmclient_put_json: (a: number, b: number, c: number, d: any, e: number) => any;
     readonly wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+    readonly wasmclient_retries_refused: (a: number) => number;
     readonly wasmclient_websocket: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly websocketconnection_buffered_amount: (a: number) => number;
     readonly websocketconnection_close: (a: number, b: number, c: number, d: number) => [number, number];

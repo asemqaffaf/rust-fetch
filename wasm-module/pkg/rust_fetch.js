@@ -442,6 +442,14 @@ export class WasmClient {
         return ret;
     }
     /**
+     * Retries the client's `retryBudget` has refused so far (0 without a budget)
+     * @returns {number}
+     */
+    get retriesRefused() {
+        const ret = wasm.wasmclient_retries_refused(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * Open a WebSocket connection. Relative URLs are resolved against the
      * base URL, with `http:` and `https:` becoming `ws:` and `wss:`.
      * @param {string} url
@@ -1087,6 +1095,10 @@ function __wbg_get_imports() {
             const ret = arg0.next();
             return ret;
         }, arguments); },
+        __wbg_now_aa4ccb83129e9e55: function() {
+            const ret = Date.now();
+            return ret;
+        },
         __wbg_of_20798cb14708764f: function(arg0, arg1) {
             const ret = Array.of(arg0, arg1);
             return ret;
@@ -1321,7 +1333,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 155, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 83, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_e9a7b01c56fed3da___features__gen_ProgressEvent__ProgressEvent______true_);
             return ret;
         },

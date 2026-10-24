@@ -51,6 +51,7 @@ export const wasmclient_post_json: (a: number, b: number, c: number, d: any, e: 
 export const wasmclient_put: (a: number, b: number, c: number, d: number) => any;
 export const wasmclient_put_json: (a: number, b: number, c: number, d: any, e: number) => any;
 export const wasmclient_request: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => any;
+export const wasmclient_retries_refused: (a: number) => number;
 export const wasmclient_websocket: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const websocketconnection_buffered_amount: (a: number) => number;
 export const websocketconnection_close: (a: number, b: number, c: number, d: number) => [number, number];

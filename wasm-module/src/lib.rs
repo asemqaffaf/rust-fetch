@@ -47,6 +47,7 @@ pub mod types;
 
 pub mod http;
 
+mod budget;
 mod lines;
 mod runtime;
 mod sse;
@@ -55,6 +56,7 @@ mod wasm;
 pub use wasm::WasmClient;
 
 // Re-export commonly used types
+pub use budget::RetryBudget;
 pub use client::{Client, ClientBuilder, ProgressCallback, RequestBuilder, StreamingResponse};
 pub use error::{Error, Result};
 pub use types::{Headers, Method, Multipart, Progress, Redirect, Response, ResponseBody};

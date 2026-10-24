@@ -128,6 +128,19 @@ export interface RetryOptions {
   retryNonIdempotent?: boolean;
 }
 
+/**
+ * A client-wide limit on retries, so a failing upstream doesn't get every request retried at once. Retries may
+ * add `ratio` of the first attempts in the last `windowMs`, plus `minPerSecond` per second of the window.
+ */
+export interface RetryBudgetOptions {
+  /** Retries allowed per first attempt in the window, on top of the minimum. Default: 0.2 */
+  ratio?: number;
+  /** Retries allowed per second of the window whatever the traffic. Default: 10 */
+  minPerSecond?: number;
+  /** How far back first attempts and retries count, in ms; the budget refills as it slides. Default: 10000 */
+  windowMs?: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
   /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
   baseUrl?: string;
@@ -137,6 +150,13 @@ export interface ClientOptions extends BrowserRequestOptions {
   timeoutMs?: number;
   /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
   retries?: number | RetryOptions;
+  /**
+   * Limit retries across this client, for all origins: `true` for the defaults, or options. First attempts are
+   * always sent. The budget is checked before waiting to retry and spent when the retry is sent, so cancelling
+   * while waiting spends nothing. A refused retry rejects with the attempt's own error, with
+   * `retryBudgetExhausted: true`; `client.retriesRefused` counts refusals. Default: no budget
+   */
+  retryBudget?: boolean | RetryBudgetOptions;
   /** What to do when the server redirects. Default: `follow` */
   redirect?: RedirectMode;
   /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
@@ -280,6 +300,8 @@ export interface RustFetchError extends Error {
   maxPendingRequests?: number;
   /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
   maxLineBytes?: number;
+  /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
+  retryBudgetExhausted?: boolean;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
   maxQueuedMessages?: number;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -369,6 +391,11 @@ impl WasmClient {
             if let Some(retries) = prop(options, "retries") {
                 builder = builder.retry_config(parse_retries(&retries)?);
             }
+            if let Some(budget) = prop(options, "retryBudget") {
+                if let Some(budget) = parse_retry_budget(&budget)? {
+                    builder = builder.retry_budget(budget);
+                }
+            }
             if let Some(redirect) = prop(options, "redirect") {
                 builder = builder.redirect(parse_redirect(&redirect)?);
             }
@@ -445,6 +472,14 @@ impl WasmClient {
         interceptors.request.retain(|(i, _)| *i != id);
         interceptors.response.retain(|(i, _, _)| *i != id);
         before != interceptors.request.len() + interceptors.response.len()
+    }
+
+    /// Retries the client's `retryBudget` has refused so far (0 without a budget)
+    #[wasm_bindgen(getter = retriesRefused)]
+    pub fn retries_refused(&self) -> f64 {
+        #[allow(clippy::cast_precision_loss)]
+        let refused = self.inner.retries_refused() as f64;
+        refused
     }
 
     /// Remove all interceptors
@@ -821,14 +856,37 @@ impl<'a> Options<'a> {
     }
 }
 
-/// Build, send and convert a request coming from JavaScript
+/// Build, send and convert a request coming from JavaScript; an error says
+/// whether the retry budget refused to retry it (`retryBudgetExhausted`)
 pub(crate) async fn send(
     client: &Client,
     request: JsRequest,
     options: &JsValue,
+) -> std::result::Result<JsValue, JsValue> {
+    let refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    send_request(client, request, options, &refused)
+        .await
+        .map_err(|error| {
+            let error = JsValue::from(error);
+            if refused.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
+            }
+            error
+        })
+}
+
+pub(crate) async fn send_request(
+    client: &Client,
+    request: JsRequest,
+    options: &JsValue,
+    #[allow(unused_variables)] refused: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<JsValue> {
     let options = &Options::new(options);
     let (mut builder, body) = request_builder(client, request, options)?;
+    #[cfg(target_arch = "wasm32")]
+    {
+        builder.retry_refused = Some(std::sync::Arc::clone(refused));
+    }
     let body_type = match options.get("responseType") {
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
@@ -1426,6 +1484,39 @@ fn parse_timeout(value: &JsValue) -> Result<Option<Duration>> {
             "must be a non-negative number of milliseconds",
         )),
     }
+}
+
+/// `true` for the defaults, `false` for none, or `RetryBudgetOptions`
+fn parse_retry_budget(value: &JsValue) -> Result<Option<crate::RetryBudget>> {
+    if let Some(on) = value.as_bool() {
+        return Ok(on.then(crate::RetryBudget::new));
+    }
+    if !value.is_object() {
+        return Err(invalid(
+            "retryBudget",
+            "must be a boolean or a RetryBudgetOptions object",
+        ));
+    }
+    // Range checks happen in `ClientBuilder::build`
+    let number = |name: &str, parameter: &str| {
+        prop(value, name)
+            .map(|v| {
+                v.as_f64()
+                    .ok_or_else(|| invalid(parameter, "must be a number"))
+            })
+            .transpose()
+    };
+    let mut budget = crate::RetryBudget::new();
+    if let Some(ratio) = number("ratio", "retryBudget.ratio")? {
+        budget = budget.ratio(ratio);
+    }
+    if let Some(min) = number("minPerSecond", "retryBudget.minPerSecond")? {
+        budget = budget.min_per_second(min);
+    }
+    if let Some(window) = number("windowMs", "retryBudget.windowMs")? {
+        budget = budget.window(parse_delay(&window.into(), "retryBudget.windowMs")?);
+    }
+    Ok(Some(budget))
 }
 
 fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
