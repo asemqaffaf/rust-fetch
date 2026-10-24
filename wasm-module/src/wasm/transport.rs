@@ -281,8 +281,8 @@ impl PreparedRequest {
 }
 
 /// A request whose response is returned as soon as its headers arrive
-/// (`responseType: 'stream' | 'ndjson'` and `events()`), sent with `fetch()`
-/// in every runtime
+/// (`responseType: 'stream' | 'ndjson'` and `events()`): through the Node
+/// transport in Node.js, and with `fetch()` everywhere else
 pub(crate) enum StreamingRequest {
     Fetch {
         url: String,
