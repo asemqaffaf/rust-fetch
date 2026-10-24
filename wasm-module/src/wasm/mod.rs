@@ -161,6 +161,13 @@ export interface ClientOptions extends BrowserRequestOptions {
    */
   maxResponseBytes?: number;
   /**
+   * Reject a request at once while this client already has this many started and not yet settled (retries
+   * included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
+   * response counts until its headers arrive. Rejects with a `NetworkError` whose `maxPendingRequests` is the
+   * limit, before anything is sent. Applies on every transport. Default: no limit
+   */
+  maxPendingRequests?: number;
+  /**
    * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
    * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
    * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
@@ -260,6 +267,8 @@ export interface RustFetchError extends Error {
   parameter?: string;
   /** NetworkError for a response larger than `maxResponseBytes`: the limit */
   maxResponseBytes?: number;
+  /** NetworkError for a request refused by `maxPendingRequests`: the limit */
+  maxPendingRequests?: number;
 }
 "#;
 
@@ -350,6 +359,9 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxRedirects") {
                 builder = builder.max_redirects(parse_max_redirects(&max)?);
+            }
+            if let Some(max) = prop(options, "maxPendingRequests") {
+                builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -1498,6 +1510,13 @@ fn parse_max_redirects(value: &JsValue) -> Result<u32> {
     non_negative_u32(value.as_f64().unwrap_or(f64::NAN), "maxRedirects")
 }
 
+fn parse_max_pending_requests(value: &JsValue) -> Result<usize> {
+    match non_negative_u32(value.as_f64().unwrap_or(f64::NAN), "maxPendingRequests") {
+        Ok(0) | Err(_) => Err(invalid("maxPendingRequests", "must be a positive integer")),
+        Ok(max) => Ok(max as usize),
+    }
+}
+
 fn parse_body_type(value: &JsValue) -> Result<BodyType> {
     match value.as_string().as_deref() {
         Some("auto") => Ok(BodyType::Auto),
@@ -1698,6 +1717,11 @@ impl From<Error> for JsValue {
         if let Some(limit) = error.response_too_large() {
             #[allow(clippy::cast_precision_loss)]
             let _ = js_sys::Reflect::set(&obj, &"maxResponseBytes".into(), &(limit as f64).into());
+        }
+        if let Some(limit) = error.too_many_pending_requests() {
+            #[allow(clippy::cast_precision_loss)]
+            let _ =
+                js_sys::Reflect::set(&obj, &"maxPendingRequests".into(), &(limit as f64).into());
         }
 
         obj.into()
