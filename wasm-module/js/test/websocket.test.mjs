@@ -150,6 +150,49 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     assert.equal(socket.state, 'closed');
   });
 
+  it('limits messages queued before the connection opens, by count and by bytes', async () => {
+    const onMessage = nextCall();
+    const socket = new WasmClient().websocket(server.url('/echo'), { maxQueuedMessages: 3, maxQueuedBytes: 10, onMessage });
+    const full = (option, limit) => (error) => error.kind === 'NetworkError' && error[option] === limit && /send queue is full/.test(error.message);
+    socket.send('ëëëë'); // 8 bytes in UTF-8
+    socket.send('a');
+    assert.throws(() => socket.send('ab'), full('maxQueuedBytes', 10), '11 bytes');
+    socket.send('b'); // exactly 10 bytes, 3 messages
+    assert.equal(socket.bufferedAmount, 10);
+    assert.throws(() => socket.send(''), full('maxQueuedMessages', 3), 'a 4th message');
+    assert.throws(() => socket.sendJson(1), full('maxQueuedMessages', 3));
+    await socket.opened;
+    while (onMessage.calls.length < 3) await onMessage.next();
+    assert.deepEqual(onMessage.calls, ['ëëëë', 'a', 'b'], 'only the accepted messages were sent, in order');
+    // Once open, messages go straight to the socket
+    const reply = onMessage.next();
+    socket.send('x'.repeat(100));
+    assert.equal(await reply, 'x'.repeat(100));
+    socket.close();
+    await socket.closed;
+  });
+
+  it('counts the queue from zero again while reconnecting', async () => {
+    const onReconnect = nextCall();
+    const socket = new WasmClient().websocket(server.url('/drop-after-open'), {
+      reconnect: { initialDelayMs: 200, maxRetries: 3 },
+      maxQueuedMessages: 2,
+      maxQueuedBytes: 4,
+      onReconnect,
+    });
+    socket.send('abcd');
+    assert.throws(() => socket.send('e'), (e) => e.maxQueuedBytes === 4);
+    await socket.opened;
+    await onReconnect.next();
+    assert.equal(socket.state, 'reconnecting');
+    socket.send(new Blob(['wxy'])); // the queue was sent when the first connection opened
+    assert.throws(() => socket.send(new Blob(['yz'])), (e) => e.maxQueuedBytes === 4, 'a Blob counts its size');
+    socket.send(new Uint8Array(1));
+    assert.throws(() => socket.send(new Uint8Array(0)), (e) => e.maxQueuedMessages === 2);
+    socket.close();
+    await socket.closed;
+  });
+
   it("parses JSON messages with messageType: 'json'", async () => {
     const onMessage = nextCall();
     const onError = nextCall();
@@ -315,6 +358,10 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     invalid(() => client.websocket(server.url(), { onMessage: 'x' }), 'onMessage');
     invalid(() => client.websocket(server.url(), { signal: {} }), 'signal');
     invalid(() => client.websocket(server.url(), { dispatcher: 'http://proxy' }), 'dispatcher');
+    for (const value of [0, -1, 1.5, '2']) {
+      invalid(() => client.websocket(server.url(), { maxQueuedMessages: value }), 'maxQueuedMessages');
+      invalid(() => client.websocket(server.url(), { maxQueuedBytes: value }), 'maxQueuedBytes');
+    }
     // allowAbsoluteUrls: an absolute URL can't replace the base URL
     const guarded = new WasmClient({ baseUrl: server.httpUrl('/v1'), allowAbsoluteUrls: false });
     invalid(() => guarded.websocket('ws://other.example/'), 'url');

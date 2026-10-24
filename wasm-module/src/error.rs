@@ -40,6 +40,23 @@ impl fmt::Display for LineTooLong {
 
 impl std::error::Error for LineTooLong {}
 
+/// The source of an [`Error::Network`] when a WebSocket's queue of messages
+/// sent before it opened is full (`maxQueuedMessages` or `maxQueuedBytes`)
+#[derive(Debug)]
+pub(crate) struct QueueFull {
+    /// The option that was reached
+    pub(crate) option: &'static str,
+    pub(crate) limit: usize,
+}
+
+impl fmt::Display for QueueFull {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the queue is full ({} is {})", self.option, self.limit)
+    }
+}
+
+impl std::error::Error for QueueFull {}
+
 /// The source of an [`Error::Network`] when a client already has as many
 /// requests pending as it allows (`max_pending_requests`,
 /// `maxPendingRequests` in JavaScript)
@@ -92,6 +109,29 @@ impl Error {
                 source: Some(source),
                 ..
             } => source.downcast_ref::<LineTooLong>().map(|e| e.limit),
+            _ => None,
+        }
+    }
+
+    /// A WebSocket message refused because `option` (`limit`) was reached
+    pub(crate) fn queue_full(option: &'static str, limit: usize) -> Self {
+        Error::Network {
+            message: format!(
+                "The WebSocket isn't open and its send queue is full ({option} is {limit})"
+            ),
+            source: Some(Box::new(QueueFull { option, limit })),
+        }
+    }
+
+    /// The option and its limit, when a WebSocket's send queue was full
+    pub(crate) fn full_queue(&self) -> Option<(&'static str, usize)> {
+        match self {
+            Error::Network {
+                source: Some(source),
+                ..
+            } => source
+                .downcast_ref::<QueueFull>()
+                .map(|e| (e.option, e.limit)),
             _ => None,
         }
     }
@@ -214,6 +254,7 @@ impl fmt::Display for Error {
                     !s.is::<ResponseTooLarge>()
                         && !s.is::<TooManyPendingRequests>()
                         && !s.is::<LineTooLong>()
+                        && !s.is::<QueueFull>()
                 }) {
                     write!(f, " (caused by: {})", src)?;
                 }
@@ -365,6 +406,23 @@ mod tests {
         assert_eq!(error.line_too_long(), Some(8));
         assert_eq!(error.response_too_large(), None);
         assert_eq!(Error::Timeout { duration_ms: 1 }.line_too_long(), None);
+    }
+
+    #[test]
+    fn queue_full_reads_on_its_own_and_in_the_error() {
+        let full = QueueFull {
+            option: "maxQueuedBytes",
+            limit: 10,
+        };
+        assert_eq!(full.to_string(), "the queue is full (maxQueuedBytes is 10)");
+        let error = Error::queue_full("maxQueuedMessages", 2);
+        assert_eq!(
+            error.to_string(),
+            "Network error: The WebSocket isn't open and its send queue is full (maxQueuedMessages is 2)"
+        );
+        assert_eq!(error.full_queue(), Some(("maxQueuedMessages", 2)));
+        assert_eq!(error.line_too_long(), None);
+        assert_eq!(Error::Timeout { duration_ms: 1 }.full_queue(), None);
     }
 
     #[test]

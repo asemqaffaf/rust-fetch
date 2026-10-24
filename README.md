@@ -755,7 +755,7 @@ In Node.js you can authenticate the handshake with headers, which browsers don't
 const authed = client.websocket('/live', { headers: { authorization: 'Bearer your-access-token' } }); // Node.js only
 ```
 
-`websocket()` resolves relative URLs against `baseUrl`, turning `http:` into `ws:` and `https:` into `wss:`, and returns at once; messages sent before the connection opens (or while it reconnects) are queued. `state` is `'connecting'`, `'open'`, `'reconnecting'`, `'closing'` or `'closed'`.
+`websocket()` resolves relative URLs against `baseUrl`, turning `http:` into `ws:` and `https:` into `wss:`, and returns at once; messages sent before the connection opens (or while it reconnects) are queued. That queue has no limit unless you set one: with `maxQueuedMessages` and/or `maxQueuedBytes` (UTF-8 bytes for text, the size of binary data and Blobs), a `send()` that would go over throws a `NetworkError` carrying the limit it reached, and the message isn't queued. Once the connection is open, messages go to the runtime's socket, whose own buffer is `bufferedAmount`. `state` is `'connecting'`, `'open'`, `'reconnecting'`, `'closing'` or `'closed'`.
 
 | Option | Description |
 | --- | --- |
@@ -914,7 +914,7 @@ for await (const event of client.events('/feed', { maxLineBytes: 64 * 1024 })) {
 - **Bytes, line break excluded.** A line is counted in UTF-8 bytes, without its `\n`, `\r\n` (or, in event streams, `\r`), the same however the network splits it, including a character or a `\r\n` split between chunks. A line exactly at the limit is accepted.
 - **Checked before it's buffered.** No more than the limit is ever held for one line, whether it arrives as one huge chunk or as an endless trickle.
 - **What happens:** the lines (or events) before the long one are delivered, then the stream errors with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed. An event stream ends and isn't reconnected, since it would get the same line again.
-- **Event streams:** every line counts, comments included. Each `data:` line is checked on its own, so an event made of many `data:` lines can exceed the limit in total; limit the response with `maxResponseBytes` too, or handle large events with `onEvent`.
+- **Event streams:** every line counts, comments included. Each `data:` line is checked on its own, so **an event's total size isn't limited**: an event made of many `data:` lines is assembled in memory until the blank line that ends it, with `onEvent` as well as `for await` (`onEvent` changes how events are delivered, not how they're assembled). A client's `maxResponseBytes` caps the whole stream, which also ends a long-lived one, so it's only a backstop. A limit on an event's total size is tracked in [#121](https://github.com/asemqaffaf/rust-fetch/issues/121).
 
 The default is no limit, as before.
 
