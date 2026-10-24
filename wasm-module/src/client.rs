@@ -1272,6 +1272,7 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn a_refused_retry_returns_the_attempts_error_and_sets_the_flag() {
         let client = Client::builder()
