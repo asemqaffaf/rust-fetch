@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-10-24
+
+A security patch: a server can no longer tie up connections, or memory on the native transport, with a long or endless redirect body. Performance: the base-against-head benchmark detected no slowdown. Comparisons against `fetch()` and axios were not rerun, so the comparative results in the README remain tied to the versions they tested.
+
 ### Fixed
 - **A redirect's body is read up to 64 KiB, then its connection is closed.** On the node:http transport, the body of a followed redirect was drained in the background with no end, so a server sending an endless redirect body kept that connection, and its slot in the pool of 256 per origin, busy for good. The native transport read the whole redirect body into memory before following it, so an endless one grew memory until the request timed out. Small redirect bodies are still drained so their connection is reused. Tests cover both transports: the redirect is followed promptly, each connection closes, 50 in a row keep memory bounded, and a redirect-limit error or cancellation closes them too.
 
@@ -223,7 +227,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.2...HEAD
+[2.5.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...v2.4.1
