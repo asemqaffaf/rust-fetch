@@ -1355,3 +1355,132 @@ fn max_pending_requests_must_be_at_least_one() {
         .unwrap();
     assert!(error.to_string().contains("maxPendingRequests"), "{error}");
 }
+
+#[tokio::test]
+async fn retry_budget_limits_retries_refills_and_is_shared_by_clones() {
+    use rust_fetch::RetryBudget;
+    // Always 503, except "/recover", which fails once and then succeeds
+    let recover = Arc::new(AtomicUsize::new(0));
+    let hits = Arc::clone(&recover);
+    let server = TestServer::start(move |req, _| {
+        if req.target == "/recover" && hits.fetch_add(1, Ordering::SeqCst) > 0 {
+            Reply::new(200, "ok")
+        } else {
+            Reply::new(503, "busy")
+        }
+    });
+    let retries = RetryConfig {
+        max_retries: 3,
+        initial_delay: Duration::from_millis(1),
+        ..Default::default()
+    };
+    // One retry per 500 ms window, whatever the traffic
+    let budget = RetryBudget::new()
+        .ratio(0.0)
+        .min_per_second(2.0)
+        .window(Duration::from_millis(500));
+    let client = Client::builder()
+        .retry_config(retries)
+        .retry_budget(budget)
+        .build()
+        .unwrap();
+
+    // The failing upstream: one retry, then the budget refuses, returning the attempt's error
+    let error = client.get(server.url("/fail")).await.unwrap_err();
+    assert!(matches!(error, Error::Http { status: 503, .. }), "{error}");
+    assert_eq!(server.requests().len(), 2);
+    // A clone shares the spent budget: its first attempt is sent, its retry isn't
+    let error = client.clone().get(server.url("/fail")).await.unwrap_err();
+    assert!(matches!(error, Error::Http { status: 503, .. }));
+    assert_eq!((server.requests().len(), client.retries_refused()), (3, 2));
+
+    // Once the window has moved on, the budget has refilled
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let response = client.get(server.url("/recover")).await.unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        recover.load(Ordering::SeqCst),
+        2,
+        "the retry was allowed again"
+    );
+    assert_eq!(client.retries_refused(), 2);
+    assert_eq!(Client::new().unwrap().retries_refused(), 0);
+}
+
+#[tokio::test]
+async fn cancelling_while_waiting_to_retry_spends_no_budget() {
+    use rust_fetch::RetryBudget;
+    // Each path fails once, then succeeds
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let paths = Arc::clone(&seen);
+    let server = TestServer::start(move |req, _| {
+        let mut paths = paths.lock().unwrap();
+        let first = !paths.contains(&req.target);
+        paths.push(req.target.clone());
+        if first {
+            Reply::new(503, "busy")
+        } else {
+            Reply::new(200, "ok")
+        }
+    });
+    let client = Client::builder()
+        .retry_config(RetryConfig {
+            max_retries: 1,
+            initial_delay: Duration::from_millis(300),
+            ..Default::default()
+        })
+        .retry_budget(RetryBudget::new().ratio(0.0).min_per_second(0.1)) // one retry per 10 s
+        .build()
+        .unwrap();
+    // Dropped during the 300 ms backoff, before its retry is sent
+    let cancelled =
+        tokio::time::timeout(Duration::from_millis(100), client.get(server.url("/a"))).await;
+    assert!(cancelled.is_err());
+    // The one retry in the window is still there: "/b" fails once and is retried
+    let response = client.get(server.url("/b")).await.unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(*seen.lock().unwrap(), ["/a", "/b", "/b"]);
+    assert_eq!(client.retries_refused(), 0);
+}
+
+#[tokio::test]
+async fn a_retry_allowed_before_waiting_can_be_refused_when_sent() {
+    use rust_fetch::RetryBudget;
+    let server = TestServer::start(|_, _| Reply::new(503, "busy"));
+    let client = Client::builder()
+        .retry_config(RetryConfig {
+            max_retries: 1,
+            initial_delay: Duration::from_millis(100),
+            ..Default::default()
+        })
+        .retry_budget(RetryBudget::new().ratio(0.0).min_per_second(0.1)) // one retry per 10 s
+        .build()
+        .unwrap();
+    // Both fail at once and both may retry; whichever retries first spends the one retry
+    let (a, b) = tokio::join!(client.get(server.url("/a")), client.get(server.url("/b")));
+    assert!(a.is_err() && b.is_err());
+    assert_eq!((server.requests().len(), client.retries_refused()), (3, 1));
+}
+
+#[test]
+fn retry_budget_settings_are_validated() {
+    use rust_fetch::RetryBudget;
+    for (budget, name) in [
+        (RetryBudget::new().ratio(-1.0), "retryBudget.ratio"),
+        (
+            RetryBudget::new().min_per_second(-1.0),
+            "retryBudget.minPerSecond",
+        ),
+        (
+            RetryBudget::new().window(Duration::ZERO),
+            "retryBudget.windowMs",
+        ),
+    ] {
+        let error = Client::builder()
+            .retry_budget(budget)
+            .build()
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(name), "{error}");
+    }
+}

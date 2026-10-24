@@ -3,6 +3,7 @@
 //! This module provides a flexible HTTP client with support for
 //! retries, timeouts, and various configuration options.
 
+use crate::budget::{Budget, RetryBudget};
 use crate::{
     error::{Error, Result},
     runtime,
@@ -13,7 +14,7 @@ use crate::{
     },
 };
 use futures_util::{Stream, StreamExt};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,6 +46,8 @@ pub(crate) struct ClientConfig {
     pub(crate) allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
     max_pending_requests: Option<usize>,
+    /// Shared by the client's clones through the `Arc<ClientConfig>`
+    retry_budget: Option<Arc<Budget>>,
     /// JavaScript: `maxLineBytes`, for NDJSON responses and event streams
     pub(crate) max_line_bytes: Option<usize>,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
@@ -250,6 +253,8 @@ impl Client {
             allow_private_network: self.config.allow_private_network,
             #[cfg(target_arch = "wasm32")]
             fetch_options: self.config.fetch_options.clone(),
+            #[cfg(target_arch = "wasm32")]
+            retry_refused: None,
         }
     }
 
@@ -293,7 +298,7 @@ impl Client {
         limit: Option<u64>,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
-        self.execute_retrying(config.method, config.timeout, || async {
+        self.execute_retrying(config.method, config.timeout, None, || async {
             let raw = self
                 .execute_once(&url, config, stream, progress, limit)
                 .await?;
@@ -318,10 +323,12 @@ impl Client {
     }
 
     /// Shared retry/timeout policy for Rust responses and JS-native bodies.
+    /// `refused` is set when the retry budget refused a retry.
     async fn execute_retrying<T, F, Fut>(
         &self,
         method: Method,
         timeout: Option<Duration>,
+        refused: Option<&AtomicBool>,
         mut send: F,
     ) -> Result<T>
     where
@@ -329,6 +336,18 @@ impl Client {
         Fut: std::future::Future<Output = Result<Attempt<T>>>,
     {
         let _pending = self.admit()?;
+        let budget = self.config.retry_budget.as_deref();
+        if let Some(budget) = budget {
+            budget.request(runtime::now_ms());
+        }
+        // The budget is checked before waiting to retry and spent once the
+        // retry is sent; either way, a refusal returns the attempt's error
+        let refuse = |error| {
+            if let Some(refused) = refused {
+                refused.store(true, Ordering::Relaxed);
+            }
+            Err(error)
+        };
         let mut attempt = 0;
 
         loop {
@@ -346,12 +365,26 @@ impl Client {
 
             match self.retry_delay(attempt, method, &error, retry_after) {
                 Some(delay) => {
+                    if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
+                        return refuse(error);
+                    }
                     attempt += 1;
                     runtime::sleep(delay).await;
+                    if budget.is_some_and(|budget| !budget.spend(runtime::now_ms())) {
+                        return refuse(error);
+                    }
                 }
                 None => return Err(error),
             }
         }
+    }
+
+    /// Retries the retry budget has refused so far (0 without a budget)
+    pub fn retries_refused(&self) -> u64 {
+        self.config
+            .retry_budget
+            .as_deref()
+            .map_or(0, Budget::refused)
     }
 
     /// Count a request as pending until it settles or is dropped, or refuse
@@ -695,6 +728,7 @@ pub struct ClientBuilder {
     allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
     max_pending_requests: Option<usize>,
+    retry_budget: Option<RetryBudget>,
     max_line_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
@@ -717,6 +751,7 @@ impl ClientBuilder {
             allow_absolute_urls: true,
             max_response_bytes: None,
             max_pending_requests: None,
+            retry_budget: None,
             max_line_bytes: None,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
@@ -773,6 +808,16 @@ impl ClientBuilder {
     /// is a network error; see [`Error::response_too_large`].
     pub fn max_response_bytes(mut self, limit: u64) -> Self {
         self.max_response_bytes = Some(limit);
+        self
+    }
+
+    /// Limit retries across the client and its clones, for all origins, so a
+    /// failing upstream doesn't get every request retried at once (a retry
+    /// storm). First attempts are always sent; see [`RetryBudget`] for the
+    /// accounting. A refused retry returns the attempt's error, and
+    /// [`Client::retries_refused`] counts refusals. Default: no budget.
+    pub fn retry_budget(mut self, budget: RetryBudget) -> Self {
+        self.retry_budget = Some(budget);
         self
     }
 
@@ -839,6 +884,12 @@ impl ClientBuilder {
 
     /// Build the client
     pub fn build(self) -> Result<Client> {
+        if let Some(name) = self.retry_budget.as_ref().and_then(RetryBudget::invalid) {
+            return Err(Error::InvalidInput {
+                parameter: name.to_string(),
+                reason: "must be a finite, non-negative number (windowMs: positive)".to_string(),
+            });
+        }
         if self.max_pending_requests == Some(0) {
             return Err(Error::InvalidInput {
                 parameter: "maxPendingRequests".to_string(),
@@ -875,6 +926,9 @@ impl ClientBuilder {
                 allow_absolute_urls: self.allow_absolute_urls,
                 max_response_bytes: self.max_response_bytes,
                 max_pending_requests: self.max_pending_requests,
+                retry_budget: self
+                    .retry_budget
+                    .map(|budget| Arc::new(Budget::new(budget))),
                 max_line_bytes: self.max_line_bytes,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
@@ -913,6 +967,10 @@ pub struct RequestBuilder {
     /// Browser `fetch()` options: the client's, with this request's overrides
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
+    /// JavaScript: set when the retry budget refused a retry, so the error
+    /// can say so (`retryBudgetExhausted`)
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) retry_refused: Option<Arc<AtomicBool>>,
 }
 
 impl RequestBuilder {
@@ -945,7 +1003,12 @@ impl RequestBuilder {
             self.config.timeout
         };
         self.client
-            .execute_retrying(self.config.method, timeout, || request.send())
+            .execute_retrying(
+                self.config.method,
+                timeout,
+                self.retry_refused.as_deref(),
+                || request.send(),
+            )
             .await
     }
 
@@ -1125,7 +1188,12 @@ impl RequestBuilder {
         )?;
         let response = self
             .client
-            .execute_retrying(self.config.method, self.config.timeout, || request.send())
+            .execute_retrying(
+                self.config.method,
+                self.config.timeout,
+                self.retry_refused.as_deref(),
+                || request.send(),
+            )
             .await?;
         Ok(StreamingResponse {
             status: response.status,
@@ -1203,6 +1271,47 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_refused_retry_returns_the_attempts_error_and_sets_the_flag() {
+        let client = Client::builder()
+            .retry_config(RetryConfig::default())
+            .retry_budget(RetryBudget::new().ratio(0.0).min_per_second(0.0))
+            .build()
+            .unwrap();
+        let refused = AtomicBool::new(false);
+        let failed = || async {
+            Ok::<Attempt<()>, Error>(Attempt::HttpError(
+                Error::Http {
+                    status: 503,
+                    status_text: "Service Unavailable".to_string(),
+                    body: None,
+                },
+                None,
+            ))
+        };
+        let error = client
+            .execute_retrying(Method::Get, None, Some(&refused), failed)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Http { status: 503, .. }));
+        assert!(refused.load(Ordering::Relaxed));
+        assert_eq!(client.retries_refused(), 1);
+        for (budget, name) in [
+            (RetryBudget::new().ratio(-1.0), "retryBudget.ratio"),
+            (
+                RetryBudget::new().window(Duration::ZERO),
+                "retryBudget.windowMs",
+            ),
+        ] {
+            let error = Client::builder()
+                .retry_budget(budget)
+                .build()
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains(name), "{error}");
+        }
+    }
 
     #[test]
     fn max_line_bytes_is_kept_for_the_javascript_streams() {

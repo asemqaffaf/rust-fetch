@@ -16,6 +16,7 @@ const client = new WasmClient({
   headers: { authorization: 'Bearer …' }, // sent with every request
   timeoutMs: 10_000,                      // per attempt, including the body; default 30000; 0 disables
   retries: 3,                             // or { maxRetries, initialDelayMs, maxDelayMs, multiplier, retryOn, retryOnNetworkError, retryOnTimeout, retryNonIdempotent }
+  // retryBudget: true,                   // client-wide retry limit: { ratio: 0.2, minPerSecond: 10, windowMs: 10000 }; refusals reject with the attempt's error plus retryBudgetExhausted: true
 });
 ```
 

@@ -694,6 +694,84 @@ describe('retries', () => {
   });
 });
 
+describe('retryBudget', () => {
+  // Always 503, except paths starting with /once, which fail once each and then succeed
+  const upstream = async () => {
+    const seen = new Set();
+    return startServer((req, res) => {
+      if (req.url.startsWith('/once') && seen.has(req.url)) return json(res, { ok: true });
+      seen.add(req.url);
+      res.writeHead(503);
+      res.end('busy');
+    });
+  };
+  const retries = { maxRetries: 3, initialDelayMs: 1 };
+
+  it('limits retries against a failing upstream, keeps the error, and refills', async () => {
+    const s = await upstream();
+    try {
+      // One retry per 500 ms window, whatever the traffic
+      const c = new WasmClient({ retries, retryBudget: { ratio: 0, minPerSecond: 2, windowMs: 500 } });
+      const first = await rejection(c.get(s.url('/fail')));
+      assert.equal(first.kind, 'HttpError');
+      assert.equal(first.status, 503, 'the attempt’s own error');
+      assert.equal(first.retryBudgetExhausted, true);
+      assert.equal(s.requests.length, 2, 'the first attempt and one retry');
+      const second = await rejection(c.get(s.url('/fail')));
+      assert.equal(second.retryBudgetExhausted, true);
+      assert.equal(s.requests.length, 3, 'first attempts are always sent');
+      assert.equal(c.retriesRefused, 2);
+      // A failure that wasn't going to be retried isn't marked
+      assert.equal((await rejection(c.post(s.url('/fail'), { body: 'x' }))).retryBudgetExhausted, undefined);
+      // The window moves on and the budget refills
+      await sleep(600);
+      assert.deepEqual((await c.get(s.url('/once-a'))).body, { ok: true });
+      assert.equal(c.retriesRefused, 2);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('spends nothing for a request cancelled while waiting to retry', async () => {
+    const s = await upstream();
+    try {
+      // One retry per 10 s window
+      const c = new WasmClient({ retries: { maxRetries: 1, initialDelayMs: 300 }, retryBudget: { ratio: 0, minPerSecond: 0.1 } });
+      const controller = new AbortController();
+      const cancelled = c.get(s.url('/once-a'), { signal: controller.signal });
+      await sleep(100); // the first attempt failed; waiting 300 ms to retry
+      controller.abort();
+      assert.equal((await rejection(cancelled)).kind, 'CancelledError');
+      assert.deepEqual((await c.get(s.url('/once-b'))).body, { ok: true }, 'the window’s one retry was still there');
+      assert.equal(c.retriesRefused, 0);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('is off by default, true takes the defaults, and options are validated', async () => {
+    const s = await upstream();
+    try {
+      assert.equal(new WasmClient().retriesRefused, 0);
+      const error = await rejection(new WasmClient({ retries }).get(s.url('/fail')));
+      assert.equal(error.retryBudgetExhausted, undefined);
+      assert.equal(s.requests.length, 4, 'no budget: every retry');
+      assert.equal((await rejection(new WasmClient({ retries, retryBudget: true }).get(s.url('/fail')))).retryBudgetExhausted, undefined, 'the default minimum allows these retries');
+      new WasmClient({ retryBudget: false });
+    } finally {
+      await s.close();
+    }
+    const invalid = (retryBudget, parameter) =>
+      assert.throws(() => new WasmClient({ retryBudget }), (e) => e.kind === 'InvalidInputError' && e.parameter === parameter, parameter);
+    invalid('yes', 'retryBudget');
+    invalid({ ratio: -1 }, 'retryBudget.ratio');
+    invalid({ ratio: 'x' }, 'retryBudget.ratio');
+    invalid({ minPerSecond: Infinity }, 'retryBudget.minPerSecond');
+    invalid({ windowMs: 0 }, 'retryBudget.windowMs');
+    invalid({ windowMs: -1 }, 'retryBudget.windowMs');
+  });
+});
+
 describe('cancellation', () => {
   it('cancels while collecting a response body after headers arrive', async () => {
     const error = await rejection(client().get(server.url('/stream'), { signal: AbortSignal.timeout(50) }));
