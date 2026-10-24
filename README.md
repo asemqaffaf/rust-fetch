@@ -668,7 +668,7 @@ await feed.opened;
 feed.close();
 ```
 
-Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream.
+Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream. A `for await` loop that falls behind holds the server back: with 64 events waiting, the stream stops reading until the loop has taken half of them, so the connection slows down instead of events piling up in memory. `onEvent` gets each event as it's parsed, so a slow handler should apply its own limit.
 
 | Option | Description |
 | --- | --- |

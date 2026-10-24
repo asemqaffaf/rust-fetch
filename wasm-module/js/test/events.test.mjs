@@ -7,6 +7,9 @@ import { rejection, sleep, startServer } from './helpers.mjs';
 
 let server;
 const connections = new Map(); // per test id: requests seen
+// /v1/flood: events written so far, and whether the client closed the stream
+const flood = { written: 0, closed: false };
+const FLOOD_EVENTS = 20_000; // 1 KB each
 
 function sse(res, status = 200, headers = {}) {
   res.writeHead(status, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...headers });
@@ -29,6 +32,17 @@ before(async () => {
         await sleep(20);
         res.write(Buffer.from('data: Zoë 🦀\n\n').subarray(9));
         return; // stays open
+      case '/v1/flood': {
+        sse(res);
+        Object.assign(flood, { written: 0, closed: false });
+        res.on('close', () => (flood.closed = true));
+        const total = Number(url.searchParams.get('n') ?? FLOOD_EVENTS);
+        while (flood.written < total && !res.destroyed) {
+          const event = `data: ${String(flood.written++).padStart(8, '0')}${'x'.repeat(1008)}\n\n`;
+          if (!res.write(event)) await new Promise((resolve) => res.once('drain', resolve).once('close', resolve));
+        }
+        return res.end();
+      }
       case '/v1/count': {
         sse(res);
         for (let i = 1; i <= 100 && !res.destroyed; i++) {
@@ -226,6 +240,31 @@ describe('events', () => {
       for await (const { data } of client().events('/bad-json?id=json2', { messageType: 'json', reconnect: false })) seen.push(data);
     }, (error) => error.kind === 'ParseError');
     assert.deepEqual(seen, [{ ok: 1 }]);
+  });
+
+  it('an iterator that reads slowly holds the server back instead of buffering every event', async () => {
+    const stream = new WasmClient().events(server.url('/v1/flood'));
+    let read = 0;
+    for await (const event of stream) {
+      assert.equal(event.data.length, 1016);
+      if (++read === 1) await sleep(1000);
+      if (read === 2) break;
+    }
+    // Without backpressure, all 20 MB arrives (and is queued) within that second; with it,
+    // the server stops once the socket and stream buffers are full (about 830 events on macOS)
+    assert.ok(flood.written < 5000, `the server wrote ${flood.written} of ${FLOOD_EVENTS} events`);
+    for (let i = 0; i < 100 && !flood.closed; i++) await sleep(10);
+    assert.ok(flood.closed, 'break closed the connection');
+  });
+
+  it('a paused stream resumes and delivers every event, in order', async () => {
+    const received = [];
+    for await (const event of new WasmClient().events(server.url('/v1/flood?n=3000'), { reconnect: false })) {
+      received.push(Number(event.data.slice(0, 8)));
+      if (received.length % 500 === 1) await sleep(100);
+      if (received.length === 3000) break;
+    }
+    assert.deepEqual(received, Array.from({ length: 3000 }, (_, i) => i));
   });
 
   it('closes when the signal aborts', async () => {
