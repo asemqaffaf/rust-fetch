@@ -1484,3 +1484,44 @@ fn retry_budget_settings_are_validated() {
         assert!(error.to_string().contains(name), "{error}");
     }
 }
+
+#[tokio::test]
+async fn sensitive_headers_refuse_cross_origin_redirects_in_the_rust_client() {
+    let target = TestServer::start(|_, _| Reply::new(200, "other origin"));
+    let to = target.url("/collect");
+    let server = TestServer::start(move |req, _| match req.target.as_str() {
+        "/same" => Reply::new(200, "same origin"),
+        "/away" => Reply::new(302, "").header("location", &to),
+        _ => Reply::new(302, "").header("location", "/same"),
+    });
+    let client = Client::builder()
+        .sensitive_headers(["X-Api-Key"])
+        .allow_insecure_redirects(false)
+        .build()
+        .unwrap();
+    let with_key = |path: &str| {
+        client
+            .request(Method::Get, server.url(path))
+            .header("x-api-key", "SECRET")
+    };
+    // reqwest can't drop the header, so the redirect to another origin is refused
+    let error = with_key("/away").send().await.unwrap_err();
+    assert!(error.to_string().contains("sensitiveHeaders"), "{error}");
+    assert!(target.requests().is_empty(), "the key never left");
+    // Same-origin redirects, and requests without the header, are followed
+    assert_eq!(with_key("/start").send().await.unwrap().status, 200);
+    let response = client.get(server.url("/away")).await.unwrap();
+    assert_eq!(response.status, 200);
+    // A per-request list replaces the client's
+    let response = with_key("/away")
+        .sensitive_headers(Vec::<String>::new())
+        .send()
+        .await;
+    assert_eq!(response.unwrap().status, 200);
+    // Not refused when a request allows insecure redirects (nothing insecure here)
+    let response = with_key("/start")
+        .allow_insecure_redirects(true)
+        .send()
+        .await;
+    assert_eq!(response.unwrap().status, 200);
+}

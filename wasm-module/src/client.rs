@@ -31,7 +31,7 @@ pub struct Client {
     /// Clients for requests that override the redirect settings: reqwest
     /// sets the redirect policy per client (and connection pool)
     #[cfg(not(target_arch = "wasm32"))]
-    redirect_clients: Arc<std::sync::Mutex<Vec<((bool, u32), reqwest::Client)>>>,
+    redirect_clients: Arc<std::sync::Mutex<Vec<(RedirectKey, reqwest::Client)>>>,
 }
 
 /// Client configuration
@@ -45,6 +45,10 @@ pub(crate) struct ClientConfig {
     max_redirects: u32,
     pub(crate) allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
+    /// Header names (lowercase) dropped on cross-origin redirects, besides
+    /// `Authorization`, `Cookie` and `Proxy-Authorization`
+    sensitive_headers: Vec<String>,
+    allow_insecure_redirects: bool,
     max_pending_requests: Option<usize>,
     /// Shared by the client's clones through the `Arc<ClientConfig>`
     retry_budget: Option<Arc<Budget>>,
@@ -249,6 +253,8 @@ impl Client {
             max_redirects,
             allow_absolute_urls: self.config.allow_absolute_urls,
             max_response_bytes: self.config.max_response_bytes,
+            sensitive_headers: self.config.sensitive_headers.clone(),
+            allow_insecure_redirects: self.config.allow_insecure_redirects,
             #[cfg(target_arch = "wasm32")]
             allow_private_network: self.config.allow_private_network,
             #[cfg(target_arch = "wasm32")]
@@ -260,9 +266,14 @@ impl Client {
 
     /// The reqwest client for a request's redirect settings
     #[cfg(not(target_arch = "wasm32"))]
-    fn http_client(&self, config: &RequestConfig) -> Result<reqwest::Client> {
-        let key = (config.follow_redirects, config.max_redirects);
-        if key == self.config.redirect.config(self.config.max_redirects) {
+    fn http_client(
+        &self,
+        config: &RequestConfig,
+        guards: RedirectGuards,
+    ) -> Result<reqwest::Client> {
+        let key = (config.follow_redirects, config.max_redirects, guards);
+        let (follow, max) = self.config.redirect.config(self.config.max_redirects);
+        if key == (follow, max, RedirectGuards::default()) {
             return Ok(self.inner.clone());
         }
         let mut clients = self
@@ -281,7 +292,11 @@ impl Client {
     /// with other redirect settings through their own transports
     #[cfg(target_arch = "wasm32")]
     #[allow(clippy::unnecessary_wraps)]
-    fn http_client(&self, _config: &RequestConfig) -> Result<reqwest::Client> {
+    fn http_client(
+        &self,
+        _config: &RequestConfig,
+        _guards: RedirectGuards,
+    ) -> Result<reqwest::Client> {
         Ok(self.inner.clone())
     }
 
@@ -296,11 +311,12 @@ impl Client {
         stream: bool,
         progress: Option<&ProgressFn>,
         limit: Option<u64>,
+        guards: RedirectGuards,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         self.execute_retrying(config.method, config.timeout, None, || async {
             let raw = self
-                .execute_once(&url, config, stream, progress, limit)
+                .execute_once(&url, config, stream, progress, limit, guards)
                 .await?;
             if is_success(raw.status, config) {
                 Ok(Attempt::Success(raw))
@@ -440,9 +456,10 @@ impl Client {
         stream: bool,
         progress: Option<&ProgressFn>,
         limit: Option<u64>,
+        guards: RedirectGuards,
     ) -> Result<RawResponse> {
         let mut request = self
-            .http_client(config)?
+            .http_client(config, guards)?
             .request(config.method.to_reqwest(), url.clone());
 
         // Set headers
@@ -496,21 +513,42 @@ fn is_success(status: u16, config: &RequestConfig) -> bool {
 }
 
 /// A reqwest client following redirects as configured
-fn http_client((follow, max_redirects): (bool, u32)) -> Result<reqwest::Client> {
+/// Errors for refused redirects, the same on every transport
+pub(crate) const INSECURE_REDIRECT: &str =
+    "Insecure redirect refused (allowInsecureRedirects is false): https: to";
+#[cfg(not(target_arch = "wasm32"))]
+const CROSS_ORIGIN_REDIRECT: &str = "Redirect to another origin refused: the request has a header listed in sensitiveHeaders, which this transport can't drop";
+
+/// The settings a reqwest client's redirect policy is built from
+type RedirectKey = (bool, u32, RedirectGuards);
+
+fn http_client((follow, max_redirects, guards): RedirectKey) -> Result<reqwest::Client> {
     let builder = reqwest::Client::builder();
     #[cfg(not(target_arch = "wasm32"))]
-    let builder = builder.redirect(redirect_policy(follow, max_redirects));
+    let builder = builder.redirect(redirect_policy(follow, max_redirects, guards));
     #[cfg(target_arch = "wasm32")]
-    let _ = (follow, max_redirects);
+    let _ = (follow, max_redirects, guards);
     builder.build().map_err(client_init_error)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn redirect_policy(follow: bool, max_redirects: u32) -> reqwest::redirect::Policy {
+fn redirect_policy(
+    follow: bool,
+    max_redirects: u32,
+    guards: RedirectGuards,
+) -> reqwest::redirect::Policy {
     if !follow {
         return reqwest::redirect::Policy::none();
     }
     reqwest::redirect::Policy::custom(move |attempt| {
+        // `previous` ends with the URL that answered with this redirect
+        let refused = attempt
+            .previous()
+            .last()
+            .and_then(|from| guards.refuse(from, attempt.url()));
+        if let Some(message) = refused {
+            return attempt.error(message);
+        }
         // `previous` includes the original URL
         let redirects = attempt.previous().len();
         if redirects <= max_redirects as usize {
@@ -707,6 +745,55 @@ pub(crate) fn bytes_to_text(bytes: Vec<u8>) -> String {
     }
 }
 
+/// Header names, lowercased
+fn lowercase<I, S>(names: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    names
+        .into_iter()
+        .map(|name| name.into().to_ascii_lowercase())
+        .collect()
+}
+
+/// Redirect rules beyond following and counting, for transports that can
+/// only refuse a redirect (reqwest's policy can't change the headers)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RedirectGuards {
+    /// Follow `https:` → `http:` redirects (`allowInsecureRedirects`)
+    pub(crate) allow_insecure: bool,
+    /// Refuse redirects to another origin: the request has a header from
+    /// `sensitiveHeaders`, which this transport can't drop
+    pub(crate) same_origin_only: bool,
+}
+
+impl RedirectGuards {
+    /// Why a redirect from `from` to `to` is refused, if it is
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refuse(self, from: &reqwest::Url, to: &reqwest::Url) -> Option<String> {
+        if !self.allow_insecure && from.scheme() == "https" && to.scheme() == "http" {
+            return Some(format!(
+                "{INSECURE_REDIRECT} {}",
+                to.origin().ascii_serialization()
+            ));
+        }
+        if self.same_origin_only && from.origin() != to.origin() {
+            return Some(CROSS_ORIGIN_REDIRECT.to_string());
+        }
+        None
+    }
+}
+
+impl Default for RedirectGuards {
+    fn default() -> Self {
+        Self {
+            allow_insecure: true,
+            same_origin_only: false,
+        }
+    }
+}
+
 /// A request counted as pending; dropping it (when the request settles, or
 /// its future is dropped) frees its place
 struct Pending(Arc<AtomicUsize>);
@@ -727,6 +814,8 @@ pub struct ClientBuilder {
     max_redirects: u32,
     allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
+    sensitive_headers: Vec<String>,
+    allow_insecure_redirects: bool,
     max_pending_requests: Option<usize>,
     retry_budget: Option<RetryBudget>,
     max_line_bytes: Option<usize>,
@@ -750,6 +839,8 @@ impl ClientBuilder {
             max_redirects: DEFAULT_MAX_REDIRECTS,
             allow_absolute_urls: true,
             max_response_bytes: None,
+            sensitive_headers: Vec::new(),
+            allow_insecure_redirects: true,
             max_pending_requests: None,
             retry_budget: None,
             max_line_bytes: None,
@@ -808,6 +899,27 @@ impl ClientBuilder {
     /// is a network error; see [`Error::response_too_large`].
     pub fn max_response_bytes(mut self, limit: u64) -> Self {
         self.max_response_bytes = Some(limit);
+        self
+    }
+
+    /// Header names that carry credentials, dropped on a redirect to another
+    /// origin along with `Authorization`, `Cookie` and `Proxy-Authorization`
+    /// (case-insensitive), e.g. `["x-api-key"]`. reqwest can't drop headers
+    /// on a redirect, so in the Rust client a request that has one of these
+    /// headers refuses cross-origin redirects instead.
+    pub fn sensitive_headers<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.sensitive_headers = lowercase(names);
+        self
+    }
+
+    /// Whether to follow a redirect from `https:` to `http:` (default:
+    /// `true`). With `false`, such a redirect fails with a network error.
+    pub fn allow_insecure_redirects(mut self, allow: bool) -> Self {
+        self.allow_insecure_redirects = allow;
         self
     }
 
@@ -912,7 +1024,8 @@ impl ClientBuilder {
             }
         }
 
-        let inner = http_client(self.redirect.config(self.max_redirects))?;
+        let (follow, max) = self.redirect.config(self.max_redirects);
+        let inner = http_client((follow, max, RedirectGuards::default()))?;
 
         Ok(Client {
             inner,
@@ -925,6 +1038,8 @@ impl ClientBuilder {
                 max_redirects: self.max_redirects,
                 allow_absolute_urls: self.allow_absolute_urls,
                 max_response_bytes: self.max_response_bytes,
+                sensitive_headers: self.sensitive_headers,
+                allow_insecure_redirects: self.allow_insecure_redirects,
                 max_pending_requests: self.max_pending_requests,
                 retry_budget: self
                     .retry_budget
@@ -961,6 +1076,8 @@ pub struct RequestBuilder {
     max_redirects: u32,
     allow_absolute_urls: bool,
     pub(crate) max_response_bytes: Option<u64>,
+    sensitive_headers: Vec<String>,
+    allow_insecure_redirects: bool,
     /// Node.js: `allowPrivateNetwork`
     #[cfg(target_arch = "wasm32")]
     pub(crate) allow_private_network: bool,
@@ -1118,6 +1235,42 @@ impl RequestBuilder {
         self
     }
 
+    /// Header names dropped on a redirect to another origin, replacing the
+    /// client's list (see [`ClientBuilder::sensitive_headers`])
+    pub fn sensitive_headers<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.sensitive_headers = lowercase(names);
+        self
+    }
+
+    /// Whether to follow a redirect from `https:` to `http:`, overriding the
+    /// client's setting
+    pub fn allow_insecure_redirects(mut self, allow: bool) -> Self {
+        self.allow_insecure_redirects = allow;
+        self
+    }
+
+    /// The redirect rules reqwest's policy enforces for this request
+    #[cfg(not(target_arch = "wasm32"))]
+    fn redirect_guards(&self) -> RedirectGuards {
+        RedirectGuards {
+            allow_insecure: self.allow_insecure_redirects,
+            same_origin_only: self
+                .sensitive_headers
+                .iter()
+                .any(|name| self.config.headers.contains(name)),
+        }
+    }
+
+    /// In WebAssembly, the transports apply the rules themselves
+    #[cfg(target_arch = "wasm32")]
+    fn redirect_guards(&self) -> RedirectGuards {
+        RedirectGuards::default()
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn transport_options(&self) -> crate::wasm::transport::TransportOptions<'_> {
         crate::wasm::transport::TransportOptions {
@@ -1125,6 +1278,8 @@ impl RequestBuilder {
             proxy: self.client.config.proxy.as_deref(),
             limit: self.max_response_bytes,
             block_private_network: !self.allow_private_network,
+            sensitive_headers: &self.sensitive_headers,
+            allow_insecure_redirects: self.allow_insecure_redirects,
         }
     }
 
@@ -1154,6 +1309,7 @@ impl RequestBuilder {
                 false,
                 self.progress.as_ref(),
                 self.max_response_bytes,
+                self.redirect_guards(),
             )
             .await?;
         let content_type = raw.headers.get_first("content-type").unwrap_or("");
@@ -1227,6 +1383,7 @@ impl RequestBuilder {
                 true,
                 None,
                 self.max_response_bytes,
+                self.redirect_guards(),
             )
             .await?;
         Ok(StreamingResponse {
@@ -1312,6 +1469,32 @@ mod tests {
                 .unwrap();
             assert!(error.to_string().contains(name), "{error}");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn redirect_guards_refuse_downgrades_and_cross_origin_redirects() {
+        let url = |s: &str| reqwest::Url::parse(s).unwrap();
+        let (https, http) = (url("https://api.example/a"), url("http://api.example/b"));
+        let other = url("https://other.example/c");
+        let open = RedirectGuards::default();
+        assert_eq!(open.refuse(&https, &http), None);
+        assert_eq!(open.refuse(&https, &other), None);
+        let strict = RedirectGuards {
+            allow_insecure: false,
+            same_origin_only: true,
+        };
+        let downgrade = strict.refuse(&https, &http).unwrap();
+        assert_eq!(
+            downgrade,
+            "Insecure redirect refused (allowInsecureRedirects is false): https: to http://api.example"
+        );
+        assert_eq!(strict.refuse(&http, &url("http://api.example/c")), None);
+        assert!(strict
+            .refuse(&https, &other)
+            .unwrap()
+            .contains("sensitiveHeaders"));
+        assert_eq!(strict.refuse(&https, &url("https://api.example/d")), None);
     }
 
     #[test]

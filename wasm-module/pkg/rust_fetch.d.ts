@@ -167,6 +167,17 @@ export interface ClientOptions extends BrowserRequestOptions {
      */
     maxPendingRequests?: number;
     /**
+     * Header names that carry credentials (case-insensitive), e.g. `['x-api-key']`. On a redirect to another origin,
+     * Node.js requests drop them along with `Authorization`, `Cookie` and `Proxy-Authorization`. Browsers follow
+     * redirects themselves, so this doesn't apply there. Default: none
+     */
+    sensitiveHeaders?: string[];
+    /**
+     * Whether to follow a redirect from `https:` to `http:`, which sends the request (and a 307/308 body) unencrypted.
+     * With `false`, such a redirect rejects with a `NetworkError` (Node.js; browsers apply their own rules). Default: `true`
+     */
+    allowInsecureRedirects?: boolean;
+    /**
      * Reject a line longer than this many bytes (line break excluded) in `responseType: 'ndjson'` responses and
      * `events()` streams, before it's buffered, so a server can't grow one line without bound. The stream errors
      * with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed; an event stream isn't
@@ -198,6 +209,10 @@ export interface RequestOptions extends BrowserRequestOptions {
     allowAbsoluteUrls?: boolean;
     /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
     maxResponseBytes?: number | null;
+    /** Overrides the client's `sensitiveHeaders` */
+    sensitiveHeaders?: string[];
+    /** Overrides the client's `allowInsecureRedirects` */
+    allowInsecureRedirects?: boolean;
     /** `responseType: 'ndjson'`: overrides the client's `maxLineBytes`; `null` removes the limit for this request */
     maxLineBytes?: number | null;
     /** Overrides the client's `allowPrivateNetwork` */

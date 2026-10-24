@@ -7,6 +7,12 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import zlib from 'node:zlib';
+import https from 'node:https';
+import { execFile, execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { json, rejection, startServer } from './helpers.mjs';
 
@@ -82,6 +88,95 @@ describe('credentials on redirects (node-fetch CVE-2022-0235; follow-redirects C
     attacker.requests.length = 0;
     await new WasmClient({ headers: SECRETS }).get(api.url('/?' + new URLSearchParams({ to: attacker.url('/collect') })));
     assert.deepEqual(leaked(), []);
+  });
+});
+
+describe('credential-safe redirects: sensitiveHeaders and allowInsecureRedirects', () => {
+  const custom = { 'x-api-key': 'SECRET', 'x-auth-token': 'SECRET' };
+  const sentTo = (server) => server.requests.flatMap((r) => Object.keys(custom).filter((name) => r.headers[name]));
+
+  it('drops sensitiveHeaders on a cross-origin redirect (client or per request), whatever their case', async () => {
+    for (const [client, options] of [
+      [new WasmClient({ headers: custom, sensitiveHeaders: ['X-Api-Key', 'x-auth-token'] }), {}],
+      [new WasmClient({ headers: custom }), { sensitiveHeaders: ['x-api-key', 'X-AUTH-TOKEN'] }],
+    ]) {
+      attacker.requests.length = 0;
+      for (const status of [302, 307]) await client.get(api.url('/?' + new URLSearchParams({ to: attacker.url('/collect'), status })), options);
+      assert.equal(attacker.requests.length, 2);
+      assert.deepEqual(sentTo(attacker), []);
+    }
+  });
+
+  it('keeps them on a same-origin redirect, and forwards them by default (the documented gap)', async () => {
+    const before = api.requests.length;
+    await new WasmClient({ headers: custom, sensitiveHeaders: ['x-api-key'] }).get(api.url('/?' + new URLSearchParams({ to: '/same' })));
+    assert.equal(api.requests.at(-1).url, '/same');
+    assert.equal(api.requests.at(-1).headers['x-api-key'], 'SECRET');
+    assert.equal(api.requests.length - before, 2);
+    attacker.requests.length = 0;
+    await new WasmClient({ headers: custom }).get(api.url('/?' + new URLSearchParams({ to: attacker.url('/collect') })));
+    assert.deepEqual(sentTo(attacker).sort(), ['x-api-key', 'x-auth-token']);
+  });
+
+  it('validates sensitiveHeaders and allowInsecureRedirects', async () => {
+    for (const value of ['x-api-key', [1], ['bad name']]) {
+      assert.throws(() => new WasmClient({ sensitiveHeaders: value }), (e) => e.parameter === 'sensitiveHeaders', JSON.stringify(value));
+    }
+    assert.throws(() => new WasmClient({ allowInsecureRedirects: 'no' }), (e) => e.parameter === 'allowInsecureRedirects');
+    assert.equal((await rejection(new WasmClient().get(api.url('/'), { allowInsecureRedirects: 0 }))).parameter, 'allowInsecureRedirects');
+  });
+
+  describe('from https: to http:', () => {
+    let dir;
+    let secure;
+    before(async () => {
+      // A certificate for 127.0.0.1, trusted by the child processes below through NODE_EXTRA_CA_CERTS
+      dir = mkdtempSync(join(tmpdir(), 'rust-fetch-downgrade-'));
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+        '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', join(dir, 'key'), '-out', join(dir, 'crt')], { stdio: 'ignore' });
+      secure = https.createServer({ key: readFileSync(join(dir, 'key')), cert: readFileSync(join(dir, 'crt')) }, (req, res) => {
+        const to = new URL(req.url, 'https://x').searchParams.get('to');
+        res.writeHead(Number(new URL(req.url, 'https://x').searchParams.get('status') ?? 302), { location: to });
+        res.end();
+      });
+      await new Promise((resolve) => secure.listen(0, '127.0.0.1', resolve));
+    });
+    after(() => {
+      secure.closeAllConnections();
+      secure.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** GET in a child process that trusts the certificate; resolves to the body or the error */
+    async function get(options, to, status = 302) {
+      const target = `https://127.0.0.1:${secure.address().port}/?${new URLSearchParams({ to, status })}`;
+      const script = `const { WasmClient } = await import(${JSON.stringify(new URL('node.js', pkg).href)});
+        const res = await new WasmClient({ timeoutMs: 5000, ...${JSON.stringify(options)} }).get(${JSON.stringify(target)})
+          .catch((e) => ({ body: { error: e.kind, message: e.message } }));
+        console.log(JSON.stringify(res.body));`;
+      const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, NODE_EXTRA_CA_CERTS: join(dir, 'crt') },
+      });
+      return JSON.parse(stdout);
+    }
+
+    it('refuses the redirect with allowInsecureRedirects: false, before sending anything over http:', async () => {
+      for (const status of [302, 307]) {
+        attacker.requests.length = 0;
+        const result = await get({ allowInsecureRedirects: false }, attacker.url('/collect'), status);
+        assert.equal(result.error, 'NetworkError');
+        assert.match(result.message, /Insecure redirect refused \(allowInsecureRedirects is false\): https: to http:\/\/127\.0\.0\.1:\d+$/);
+        assert.equal(attacker.requests.length, 0, 'nothing went out in clear text');
+      }
+    });
+
+    it('follows it by default, and https: to https: either way', async () => {
+      assert.deepEqual(await get({}, attacker.url('/collect')), { attacker: true });
+      const secureTarget = `https://127.0.0.1:${secure.address().port}/?${new URLSearchParams({ to: attacker.url('/x') })}`;
+      // https: → https: (itself) → http: is refused at the second hop only
+      const result = await get({ allowInsecureRedirects: false }, secureTarget);
+      assert.match(result.message, /Insecure redirect refused/);
+    });
   });
 });
 

@@ -110,6 +110,10 @@ pub struct Request {
     pub max_redirects: Option<u32>,
     /// Fail when the decompressed body is larger than this (`maxResponseBytes`)
     pub max_response_bytes: Option<f64>,
+    /// Header names (lowercase) also dropped on cross-origin redirects
+    pub sensitive_headers: Option<Vec<String>>,
+    /// `false` refuses redirects from `https:` to `http:`
+    pub allow_insecure_redirects: Option<bool>,
 }
 
 /// The finished response, or `error` (with `code` for timeouts)
@@ -195,6 +199,8 @@ impl Transport {
         let mut redirects = 0;
         let manual = request.manual.unwrap_or(false);
         let max_redirects = request.max_redirects.unwrap_or(MAX_REDIRECTS);
+        let allow_insecure = request.allow_insecure_redirects.unwrap_or(true);
+        let sensitive = request.sensitive_headers.unwrap_or_default();
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let limit = request.max_response_bytes.map(|limit| limit as u64);
 
@@ -229,6 +235,12 @@ impl Transport {
                 if !matches!(next.scheme(), "http" | "https") {
                     return Err(format!("Unsupported redirect to {}:", next.scheme()));
                 }
+                if !allow_insecure && url.scheme() == "https" && next.scheme() == "http" {
+                    return Err(format!(
+                        "Insecure redirect refused (allowInsecureRedirects is false): https: to {}",
+                        next.origin().ascii_serialization()
+                    ));
+                }
                 // Same rules as fetch(): 303, and 301/302 after POST, become a bodiless GET
                 if (status == 303 && method != Method::GET && method != Method::HEAD)
                     || (matches!(status, 301 | 302) && method == Method::POST)
@@ -245,11 +257,8 @@ impl Transport {
                         headers.remove(name);
                     }
                 }
-                // Never forward credentials to another origin
                 if next.origin() != url.origin() {
-                    for name in ["authorization", "cookie", "proxy-authorization"] {
-                        headers.remove(name);
-                    }
+                    drop_credentials(&mut headers, &sensitive);
                 }
                 url = next;
                 redirects += 1;
@@ -440,6 +449,17 @@ fn read_all(reader: impl Read, limit: Option<u64>) -> Result<Vec<u8>, String> {
     match limit {
         Some(limit) if out.len() as u64 > limit => Err(too_large(limit)),
         _ => Ok(out),
+    }
+}
+
+/// Never forward credentials to another origin: the standard headers and the
+/// request's `sensitiveHeaders`
+fn drop_credentials(headers: &mut HeaderMap, sensitive: &[String]) {
+    for name in ["authorization", "cookie", "proxy-authorization"] {
+        headers.remove(name);
+    }
+    for name in sensitive {
+        headers.remove(name.as_str());
     }
 }
 

@@ -188,6 +188,17 @@ export interface ClientOptions extends BrowserRequestOptions {
    */
   maxPendingRequests?: number;
   /**
+   * Header names that carry credentials (case-insensitive), e.g. `['x-api-key']`. On a redirect to another origin,
+   * Node.js requests drop them along with `Authorization`, `Cookie` and `Proxy-Authorization`. Browsers follow
+   * redirects themselves, so this doesn't apply there. Default: none
+   */
+  sensitiveHeaders?: string[];
+  /**
+   * Whether to follow a redirect from `https:` to `http:`, which sends the request (and a 307/308 body) unencrypted.
+   * With `false`, such a redirect rejects with a `NetworkError` (Node.js; browsers apply their own rules). Default: `true`
+   */
+  allowInsecureRedirects?: boolean;
+  /**
    * Reject a line longer than this many bytes (line break excluded) in `responseType: 'ndjson'` responses and
    * `events()` streams, before it's buffered, so a server can't grow one line without bound. The stream errors
    * with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed; an event stream isn't
@@ -219,6 +230,10 @@ export interface RequestOptions extends BrowserRequestOptions {
   allowAbsoluteUrls?: boolean;
   /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
   maxResponseBytes?: number | null;
+  /** Overrides the client's `sensitiveHeaders` */
+  sensitiveHeaders?: string[];
+  /** Overrides the client's `allowInsecureRedirects` */
+  allowInsecureRedirects?: boolean;
   /** `responseType: 'ndjson'`: overrides the client's `maxLineBytes`; `null` removes the limit for this request */
   maxLineBytes?: number | null;
   /** Overrides the client's `allowPrivateNetwork` */
@@ -407,6 +422,13 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxLineBytes") {
                 builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
+            }
+            if let Some(names) = prop(options, "sensitiveHeaders") {
+                builder = builder.sensitive_headers(parse_header_names(&names)?);
+            }
+            if let Some(allow) = prop(options, "allowInsecureRedirects") {
+                builder =
+                    builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -977,6 +999,12 @@ pub(crate) fn request_builder(
     }
     if let Some(allow) = options.get("allowAbsoluteUrls") {
         builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+    }
+    if let Some(names) = options.get("sensitiveHeaders") {
+        builder = builder.sensitive_headers(parse_header_names(&names)?);
+    }
+    if let Some(allow) = options.get("allowInsecureRedirects") {
+        builder = builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
     }
     // `null` removes the client's limit for this request
     match options.raw("maxResponseBytes") {
@@ -1627,6 +1655,22 @@ fn parse_max_redirects(value: &JsValue) -> Result<u32> {
 
 fn parse_max_pending_requests(value: &JsValue) -> Result<usize> {
     positive_u32(value, "maxPendingRequests")
+}
+
+/// `sensitiveHeaders`: an array of valid header names
+fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
+    let invalid_names = || invalid("sensitiveHeaders", "must be an array of header names");
+    if !js_sys::Array::is_array(value) {
+        return Err(invalid_names());
+    }
+    js_sys::Array::from(value)
+        .iter()
+        .map(|name| {
+            name.as_string()
+                .filter(|name| reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_ok())
+                .ok_or_else(invalid_names)
+        })
+        .collect()
 }
 
 /// `maxLineBytes` for a request or an event stream: the client's unless set; `null` for none
