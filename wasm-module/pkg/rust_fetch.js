@@ -854,6 +854,10 @@ function __wbg_get_imports() {
         __wbg_close_f331e839071ac7d1: function() { return handleError(function (arg0, arg1, arg2, arg3) {
             arg0.close(arg1, getStringFromWasm0(arg2, arg3));
         }, arguments); },
+        __wbg_construct_2cc135b78387ed16: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.construct(arg0, arg1);
+            return ret;
+        }, arguments); },
         __wbg_decode_cc8625b232d97f64: function() { return handleError(function (arg0, arg1) {
             const ret = arg0.decode(arg1);
             return ret;
@@ -1103,6 +1107,10 @@ function __wbg_get_imports() {
             const ret = Array.of(arg0, arg1);
             return ret;
         },
+        __wbg_of_d5dbecdc59e02e34: function(arg0) {
+            const ret = Array.of(arg0);
+            return ret;
+        },
         __wbg_open_f0c8628338345808: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5) {
             arg0.open(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4), arg5 !== 0);
         }, arguments); },
@@ -1333,7 +1341,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 160, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 101, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_e9a7b01c56fed3da___features__gen_ProgressEvent__ProgressEvent______true_);
             return ret;
         },

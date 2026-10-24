@@ -259,3 +259,8 @@ jobs:
           path: wasm-module/pkg
       - name: Browser tests
         run: npm run test:browsers
+      # Every adapter (node:http, native, fetch() in Node.js, Chromium, Firefox,
+      # WebKit) on the same cases; fails on any undocumented difference, or a
+      # CONFORMANCE.md that doesn't match the results
+      - name: Transport conformance
+        run: npm run test:conformance

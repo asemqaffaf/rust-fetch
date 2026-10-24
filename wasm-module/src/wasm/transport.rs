@@ -673,6 +673,21 @@ fn redirect_mode(config: &RequestConfig) -> Redirect {
 }
 
 /// The `RequestInit` for a `fetch()` call
+/// The body as a `Blob`: Node.js's `fetch()` (undici, in 20.20 and 22.13
+/// at least) can't resend a byte array after a 307 or 308 redirect, since the
+/// first attempt detaches its buffer, but it can resend a `Blob`. Browsers
+/// send either the same way.
+fn body_blob(body: &js_sys::Uint8Array) -> JsValue {
+    let constructor = js_sys::Reflect::get(&js_sys::global(), &"Blob".into())
+        .ok()
+        .and_then(|blob| blob.dyn_into::<js_sys::Function>().ok());
+    constructor
+        .and_then(|blob| {
+            js_sys::Reflect::construct(&blob, &js_sys::Array::of1(&js_sys::Array::of1(body))).ok()
+        })
+        .unwrap_or_else(|| body.into())
+}
+
 fn fetch_init(
     method: &str,
     headers: &[(&str, &str)],
@@ -694,7 +709,7 @@ fn fetch_init(
     init.set_method(method);
     init.set_headers(js_headers.as_ref());
     if let Some(body) = body {
-        init.set_body(body);
+        init.set_body(&body_blob(body));
     }
     if redirect != Redirect::Follow {
         init.set_redirect(web_sys::RequestRedirect::Manual);
