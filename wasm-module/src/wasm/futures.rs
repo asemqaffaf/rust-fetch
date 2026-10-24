@@ -120,6 +120,11 @@ pub(crate) async fn abortable<T>(
     let Some(signal) = signal else {
         return fut.await;
     };
+    // Already aborted: don't start the request at all (polling it first
+    // would send it before the signal is looked at)
+    if signal.aborted() {
+        return Err(Error::Cancelled);
+    }
     let fut = std::pin::pin!(fut);
     match select(fut, Aborted::new(signal)).await {
         Either::Left((result, _)) => result,
