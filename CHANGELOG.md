@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Requests are fast again: 2.5.0 threw and caught an exception on every request without an options object.** It read `maxResponseBytes` with `Reflect.get` even when no options were passed, and `Reflect.get(undefined, …)` throws. That nearly doubled rust-fetch's own cost per request (9.05 → 17.27 µs with an instant transport). Under load, an independent evaluation measured 18% lower throughput than 2.4.0. A request's options are now read once (`Object.keys` on plain objects), and unset options cost no lookup at all. Per request: 9.07 µs without options (2.4.1: 9.05 µs) and 10.71 µs with options (2.4.1: 13.27 µs, 2.5.0: 14.60 µs). A regression test fails if any option lookup could throw again.
+- The private-network check only computes the request host when it's turned on.
+
+### Changed
+- `npm run bench:compare` (and the benchmark job on pull requests) now also measures rust-fetch's own cost per request with an instant transport, which isn't drowned out by runner noise, and calls `client.get(url)` without options in the small-JSON scenarios, as most code does.
+
 ### Documentation
 - The README leads with what holds at any request rate: typed errors, timeouts and retries, and safety with untrusted servers and URLs. The speed figures are qualified as high-volume results.
 - New cases in *When to choose something else*: the server is the bottleneck, calls go through vendor SDKs, or you need a long track record.

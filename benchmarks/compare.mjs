@@ -37,6 +37,24 @@ const THRESHOLD = 0.1;
 
 if (process.env.BENCH_WORKER) {
   const { pkg, url, scenario } = JSON.parse(process.env.BENCH_WORKER);
+  if (scenario === 'overhead') {
+    // rust-fetch's own cost per request, with a transport that answers at
+    // once: no network, server or decoding, so it's steady on a busy runner
+    const response = { status: 200, statusText: 'OK', ok: true, url: 'http://x/', headers: {}, body: { ok: true } };
+    globalThis[Symbol.for('rust-fetch.transport')] = () => Object.assign(Promise.resolve(response), { cancel() {} });
+    const m = await import(pathToFileURL(resolve(pkg, 'rust_fetch.js')).href);
+    m.initSync({ module: readFileSync(resolve(pkg, 'rust_fetch_bg.wasm')) });
+    const client = new m.WasmClient();
+    for (let i = 0; i < 20_000; i++) await client.get('http://x/');
+    const start = performance.now();
+    let count = 0;
+    while (performance.now() - start < seconds * 1000) {
+      await client.get('http://x/');
+      count++;
+    }
+    console.log(JSON.stringify({ startup: 0, value: -((performance.now() - start) * 1000) / count }));
+    process.exit(0);
+  }
   const t0 = performance.now();
   const { WasmClient } = await import(pathToFileURL(resolve(pkg, 'node.js')).href);
   const client = new WasmClient({ timeoutMs: 0 });
@@ -50,7 +68,10 @@ if (process.env.BENCH_WORKER) {
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
         while (performance.now() < end) {
-          await client.get(`${url}${path}`, { responseType: 'binary' });
+          // Small JSON the most common way, with no options object (2.5.0's
+          // regression only showed there); the 8 MB body as bytes
+          if (scenario === 'large') await client.get(`${url}${path}`, { responseType: 'binary' });
+          else await client.get(`${url}${path}`);
           count++;
         }
       }),
@@ -109,6 +130,10 @@ const record = (key, side, value) => {
 for (let round = 0; round < rounds; round++) {
   // Alternate which build goes first
   const order = round % 2 ? ['head', 'base'] : ['base', 'head'];
+  for (const side of order) {
+    const { value } = await measure(builds[side], 'overhead', {});
+    record('overhead|client', side, value); // negative: lower is better
+  }
   for (const [scenario] of scenarios) {
     for (const [transport, env] of transports) {
       if (transport === 'native' && !(hasNative(builds.base) && hasNative(builds.head))) continue;
@@ -133,20 +158,22 @@ const rows = [];
 const warnings = [];
 const labels = Object.fromEntries(scenarios.map(([key, label, unit]) => [key, [label, unit]]));
 labels.startup = ['Startup: import + first request', 'ms'];
+labels.overhead = ['Client overhead per request (instant transport)', 'µs'];
 // Throughput first, startup last
-const ordered = [...results].sort(([a], [b]) => a.startsWith('startup|') - b.startsWith('startup|'));
+const ordered = [...results].sort(([a], [b]) => /^(startup|overhead)\|/.test(a) - /^(startup|overhead)\|/.test(b));
 for (const [key, { base, head }] of ordered) {
   const [scenario, transport] = key.split('|');
   const [label, unit] = labels[scenario];
-  const sign = scenario === 'startup' ? -1 : 1;
+  const lowerIsBetter = scenario === 'startup' || scenario === 'overhead';
+  const sign = lowerIsBetter ? -1 : 1;
   const [b, h] = [median(base) * sign, median(head) * sign];
   // Relative change where positive is better
-  const change = scenario === 'startup' ? (b - h) / b : (h - b) / b;
+  const change = lowerIsBetter ? (b - h) / b : (h - b) / b;
   const losses = base.filter((value, i) => head[i] < value).length;
   const regression = change < -THRESHOLD && losses > base.length / 2;
-  const name = `${label} (${transport})`;
+  const name = scenario === 'overhead' ? label : `${label} (${transport})`;
   if (regression) warnings.push(`${name}: ${(change * 100).toFixed(1)}%, worse in ${losses} of ${base.length} rounds`);
-  const format = (value) => (unit === 'ms' ? value.toFixed(1) : Math.round(value).toLocaleString('en-US'));
+  const format = (value) => (unit === 'ms' || unit === 'µs' ? value.toFixed(1) : Math.round(value).toLocaleString('en-US'));
   rows.push(`| ${name} | ${format(b)} ${unit} | ${format(h)} ${unit} | ${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}% | ${regression ? '⚠️ regression' : ''} |`);
 }
 
