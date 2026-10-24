@@ -40,6 +40,22 @@ impl fmt::Display for LineTooLong {
 
 impl std::error::Error for LineTooLong {}
 
+/// The source of an [`Error::Network`] when a Server-Sent Event's data is
+/// larger than `maxEventBytes` allows
+#[derive(Debug)]
+pub(crate) struct EventTooLarge {
+    /// The limit, in bytes, of an event's data (its `data:` lines joined)
+    pub(crate) limit: usize,
+}
+
+impl fmt::Display for EventTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "an event's data is larger than {} bytes", self.limit)
+    }
+}
+
+impl std::error::Error for EventTooLarge {}
+
 /// The source of an [`Error::Network`] when a WebSocket's queue of messages
 /// sent before it opened is full (`maxQueuedMessages` or `maxQueuedBytes`)
 #[derive(Debug)]
@@ -109,6 +125,25 @@ impl Error {
                 source: Some(source),
                 ..
             } => source.downcast_ref::<LineTooLong>().map(|e| e.limit),
+            _ => None,
+        }
+    }
+
+    /// A Server-Sent Event whose data would be larger than `limit` bytes
+    pub(crate) fn event_too_large(limit: usize) -> Self {
+        Error::Network {
+            message: format!("Event larger than maxEventBytes ({limit} bytes)"),
+            source: Some(Box::new(EventTooLarge { limit })),
+        }
+    }
+
+    /// The limit, when a Server-Sent Event's data was larger than `maxEventBytes`
+    pub(crate) fn event_too_large_limit(&self) -> Option<usize> {
+        match self {
+            Error::Network {
+                source: Some(source),
+                ..
+            } => source.downcast_ref::<EventTooLarge>().map(|e| e.limit),
             _ => None,
         }
     }
@@ -255,6 +290,7 @@ impl fmt::Display for Error {
                         && !s.is::<TooManyPendingRequests>()
                         && !s.is::<LineTooLong>()
                         && !s.is::<QueueFull>()
+                        && !s.is::<EventTooLarge>()
                 }) {
                     write!(f, " (caused by: {})", src)?;
                 }
@@ -406,6 +442,22 @@ mod tests {
         assert_eq!(error.line_too_long(), Some(8));
         assert_eq!(error.response_too_large(), None);
         assert_eq!(Error::Timeout { duration_ms: 1 }.line_too_long(), None);
+    }
+
+    #[test]
+    fn event_too_large_reads_on_its_own_and_in_the_error() {
+        assert_eq!(
+            EventTooLarge { limit: 4 }.to_string(),
+            "an event's data is larger than 4 bytes"
+        );
+        let error = Error::event_too_large(4);
+        assert_eq!(
+            error.to_string(),
+            "Network error: Event larger than maxEventBytes (4 bytes)"
+        );
+        assert_eq!(error.event_too_large_limit(), Some(4));
+        assert_eq!(error.line_too_long(), None);
+        assert_eq!(Error::Cancelled.event_too_large_limit(), None);
     }
 
     #[test]

@@ -54,6 +54,8 @@ pub(crate) struct ClientConfig {
     retry_budget: Option<Arc<Budget>>,
     /// JavaScript: `maxLineBytes`, for NDJSON responses and event streams
     pub(crate) max_line_bytes: Option<usize>,
+    /// JavaScript: `maxEventBytes`, for event streams
+    pub(crate) max_event_bytes: Option<usize>,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -819,6 +821,7 @@ pub struct ClientBuilder {
     max_pending_requests: Option<usize>,
     retry_budget: Option<RetryBudget>,
     max_line_bytes: Option<usize>,
+    max_event_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
@@ -844,6 +847,7 @@ impl ClientBuilder {
             max_pending_requests: None,
             retry_budget: None,
             max_line_bytes: None,
+            max_event_bytes: None,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
@@ -936,6 +940,12 @@ impl ClientBuilder {
     /// JavaScript: the longest line allowed in NDJSON responses and event streams
     pub(crate) fn max_line_bytes(mut self, limit: usize) -> Self {
         self.max_line_bytes = Some(limit);
+        self
+    }
+
+    /// JavaScript: the most data one Server-Sent Event can hold
+    pub(crate) fn max_event_bytes(mut self, limit: usize) -> Self {
+        self.max_event_bytes = Some(limit);
         self
     }
 
@@ -1045,6 +1055,7 @@ impl ClientBuilder {
                     .retry_budget
                     .map(|budget| Arc::new(Budget::new(budget))),
                 max_line_bytes: self.max_line_bytes,
+                max_event_bytes: self.max_event_bytes,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
@@ -1499,8 +1510,13 @@ mod tests {
 
     #[test]
     fn max_line_bytes_is_kept_for_the_javascript_streams() {
-        let client = Client::builder().max_line_bytes(8).build().unwrap();
+        let client = Client::builder()
+            .max_line_bytes(8)
+            .max_event_bytes(16)
+            .build()
+            .unwrap();
         assert_eq!(client.config.max_line_bytes, Some(8));
+        assert_eq!(client.config.max_event_bytes, Some(16));
         assert_eq!(Client::new().unwrap().config.max_line_bytes, None);
     }
 

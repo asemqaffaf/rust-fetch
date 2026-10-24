@@ -185,6 +185,13 @@ export interface ClientOptions extends BrowserRequestOptions {
      */
     maxLineBytes?: number;
     /**
+     * `events()`: reject an event whose data (its `data:` lines, joined with `\n`) would be larger than this many
+     * bytes, before it's buffered. `maxLineBytes` limits each line; this limits their total, which an event made of
+     * many `data:` lines could otherwise grow without bound. The events before it are delivered, then the stream
+     * errors with a `NetworkError` whose `maxEventBytes` is the limit, and isn't reconnected. Default: no limit
+     */
+    maxEventBytes?: number;
+    /**
      * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
      * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
      * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
@@ -294,6 +301,8 @@ export interface RustFetchError extends Error {
     maxPendingRequests?: number;
     /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
     maxLineBytes?: number;
+    /** NetworkError for a Server-Sent Event larger than `maxEventBytes`: the limit */
+    maxEventBytes?: number;
     /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
     retryBudgetExhausted?: boolean;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -338,6 +347,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     allowAbsoluteUrls?: boolean;
     /** Overrides the client's `maxLineBytes`; `null` removes the limit for this stream */
     maxLineBytes?: number | null;
+    /** Overrides the client's `maxEventBytes`; `null` removes the limit for this stream */
+    maxEventBytes?: number | null;
     /** Closes the stream and stops reconnecting when aborted */
     signal?: AbortSignal;
     /** Called each time a connection opens, including after reconnecting */

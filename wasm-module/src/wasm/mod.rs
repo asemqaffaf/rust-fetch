@@ -206,6 +206,13 @@ export interface ClientOptions extends BrowserRequestOptions {
    */
   maxLineBytes?: number;
   /**
+   * `events()`: reject an event whose data (its `data:` lines, joined with `\n`) would be larger than this many
+   * bytes, before it's buffered. `maxLineBytes` limits each line; this limits their total, which an event made of
+   * many `data:` lines could otherwise grow without bound. The events before it are delivered, then the stream
+   * errors with a `NetworkError` whose `maxEventBytes` is the limit, and isn't reconnected. Default: no limit
+   */
+  maxEventBytes?: number;
+  /**
    * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
    * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
    * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
@@ -315,6 +322,8 @@ export interface RustFetchError extends Error {
   maxPendingRequests?: number;
   /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
   maxLineBytes?: number;
+  /** NetworkError for a Server-Sent Event larger than `maxEventBytes`: the limit */
+  maxEventBytes?: number;
   /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
   retryBudgetExhausted?: boolean;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -422,6 +431,9 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxLineBytes") {
                 builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
+            }
+            if let Some(max) = prop(options, "maxEventBytes") {
+                builder = builder.max_event_bytes(positive_u32(&max, "maxEventBytes")?);
             }
             if let Some(names) = prop(options, "sensitiveHeaders") {
                 builder = builder.sensitive_headers(parse_header_names(&names)?);
@@ -940,8 +952,11 @@ pub(crate) async fn send_request(
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
-        let max_line_bytes =
-            parse_max_line_bytes(&options.raw("maxLineBytes"), client.config.max_line_bytes)?;
+        let max_line_bytes = parse_stream_limit(
+            &options.raw("maxLineBytes"),
+            client.config.max_line_bytes,
+            "maxLineBytes",
+        )?;
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
         if let BodyType::Ndjson = body_type {
             return ndjson_response_to_js(response, signal, max_line_bytes);
@@ -1673,15 +1688,17 @@ fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
         .collect()
 }
 
-/// `maxLineBytes` for a request or an event stream: the client's unless set; `null` for none
-pub(crate) fn parse_max_line_bytes(
+/// A stream limit (`maxLineBytes`, `maxEventBytes`) for a request or an event
+/// stream: the client's unless set; `null` for none
+pub(crate) fn parse_stream_limit(
     value: &JsValue,
     client: Option<usize>,
+    parameter: &str,
 ) -> Result<Option<usize>> {
     match value {
         value if value.is_null() => Ok(None),
         value if value.is_undefined() => Ok(client),
-        value => positive_u32(value, "maxLineBytes").map(Some),
+        value => positive_u32(value, parameter).map(Some),
     }
 }
 
@@ -1896,6 +1913,10 @@ impl From<Error> for JsValue {
         if let Some((option, limit)) = error.full_queue() {
             #[allow(clippy::cast_precision_loss)]
             let _ = js_sys::Reflect::set(&obj, &option.into(), &(limit as f64).into());
+        }
+        if let Some(limit) = error.event_too_large_limit() {
+            #[allow(clippy::cast_precision_loss)]
+            let _ = js_sys::Reflect::set(&obj, &"maxEventBytes".into(), &(limit as f64).into());
         }
         if let Some(limit) = error.line_too_long() {
             #[allow(clippy::cast_precision_loss)]
