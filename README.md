@@ -656,7 +656,7 @@ console.log(`${received} bytes`);
 **Memory while streaming.** A stream is read as fast as you read it, not as fast as the server sends:
 - **Node.js:** a slow reader holds the server back. Only what the socket and stream buffers hold is read ahead: in a test, a server offering 64 MB had sent about 1.5 MB (0.8 MB as NDJSON) while the reader paused for a second. That's reduced read-ahead, not a fixed ceiling, since buffer sizes depend on the platform. Browsers read a response ahead of the page themselves (their own `fetch()` took 59–64 MB in the same test), so this applies to Node.js only.
 - **Cancelling releases the connection:** `reader.cancel()`, `break` out of `for await`, an aborted `signal`, or reaching `maxResponseBytes` closes it on every transport. A body you drop without reading or cancelling is closed when it's garbage-collected, so cancel one you don't need.
-- **Each chunk is yours:** every `Uint8Array` you receive is a fresh copy, and rust-fetch keeps no reference to it.
+- **Each chunk is yours:** every `Uint8Array` you receive owns its whole buffer, and rust-fetch keeps no reference to it. Without download progress or `maxResponseBytes`, chunks are handed over from the transport as they arrive, without copying them through WebAssembly; with either, rust-fetch reads each one on its way, so it's copied.
 - **Per-line and per-event limits** for NDJSON and Server-Sent Events: [`maxLineBytes` and `maxEventBytes`](#limiting-line-length).
 
 These are checked on every transport by the [conformance suite](CONFORMANCE.md).
