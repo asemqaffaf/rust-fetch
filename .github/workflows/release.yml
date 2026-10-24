@@ -105,16 +105,35 @@ jobs:
 
       - name: Verify the published package
         # A clean install from the registry: the signature and the provenance
-        # attestation must verify. The registry can take a few minutes.
+        # attestation must verify. The registry can take a few minutes to serve
+        # the version and its attestation, so both the install and the check
+        # are retried (about 10 minutes). An invalid signature or attestation
+        # fails at once: waiting won't fix it.
         run: |
           mkdir verify && cd verify && npm init -y >/dev/null
           for attempt in $(seq 1 30); do
-            npm install --no-audit --no-fund --prefer-online "rust-fetch@$VERSION" >/dev/null 2>&1 && break
+            if [ ! -d node_modules/rust-fetch ]; then
+              npm install --no-audit --no-fund --prefer-online "rust-fetch@$VERSION" >/dev/null 2>&1 || { sleep 20; continue; }
+              installed=$(node -p "require('./node_modules/rust-fetch/package.json').version")
+              if [ "$installed" != "$VERSION" ]; then
+                echo "::error::Installed rust-fetch@$installed, expected $VERSION"
+                exit 1
+              fi
+            fi
+            npm audit signatures > signatures.txt 2>&1 && status=0 || status=$?
+            cat signatures.txt
+            if grep -qi "invalid" signatures.txt; then
+              echo "::error::rust-fetch@$VERSION has an invalid signature or attestation"
+              exit 1
+            fi
+            if [ "$status" = 0 ] && grep -q "verified attestation" signatures.txt; then
+              exit 0
+            fi
+            echo "Attempt $attempt: not verified yet; retrying in 20 s"
             sleep 20
           done
-          node -e "const v = require('./node_modules/rust-fetch/package.json').version; if (v !== process.env.VERSION) throw new Error('installed ' + v)"
-          npm audit signatures | tee signatures.txt
-          grep -q "verified attestation" signatures.txt
+          echo "::error::rust-fetch@$VERSION's signature and provenance didn't verify within about 10 minutes"
+          exit 1
 
       - name: Create GitHub release
         # Release notes are this version's section of CHANGELOG.md
