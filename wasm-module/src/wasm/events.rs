@@ -138,6 +138,8 @@ struct Inner {
     queue: VecDeque<JsValue>,
     /// `next()` calls waiting for an event: (resolve, reject)
     waiters: VecDeque<(js_sys::Function, js_sys::Function)>,
+    /// Resolves the reader paused on a full queue, once `next()` makes room
+    room: Option<js_sys::Function>,
     /// Why the stream ended, delivered once to the iterator
     error: Option<JsValue>,
     last_event_id: String,
@@ -209,7 +211,13 @@ impl EventStream {
         let (resolve, reject) = pending.expect("the Promise executor runs synchronously");
         let mut inner = self.shared.inner.borrow_mut();
         if let Some(event) = inner.queue.pop_front() {
+            let room = (inner.queue.len() <= QUEUE_RESUME)
+                .then(|| inner.room.take())
+                .flatten();
             drop(inner);
+            if let Some(room) = room {
+                let _ = room.call0(&JsValue::UNDEFINED);
+            }
             let _ = resolve.call1(&JsValue::UNDEFINED, &iteration(&event, false));
         } else if inner.state == State::Closed {
             match inner.error.take() {
@@ -269,6 +277,7 @@ impl WasmClient {
                 state: State::Connecting,
                 queue: VecDeque::new(),
                 waiters: VecDeque::new(),
+                room: None,
                 error: None,
                 last_event_id: String::new(),
                 opened_once: false,
@@ -561,6 +570,12 @@ async fn connect(
                 return Ended::Finished;
             }
         }
+        if let Some(room) = full_queue(shared) {
+            let _ = wasm_bindgen_futures::JsFuture::from(room).await;
+            if is_closed(shared) {
+                return Ended::Finished;
+            }
+        }
     }
     if is_closed(shared) {
         return Ended::Finished;
@@ -583,6 +598,24 @@ fn opened(shared: &Rc<Shared>) {
         let _ = resolve.call0(&JsValue::UNDEFINED);
     }
     call(shared.settings.on_open.as_ref(), None);
+}
+
+/// Backpressure for iterators: with this many events not yet taken by
+/// `next()`, the body isn't read until the queue is down to `QUEUE_RESUME`,
+/// so the connection, and the server, slow down instead of the queue growing
+const QUEUE_LIMIT: usize = 64;
+const QUEUE_RESUME: usize = QUEUE_LIMIT / 2;
+
+/// A promise that resolves once `next()` makes room, when the queue is full
+fn full_queue(shared: &Rc<Shared>) -> Option<js_sys::Promise> {
+    let mut inner = shared.inner.borrow_mut();
+    if inner.queue.len() < QUEUE_LIMIT {
+        return None;
+    }
+    let mut room = None;
+    let promise = js_sys::Promise::new(&mut |resolve, _| room = Some(resolve));
+    inner.room = room;
+    Some(promise)
 }
 
 /// Deliver one event; returns false when the stream should finish
@@ -643,7 +676,7 @@ fn dispatch(shared: &Rc<Shared>, event: sse::Event) -> bool {
 
 /// Closed for good: settle promises and waiting iterators, release the signal, call onClose
 fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
-    let (waiters, reject_opened, resolve_closed, listener) = {
+    let (waiters, reject_opened, resolve_closed, listener, room) = {
         let mut inner = shared.inner.borrow_mut();
         if inner.state == State::Closed {
             return;
@@ -655,8 +688,13 @@ fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
             inner.reject_opened.take(),
             inner.resolve_closed.take(),
             inner.signal_listener.take(),
+            inner.room.take(),
         )
     };
+    // A reader paused on a full queue wakes up to see the stream closed
+    if let Some(room) = room {
+        let _ = room.call0(&JsValue::UNDEFINED);
+    }
     shared.closer.abort();
     if let Some((signal, listener)) = listener {
         let _ =

@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **`maxPendingRequests`: load shedding.** A client option that refuses a request at once while the client already has that many started and not yet settled (retries included; a streamed response counts until its headers arrive). The rejection is a `NetworkError` with `maxPendingRequests` set to the limit, and nothing is sent. In Node.js, requests beyond the 1,024 handed to a transport used to wait in memory without limit; with this option, a caller that can't keep up sheds load instead. The count is per client (shared by Rust clones) and applies on every transport. Rust: `ClientBuilder::max_pending_requests` and `Error::too_many_pending_requests` (#117).
 
+### Fixed
+- **A slow `for await` loop over `client.events()` no longer buffers every event.** Events waiting for the loop were queued without limit, so a fast server (or a large backlog after a reconnect) could fill memory while the loop was busy. The stream now stops reading once 64 events are waiting and resumes when the loop has taken half of them, so the connection slows the server down. In a test, a server offering 20 MB of events wrote about 830 KB while the loop paused for a second, against 12 MB before (#121).
+
 ## [2.5.2] - 2026-10-24
 
 A security patch: a server can no longer tie up connections, or memory on the native transport, with a long or endless redirect body. Performance: the base-against-head benchmark detected no slowdown. Comparisons against `fetch()` and axios were not rerun, so the comparative results in the README remain tied to the versions they tested.

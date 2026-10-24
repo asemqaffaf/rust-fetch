@@ -78,7 +78,7 @@ const stream = client.events('/v1/chat/completions', {
   messageType: 'json',        // data parsed as JSON; stops at `data: [DONE]` (option `end`)
   // reconnect: true          // default for GET: resends Last-Event-ID, honours `retry:`
 });
-for await (const { event, data, id } of stream) console.log(data.choices[0].delta.content);
+for await (const { event, data, id } of stream) console.log(data.choices[0].delta.content);  // a slow loop pauses reading at 64 queued events (backpressure)
 // or callbacks: client.events(url, { onEvent, onError, onOpen, onReconnect, onClose }); stream.close()
 
 // Newline-delimited JSON (e.g. Ollama): one parsed value per line
