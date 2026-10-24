@@ -48,6 +48,13 @@ function loadNative() {
 
 const native = loadNative();
 
+// With NODE_TLS_REJECT_UNAUTHORIZED=0, Node warns on its first TLS connection,
+// but the addon verifies certificates itself (it honours the variable), so the
+// warning is printed on the addon's first HTTPS request instead
+const TLS_WARNING =
+  "Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.";
+let nativeTlsWarning = native !== undefined && process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
+
 // Node's default global agents open a socket for every request that finds no
 // idle one, but keep only 256 of them idle afterwards. Under a burst the rest
 // are closed and sit in TIME_WAIT, and once the ephemeral port range is used
@@ -802,6 +809,8 @@ let nextNativeId = 0;
 
 /** `nodeTransport` through the native addon: same contract, same rules */
 function nativeTransport(request) {
+  // prettier-ignore
+  if (nativeTlsWarning && request.url.startsWith('https:')) { nativeTlsWarning = false; process.emitWarning(TLS_WARNING); }
   const id = (nextNativeId = (nextNativeId + 1) >>> 0);
   const headers = withDefaultHeaders(request);
   // Names and values alternating; a repeated header is sent once per value

@@ -1056,7 +1056,7 @@ Everything that decides what happens to a request (URL handling, validation, ret
 | `XMLHttpRequest` | Browsers, for upload progress | Yes |
 | `node:http` / `node:https` with keep-alive | Node.js | Yes |
 | The runtime's `WebSocket`, with the connection policy (URL, timeout, reconnection, errors) in Rust | WebSockets, everywhere | Yes |
-| Native addon: HTTP/1.1 on [hyper](https://hyper.rs) and Tokio threads, loaded through Node-API, with the same redirect, decompression, timeout and connection-limit rules and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`) | Node.js | Not yet: build it with `npm run build:native` |
+| Native addon: HTTP/1.1 on [hyper](https://hyper.rs) and Tokio threads, loaded through Node-API, with the same redirect, decompression, timeout and connection-limit rules and Node's TLS defaults (Mozilla root certificates, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, with Node's warning when that turns verification off) | Node.js | Not yet: build it with `npm run build:native` |
 
 **Which transport a request uses:**
 
