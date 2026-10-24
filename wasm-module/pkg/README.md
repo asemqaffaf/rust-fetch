@@ -839,6 +839,7 @@ These standalone functions still work. Each call uses a default client: 30 s tim
 What the client does for you, each behaviour covered by tests:
 
 - **Credentials stay with their origin on redirects.** When a redirect leaves the origin (another host, port or scheme, including `https:` to `http:`), the Node.js transports drop `Authorization`, `Cookie` and `Proxy-Authorization`. This is the class of bug behind CVEs in node-fetch, follow-redirects and undici. Browsers apply their own, equivalent rules.
+- **Your own credential headers too, and no downgrades, when you ask.** List headers such as `X-Api-Key` in `sensitiveHeaders` and they're dropped the same way; without it, custom headers follow a redirect to another origin. With `allowInsecureRedirects: false`, a redirect from `https:` to `http:` rejects with a `NetworkError` instead of sending the request (and a 307/308 body) unencrypted. Both are client or per-request options, on both Node.js transports. In the Rust client, which can't drop a header mid-redirect, a request carrying a listed header refuses redirects to another origin instead. Browsers follow redirects themselves, so these options don't apply there.
 - **No header injection.** A header name or value containing CR or LF rejects with an `InvalidInputError` before anything is sent.
 - **Only `http:` and `https:`.** Request URLs, `baseUrl`, and redirect targets with any other scheme (`file:`, `data:`, …) are rejected.
 - **Paths stay under `baseUrl`.** Relative paths, including tricks like `//other.host/x` or `/\other.host`, resolve under the base URL (the class of axios CVE-2024-39338).
@@ -969,7 +970,7 @@ const api = new WasmClient({
   baseUrl: 'https://api.example.com/v1',
   headers: { authorization: `Bearer ${token}` },
   allowAbsoluteUrls: false,           // a path can't replace the host, so the token stays with it
-  redirect: 'error',                  // no redirects: a custom credential header would follow one (#115)
+  redirect: 'error',                  // no redirects at all (or follow them with sensitiveHeaders and allowInsecureRedirects: false)
   timeoutMs: 10_000,                  // per attempt, including the body
   retries: 2,                         // GET, HEAD, PUT, DELETE…; POST and PATCH aren't retried
   retryBudget: true,                  // no retry storms when the API struggles

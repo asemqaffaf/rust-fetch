@@ -68,7 +68,7 @@ pub(crate) struct ProgressCallbacks {
 }
 
 /// Per-request settings for the transports, beyond the `RequestConfig`
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct TransportOptions<'a> {
     /// Browser `fetch()` options, validated
     pub(crate) fetch_options: Option<&'a js_sys::Object>,
@@ -78,6 +78,10 @@ pub(crate) struct TransportOptions<'a> {
     pub(crate) limit: Option<u64>,
     /// Node.js: `allowPrivateNetwork: false` blocks private and reserved addresses
     pub(crate) block_private_network: bool,
+    /// Node.js: header names (lowercase) dropped on cross-origin redirects
+    pub(crate) sensitive_headers: &'a [String],
+    /// Node.js: `allowInsecureRedirects`
+    pub(crate) allow_insecure_redirects: bool,
 }
 
 pub(crate) enum PreparedRequest {
@@ -536,6 +540,17 @@ fn node_request(
     }
     if options.block_private_network {
         set(&request, "blockPrivateNetwork", &JsValue::TRUE)?;
+    }
+    if !options.sensitive_headers.is_empty() {
+        let names: js_sys::Array = options
+            .sensitive_headers
+            .iter()
+            .map(JsValue::from)
+            .collect();
+        set(&request, "sensitiveHeaders", &names)?;
+    }
+    if !options.allow_insecure_redirects {
+        set(&request, "allowInsecureRedirects", &JsValue::FALSE)?;
     }
     if let Some(limit) = options.limit {
         #[allow(clippy::cast_precision_loss)]

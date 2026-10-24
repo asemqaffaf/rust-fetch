@@ -320,6 +320,8 @@ function release() {
 
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// Dropped on a redirect to another origin, with the request's sensitiveHeaders
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
 // A redirect's body is drained up to this so its connection can be reused;
 // a longer (or endless) one closes the connection instead
 const REDIRECT_DRAIN = 64 * 1024;
@@ -563,6 +565,9 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       if (next.protocol !== 'http:' && next.protocol !== 'https:') {
         return reject(new TypeError(`Unsupported redirect to ${next.protocol}`));
       }
+      if (!state.allowInsecureRedirects && url.protocol === 'https:' && next.protocol === 'http:') {
+        return reject(new TypeError(`Insecure redirect refused (allowInsecureRedirects is false): https: to ${next.origin}`));
+      }
       // Same rules as fetch(): 303, and 301/302 after POST, become a bodiless GET
       let nextMethod = method;
       let nextBody = body;
@@ -574,7 +579,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       }
       // Never forward credentials to another origin
       if (next.origin !== url.origin) {
-        nextHeaders = withoutHeaders(nextHeaders, ['authorization', 'cookie', 'proxy-authorization']);
+        nextHeaders = withoutHeaders(nextHeaders, state.credentials);
       }
       return send(state, nextMethod, next, nextHeaders, nextBody, redirects + 1, resolve, reject);
     }
@@ -644,8 +649,9 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 /**
  * One attempt, called by the Rust core with `{ method, url, headers, body?,
  * timeout?, bodyType, onUploadProgress?, onDownloadProgress?, redirect?,
- * maxRedirects?, proxy?, stream?, maxResponseBytes?, blockPrivateNetwork? }` (`redirect` is only ever `'manual'`;
- * `maxRedirects: 0` fails on any redirect; `proxy` is `'env'` or a proxy URL).
+ * maxRedirects?, proxy?, stream?, maxResponseBytes?, blockPrivateNetwork?, sensitiveHeaders?, allowInsecureRedirects? }`
+ * (`redirect` is only ever `'manual'`; `maxRedirects: 0` fails on any redirect; `proxy` is `'env'` or a proxy URL;
+ * `sensitiveHeaders` are lowercase names dropped on cross-origin redirects; `allowInsecureRedirects` is only ever `false`).
  * With `stream`, a successful response resolves as soon as its headers
  * arrive, with `body` a `ReadableStream` of the decompressed bytes. Resolves to the finished `{ status, statusText,
  * ok, url, headers, body }` (the core fills in statusText). Rejects with code RUST_FETCH_TIMEOUT or RUST_FETCH_PARSE,
@@ -680,6 +686,8 @@ function nodeTransport(request) {
     stream: request.stream === true,
     maxResponseBytes: request.maxResponseBytes,
     publicOnly,
+    credentials: request.sensitiveHeaders ? [...CREDENTIAL_HEADERS, ...request.sensitiveHeaders] : CREDENTIAL_HEADERS,
+    allowInsecureRedirects: request.allowInsecureRedirects !== false,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -762,6 +770,8 @@ function nativeTransport(request) {
     manual,
     maxRedirects: request.maxRedirects,
     maxResponseBytes: request.maxResponseBytes,
+    sensitiveHeaders: request.sensitiveHeaders,
+    allowInsecureRedirects: request.allowInsecureRedirects,
   };
   let dispatched = false;
   let giveUp;
