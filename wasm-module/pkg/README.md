@@ -240,7 +240,7 @@ With each client in its own process and a constant number of requests in flight,
 | axios (keep-alive agent, 128 sockets) | 14,578/s | 0 | 669 ms | 718 ms | 731 ms | 761 MB |
 | axios (default) | 3,292/s | 165,440 | 2.4 s | 13 s | 14 s | 843 MB |
 
-`fetch()` had the fastest median, but its slowest requests took up to 1.5 s, and its tail varied tenfold between runs. axios's default configuration opens a new connection per request and ran out of local ports. The report's 15,000 requests per second was 89% of what its server could handle.
+`fetch()` had the fastest median, but its slowest requests took up to 1.5 s, and its tail varied tenfold between runs. axios with its default configuration ran out of local ports: Node's default agent keeps connections alive (since Node.js 19) but sets no socket limit, so under overload it kept opening new ones. The keep-alive axios row used an agent capped at 128 sockets, against rust-fetch's 256 per origin, so it compares connection limits as well as clients. The report's 15,000 requests per second was 89% of what its server could handle.
 
 **Overload at 50,000 requests per second**, two to three times what any client could sustain on the M4 Pro, found a bug: rust-fetch 2.1.0 opened a new connection for every waiting request, ran out of local ports and delivered 3.2k requests per second, while `fetch()` delivered 14.4k. 2.1.1 fixed it with a pool of up to 256 connections per origin, so extra requests wait instead. In our re-run of that test on an Apple M1 Pro (Node.js 22.13), rust-fetch went from 2.7k requests per second and 43.5k errors to 18.9k and none.
 
@@ -941,7 +941,7 @@ Everything that decides what happens to a request (URL handling, validation, ret
 | --- | --- | --- |
 | Most requests | `fetch()` | The native transport where it's built and Node's global agents are untouched; otherwise `node:http` |
 | With `onUploadProgress` (with or without `onDownloadProgress`) | `XMLHttpRequest`, or `fetch()` where there's none | `node:http` |
-| With `onDownloadProgress` only, `responseType: 'stream'` or `'ndjson'`, and `client.events()` | `fetch()` | Node's `fetch()` |
+| With `onDownloadProgress` only, `responseType: 'stream'` or `'ndjson'`, and `client.events()` | `fetch()` | `node:http` (since 2.4.0; it was Node's `fetch()` before) |
 
 **What the native transport changes.** Connection handling, TLS, HTTP parsing and decompression move from the JavaScript event loop to Tokio threads; JavaScript only builds requests and decodes their bodies. That's why it gains most with many requests in flight, and why the hand-off between threads likely contributes to its slower sequential results ([measurements](#the-native-transport-not-in-the-npm-package-yet)).
 
@@ -999,7 +999,7 @@ These changed too, but are unlikely to break anything:
 
 Rust crate users:
 - `RetryConfig` has a new field, so add `..Default::default()` to struct literals.
-- `Method::to_reqwest()` returns reqwest 0.12's `Method`.
+- `Method::to_reqwest()` returns reqwest 0.13's `Method`.
 - `RequestBuilder::header()` replaces a default header with the same name instead of adding a second value.
 
 1.x keeps receiving critical fixes on the [`v1.x`](https://github.com/asemqaffaf/rust-fetch/tree/v1.x) branch (`npm install rust-fetch@1`).

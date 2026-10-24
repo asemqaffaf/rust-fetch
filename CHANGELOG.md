@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **A redirect's body is read up to 64 KiB, then its connection is closed.** On the node:http transport, the body of a followed redirect was drained in the background with no end, so a server sending an endless redirect body kept that connection, and its slot in the pool of 256 per origin, busy for good. The native transport read the whole redirect body into memory before following it, so an endless one grew memory until the request timed out. Small redirect bodies are still drained so their connection is reused. Tests cover both transports: the redirect is followed promptly, each connection closes, 50 in a row keep memory bounded, and a redirect-limit error or cancellation closes them too.
 
+### Documentation
+- The README's "Which transport a request uses" table said streamed responses, download progress and `client.events()` use Node's `fetch()` in Node.js. They have used `node:http` since 2.4.0.
+- The 2.0 migration notes said `Method::to_reqwest()` returns reqwest 0.12's `Method`; the crate has used reqwest 0.13 since 2.0.0.
+- The independent benchmark section said axios's default configuration opens a new connection per request. On Node.js 19 and later its default agent keeps connections alive; it has no socket limit, so under overload it kept opening connections until it ran out of local ports. The keep-alive axios row was capped at 128 sockets, against rust-fetch's 256 per origin, which the README now notes.
+
 ## [2.5.1] - 2026-10-24
 
 ### Fixed
