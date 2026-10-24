@@ -32,7 +32,7 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | gzip is decoded | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | deflate is decoded | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | br is decoded | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| A corrupt gzip body fails | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A corrupt gzip body fails | ✓ | ✓ | ✓ | ✓ | ✓ | differs (4) |
 | A 64 MB gzip bomb stops at maxResponseBytes | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ## Size limits
@@ -80,7 +80,7 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Paths like //host stay under baseUrl | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | allowAbsoluteUrls: false refuses an absolute URL, before sending | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| allowPrivateNetwork: false blocks 127.0.0.1, before sending | ✓ | ✓ | differs (4) | differs (4) | differs (4) | differs (4) |
+| allowPrivateNetwork: false blocks 127.0.0.1, before sending | ✓ | ✓ | differs (5) | differs (5) | differs (5) | differs (5) |
 | maxPendingRequests refuses one more, without sending it | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | retryBudget refuses a retry, keeping the attempt’s error | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -89,4 +89,5 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 1. fetch() follows redirects itself, so sensitiveHeaders can't apply (documented)
 2. fetch() has no redirect-limit option; it applies its own limit (20) instead (documented)
 3. browsers return an opaque redirect: status 0 and an empty body (documented)
-4. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)
+4. WebKit decodes responses itself: on macOS a corrupt gzip body fails, but on Linux (libsoup) it's passed through as it arrived, which rust-fetch can't detect
+5. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)

@@ -7,7 +7,8 @@
 //   ctx.id(name)   a request id unique to this adapter, for /seen
 //
 // `expect` is the observation every adapter should make; `differs` lists the
-// adapters allowed another one, each with the reason. Anything else fails.
+// adapters allowed another one (`expect`, or `anyOf` where the platform itself
+// varies), each with the reason. Anything else fails.
 
 /** Helpers available to every case */
 export const HELPERS = `
@@ -190,6 +191,12 @@ export const cases = [
     title: 'A corrupt gzip body fails',
     run: `async (rf, ctx) => outcome(new WasmClient().get(ctx.a + '/corrupt'))`,
     expect: { error: 'NetworkError' },
+    differs: {
+      webkit: {
+        anyOf: [{ error: 'NetworkError' }, { status: 200, body: 'this is not gzip' }],
+        why: "WebKit decodes responses itself: on macOS a corrupt gzip body fails, but on Linux (libsoup) it's passed through as it arrived, which rust-fetch can't detect",
+      },
+    },
   },
   {
     id: 'decode-bomb',

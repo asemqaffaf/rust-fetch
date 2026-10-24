@@ -146,8 +146,11 @@ const cell = (testCase, adapter) => {
   if (!run || run.unavailable) return '–';
   const observed = run.results[testCase.id];
   const difference = testCase.differs?.[adapter];
-  const expected = difference ? difference.expect : testCase.expect;
-  if (canonical(observed) === canonical(expected)) {
+  // A documented difference may accept several observations (anyOf), where a
+  // platform's own behaviour varies (e.g. by operating system)
+  const accepted = difference ? (difference.anyOf ?? [difference.expect]) : [testCase.expect];
+  const expected = accepted.length === 1 ? accepted[0] : { anyOf: accepted };
+  if (accepted.some((option) => canonical(observed) === canonical(option))) {
     if (!difference) return '✓';
     let n = notes.indexOf(difference.why) + 1;
     if (!n) n = notes.push(difference.why);
