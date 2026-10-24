@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-24
+
 ### Fixed
 - **Requests are fast again: 2.5.0 threw and caught an exception on every request without an options object.** It read `maxResponseBytes` with `Reflect.get` even when no options were passed, and `Reflect.get(undefined, …)` throws. That nearly doubled rust-fetch's own cost per request (9.05 → 17.27 µs with an instant transport). Under load, an independent evaluation measured 18% lower throughput than 2.4.0. A request's options are now read once (`Object.keys` on plain objects), and unset options cost no lookup at all. Per request: 9.07 µs without options (2.4.1: 9.05 µs) and 10.71 µs with options (2.4.1: 13.27 µs, 2.5.0: 14.60 µs). A regression test fails if any option lookup could throw again.
 - The private-network check only computes the request host when it's turned on.
@@ -213,7 +215,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...HEAD
+[2.5.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.3.0...v2.4.0
