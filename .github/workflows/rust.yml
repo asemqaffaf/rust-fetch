@@ -19,15 +19,16 @@ jobs:
       run:
         working-directory: wasm-module
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
         with:
+          toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           targets: wasm32-unknown-unknown
           components: llvm-tools-preview, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: wasm-module
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: cargo-llvm-cov
       - name: Check formatting
@@ -50,7 +51,7 @@ jobs:
         run: cargo llvm-cov report --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/' --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: wasm-module/lcov.info
           flags: rust
@@ -67,12 +68,12 @@ jobs:
     name: Dependency audit (advisories, licenses, sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: wasm-module/Cargo.toml
       - name: Native transport dependencies (same policy)
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: native/Cargo.toml
           arguments: --all-features --config wasm-module/deny.toml
@@ -82,10 +83,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: obi1kenobi/cargo-semver-checks-action@v2
+      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         with:
           manifest-path: wasm-module/Cargo.toml
           baseline-rev: ${{ github.event.pull_request.base.sha }}
@@ -97,11 +98,12 @@ jobs:
       run:
         working-directory: native
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
         with:
+          toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: native
       - name: Check formatting
@@ -119,19 +121,20 @@ jobs:
       matrix:
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
         with:
+          toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
             wasm-module
             native
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: wasm-pack
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ matrix.node }}
       - name: Install JS dev dependencies
@@ -156,7 +159,7 @@ jobs:
         run: sed -i 's#^SF:wasm-module/pkg/node.js$#SF:wasm-module/js/node.js#' lcov-js.info
       - name: Upload Node transport coverage to Codecov
         if: matrix.node == 22 && env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: lcov-js.info
           flags: js
@@ -167,7 +170,7 @@ jobs:
         run: npm run size
       - name: Share the built package with the browser job
         if: matrix.node == 22
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pkg
           path: wasm-module/pkg
@@ -183,28 +186,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       # The PR's package, built by the Node 22 leg (with the native addon)
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pkg
           path: head-pkg
       - name: Check out the base branch
         run: git worktree add base ${{ github.event.pull_request.base.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
         with:
+          toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
             base/wasm-module
             base/native
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: wasm-pack
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - name: Build the base package
@@ -212,6 +216,25 @@ jobs:
         run: npm ci && npm run build && npm run build:native
       - name: Compare (results in the job summary)
         run: node benchmarks/compare.mjs base/wasm-module/pkg head-pkg
+
+  package:
+    name: Packed package (contents, security suite, against npm)
+    # The checks the release runs before publishing (scripts/check-package.mjs),
+    # here informational: the benchmark doesn't fail the job on a noisy runner
+    needs: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - name: Download the built package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pkg
+          path: wasm-module/pkg
+      - name: Check the packed package (benchmark in the job summary)
+        run: node scripts/check-package.mjs
 
   browsers:
     name: Browsers (Chromium, Firefox, WebKit)
@@ -223,11 +246,11 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --user 1001
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install JS dev dependencies
         run: npm ci
       - name: Download the built package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pkg
           path: wasm-module/pkg
