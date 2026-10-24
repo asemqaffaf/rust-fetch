@@ -109,8 +109,20 @@ describe('hardened configuration: a fixed API with credentials', () => {
     assert.equal(api.requests.length - before, 3, 'the first attempt and 2 retries');
     await rejection(c.post('/fail', { body: 'x' }));
     assert.equal(api.requests.length - before, 4, 'POST: one attempt');
-    assert.equal(c.retriesRefused, 0, 'a retry budget is set');
     assert.equal(options.timeoutMs, 10_000);
+  });
+
+  it('refuses retries beyond the retry budget, keeping the attempt’s error', async () => {
+    // The default budget allows 100 retries per 10 s plus 0.2 per request: 80 failing
+    // requests at once want 160 retries, so some must be refused
+    const c = client();
+    const before = api.requests.length;
+    const errors = await Promise.all(Array.from({ length: 80 }, () => rejection(c.get('/fail'))));
+    const refused = errors.filter((error) => error.retryBudgetExhausted);
+    assert.ok(refused.length > 0, 'a retry was refused');
+    assert.ok(refused.every((error) => error.status === 503));
+    assert.equal(c.retriesRefused, refused.length);
+    assert.ok(api.requests.length - before < 80 * 3, 'fewer attempts than without a budget');
   });
 
   it('sheds load beyond 256 pending requests and limits responses to 10 MB', async () => {
@@ -149,20 +161,40 @@ describe('hardened configuration: streaming APIs', () => {
   const code = block('streaming');
   const options = clientOptions('streaming');
   const client = () => new WasmClient({ ...options, baseUrl: api.url('/v1') });
-  const [path, streamOptions] = evaluate(argumentsOf(code, '.events('), { model: 'm', messages: [{ role: 'user', content: 'hi' }] });
+  /**
+   * The README's `events()` arguments. Its `AbortSignal.timeout(…)` is recorded and
+   * replaced with a `shortMs` timeout, so the deadline can be tested without the wait.
+   */
+  const events = (shortMs = 60_000) => {
+    const deadlines = [];
+    const FakeAbortSignal = { timeout: (ms) => (deadlines.push(ms), AbortSignal.timeout(shortMs)) };
+    const [path, options] = evaluate(argumentsOf(code, '.events('), {
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+      AbortSignal: FakeAbortSignal,
+    });
+    return { path: path.replace('/v1/chat/completions', '/chat'), options, deadlines };
+  };
+  const streamOptions = events().options;
 
-  it('streams with a signal for the whole stream', async () => {
-    assert.ok(streamOptions.signal instanceof AbortSignal, 'the README sets a signal for the whole stream');
-    const controller = new AbortController();
-    const stream = client().events(path.replace('/v1/chat/completions', '/chat'), { ...streamOptions, signal: controller.signal });
-    for await (const event of stream) {
+  it('streams the request as written', async () => {
+    const { path, options } = events();
+    for await (const event of client().events(path, options)) {
       assert.deepEqual(event.data.echo, { model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true });
       break;
     }
-    const aborted = client().events('/chat', { ...streamOptions, signal: controller.signal });
-    controller.abort();
-    await aborted.closed;
-    assert.equal(aborted.state, 'closed');
+  });
+
+  it('ends the whole stream at the README’s deadline: 5 minutes', async () => {
+    const { path, options, deadlines } = events(200);
+    assert.deepEqual(deadlines, [5 * 60_000], 'AbortSignal.timeout(5 * 60_000)');
+    const stream = client().events(path, options);
+    const started = performance.now();
+    await stream.opened;
+    await stream.closed; // the server keeps the stream open; only the deadline ends it
+    const elapsed = performance.now() - started;
+    assert.equal(stream.state, 'closed');
+    assert.ok(elapsed >= 100 && elapsed < 2000, `closed after ${elapsed.toFixed(0)} ms (deadline 200 ms)`);
   });
 
   it('ends a stream at a line over 1 MB, for events and NDJSON', async () => {
