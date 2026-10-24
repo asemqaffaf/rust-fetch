@@ -957,6 +957,65 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 - **Not covered:** `client.websocket()` connections (Node's built-in WebSocket). In browsers this option does nothing; they enforce their own private-network rules.
 - **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
 
+### Hardened configurations
+
+The protections above are off by default, so upgrading doesn't change behaviour. These three configurations turn them on for common cases. Each is checked by a test that reads it from this README ([`hardened.test.mjs`](wasm-module/js/test/hardened.test.mjs)) and exercises every protection its comments claim, so the README can't drift from what the client does.
+
+**A fixed API with credentials.** Paths come from your code or your users; the token must never reach another host.
+
+<!-- hardened:api -->
+```js
+const api = new WasmClient({
+  baseUrl: 'https://api.example.com/v1',
+  headers: { authorization: `Bearer ${token}` },
+  allowAbsoluteUrls: false,           // a path can't replace the host, so the token stays with it
+  redirect: 'error',                  // no redirects: a custom credential header would follow one (#115)
+  timeoutMs: 10_000,                  // per attempt, including the body
+  retries: 2,                         // GET, HEAD, PUT, DELETE…; POST and PATCH aren't retried
+  retryBudget: true,                  // no retry storms when the API struggles
+  maxPendingRequests: 256,            // shed load instead of queuing without bound
+  maxResponseBytes: 10 * 1024 * 1024, // 10 MB, after decompression
+});
+```
+
+**Fetching URLs from users** (webhooks, link previews, importers) on a Node.js server. No credentials, and nothing internal reachable.
+
+<!-- hardened:fetcher -->
+```js
+const fetcher = new WasmClient({
+  allowPrivateNetwork: false,         // no loopback, private, link-local or metadata addresses, checked on every redirect
+  maxRedirects: 3,
+  timeoutMs: 5_000,
+  maxResponseBytes: 5 * 1024 * 1024,  // 5 MB, after decompression
+  maxPendingRequests: 100,
+});
+```
+
+Not covered by this client, so handle them elsewhere: `websocket()` connections (#116); targets behind a proxy, where only IP addresses are checked (the proxy needs the same rule); and in browsers, where `allowPrivateNetwork` does nothing. Add an allowlist of hosts or schemes in your code if you can, and egress rules in your network.
+
+**Streaming APIs** (LLMs over Server-Sent Events or NDJSON). Long-lived responses, so the per-attempt timeout isn't enough.
+
+<!-- hardened:streaming -->
+```js
+const llm = new WasmClient({
+  baseUrl: 'https://llm.example.com',
+  headers: { authorization: `Bearer ${token}` },
+  allowAbsoluteUrls: false,
+  redirect: 'error',
+  timeoutMs: 30_000,                  // until the response headers arrive
+  maxLineBytes: 1024 * 1024,          // 1 MB per NDJSON line or SSE line
+  maxPendingRequests: 64,
+});
+const stream = llm.events('/v1/chat/completions', {
+  method: 'POST',
+  body: { model, messages, stream: true },
+  messageType: 'json',
+  signal: AbortSignal.timeout(5 * 60_000), // the whole stream, not just its headers
+});
+```
+
+`for await` over the stream holds the server back when your loop is slow. Not covered: an SSE event's total size (each `data:` line is limited, not their sum; see [Limiting line length](#limiting-line-length)), and `maxResponseBytes`, which would also end a long stream, so it's left out here.
+
 ## Using it from Rust
 
 The same client is a Rust library, for native code (on tokio) and for your own wasm crates:
