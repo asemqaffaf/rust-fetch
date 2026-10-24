@@ -150,6 +150,9 @@ jobs:
         run: npm run build:native
       - name: JS integration + package tests
         run: npm run test:js
+        env:
+          # Node.js 20 has WebSocket behind a flag; without it the WebSocket tests would be skipped there
+          NODE_OPTIONS: ${{ matrix.node == 20 && '--experimental-websocket' || '' }}
       - name: Node transport coverage (100% lines and functions)
         if: matrix.node == 22
         run: npm run coverage:js
