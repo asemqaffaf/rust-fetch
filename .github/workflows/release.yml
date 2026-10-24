@@ -15,17 +15,18 @@ jobs:
       # Optional: without it, npm trusted publishing (OIDC) is used
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
         with:
+          toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: wasm-module
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: wasm-pack
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -75,6 +76,18 @@ jobs:
             echo "ALREADY_PUBLISHED=true" >> "$GITHUB_ENV"
           fi
 
+      - name: Check the packed package
+        # The tarball npm will receive: contents, a smoke test, the security
+        # suite, and a benchmark against the version on this dist-tag, which
+        # fails the release on a regression (scripts/check-package.mjs)
+        if: env.ALREADY_PUBLISHED != 'true'
+        run: |
+          if npm view "rust-fetch@$DIST_TAG" version >/dev/null 2>&1; then
+            node scripts/check-package.mjs --strict --baseline "$DIST_TAG"
+          else
+            node scripts/check-package.mjs --strict --no-bench
+          fi
+
       - name: Use npm 11.5.1+ (required for trusted publishing)
         run: npm install -g npm@^11.5.1
 
@@ -89,6 +102,38 @@ jobs:
         if: env.ALREADY_PUBLISHED != 'true' && env.NPM_TOKEN == ''
         working-directory: wasm-module/pkg
         run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+      - name: Verify the published package
+        # A clean install from the registry: the signature and the provenance
+        # attestation must verify. The registry can take a few minutes to serve
+        # the version and its attestation, so both the install and the check
+        # are retried (about 10 minutes). An invalid signature or attestation
+        # fails at once: waiting won't fix it.
+        run: |
+          mkdir verify && cd verify && npm init -y >/dev/null
+          for attempt in $(seq 1 30); do
+            if [ ! -d node_modules/rust-fetch ]; then
+              npm install --no-audit --no-fund --prefer-online "rust-fetch@$VERSION" >/dev/null 2>&1 || { sleep 20; continue; }
+              installed=$(node -p "require('./node_modules/rust-fetch/package.json').version")
+              if [ "$installed" != "$VERSION" ]; then
+                echo "::error::Installed rust-fetch@$installed, expected $VERSION"
+                exit 1
+              fi
+            fi
+            npm audit signatures > signatures.txt 2>&1 && status=0 || status=$?
+            cat signatures.txt
+            if grep -qi "invalid" signatures.txt; then
+              echo "::error::rust-fetch@$VERSION has an invalid signature or attestation"
+              exit 1
+            fi
+            if [ "$status" = 0 ] && grep -q "verified attestation" signatures.txt; then
+              exit 0
+            fi
+            echo "Attempt $attempt: not verified yet; retrying in 20 s"
+            sleep 20
+          done
+          echo "::error::rust-fetch@$VERSION's signature and provenance didn't verify within about 10 minutes"
+          exit 1
 
       - name: Create GitHub release
         # Release notes are this version's section of CHANGELOG.md

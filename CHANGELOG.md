@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A slow `for await` loop over `client.events()` no longer buffers every event.** Events waiting for the loop were queued without limit, so a fast server (or a large backlog after a reconnect) could fill memory while the loop was busy. The stream now stops reading once 64 events are waiting and resumes when the loop has taken half of them, so the connection slows the server down. In a test, a server offering 20 MB of events wrote about 830 KB while the loop paused for a second, against 12 MB before: reduced read-ahead, not a fixed memory ceiling (#121).
 
 ### Changed
+- **Releases check the exact package before publishing.** The release workflow packs the package, installs the tarball in an empty directory, and checks its files, a request, and the security regression tests. It then benchmarks the tarball against the version already on npm; a regression (more than 10% worse in the median and in most rounds) stops the release. After publishing, a clean install must verify its signature and provenance. Pull requests run the same checks, with the benchmark informational (#123).
+- **CI inputs are pinned:** every GitHub Action to a commit SHA (Dependabot keeps them current), and Rust to 1.99.1 instead of whatever is stable that day, so sizes and formatting don't change on their own (#123).
 - The WebAssembly module's budget is 187 kB brotli and 590 kB raw (from 183 kB and 580 kB): `maxPendingRequests`, SSE backpressure, `maxLineBytes` and the WebSocket queue limits add about 2.6 kB together (181.1 → 183.7 kB), and the retry budget about 1.9 kB more (185.5 kB), until #93 removes the URL parser's Unicode tables.
 
 ### Documentation

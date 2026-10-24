@@ -7,8 +7,13 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import zlib from 'node:zlib';
-import { WasmClient } from '../../pkg/node.js';
+import { pathToFileURL } from 'node:url';
 import { json, rejection, startServer } from './helpers.mjs';
+
+// RUST_FETCH_PKG: a package directory to test instead of the build, e.g. an
+// installed npm tarball (scripts/check-package.mjs)
+const pkg = process.env.RUST_FETCH_PKG ? pathToFileURL(`${process.env.RUST_FETCH_PKG}/`).href : new URL('../../pkg/', import.meta.url).href;
+const { WasmClient } = await import(new URL('node.js', pkg).href);
 
 const SECRETS = { authorization: 'Bearer SECRET', cookie: 'sid=SECRET', 'proxy-authorization': 'Basic SECRET' };
 

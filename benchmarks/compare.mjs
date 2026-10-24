@@ -11,7 +11,9 @@
 // runners. A change counts as a regression only when the median is more than
 // 10% worse and head lost to base in most rounds. With GITHUB_STEP_SUMMARY set
 // the table goes to the job summary, and regressions become warnings; the
-// exit code is always 0 (a noisy runner should never block a merge).
+// exit code is 0 (a noisy runner should never block a merge), unless
+// BENCH_STRICT=1, which fails on a regression (used before publishing).
+// BENCH_TITLE replaces the report's heading.
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync } from 'node:fs';
 import http from 'node:http';
@@ -194,7 +196,7 @@ for (const kind of ['brotli', 'gzip']) {
 }
 
 const report = [
-  '## Benchmarks: this PR against the base branch',
+  `## ${process.env.BENCH_TITLE ?? 'Benchmarks: this PR against the base branch'}`,
   '',
   `Median of ${rounds} interleaved rounds, ${seconds} s each, fresh process per measurement, Node.js ${process.versions.node} (${process.platform} ${process.arch}). Change: positive is better. Flagged when more than ${THRESHOLD * 100}% worse in the median *and* in most rounds.`,
   '',
@@ -209,3 +211,4 @@ const report = [
 console.log(report);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
 if (process.env.GITHUB_ACTIONS) for (const warning of warnings) console.log(`::warning title=Benchmark regression::${warning}`);
+if (process.env.BENCH_STRICT === '1' && warnings.length) process.exit(1);
