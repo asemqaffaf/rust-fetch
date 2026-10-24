@@ -481,7 +481,8 @@ async fn connect(
         // Only Accept, like EventSource: other headers (e.g. Cache-Control)
         // would make cross-origin requests preflighted in browsers
         let accept = !request.headers.contains("accept");
-        let (mut builder, body) = super::request_builder(client, request, &settings.options)?;
+        let (mut builder, body) =
+            super::request_builder(client, request, &super::Options::new(&settings.options))?;
         if accept {
             builder = builder.header("accept", "text/event-stream");
         }

@@ -353,7 +353,7 @@ impl WasmClient {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                builder = builder.fetch_options(parse_fetch_options(options, None)?);
+                builder = builder.fetch_options(parse_fetch_options(&Options::new(options), None)?);
                 if let Some(allow) = prop(options, "allowAbsoluteUrls") {
                     builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
                 }
@@ -723,33 +723,102 @@ pub(crate) enum BodyType {
     Ndjson = 5,
 }
 
+/// A request's options object, read with as few calls into JS as possible:
+/// each property lookup is one, and a request checks over a dozen options,
+/// most of them unset. The names that are set are read once, so lookups of
+/// the others cost nothing. Objects that may inherit options from a
+/// prototype (anything but a plain object) are looked up as before.
+pub(crate) struct Options<'a> {
+    value: &'a JsValue,
+    /// The own property names, or `None` to look every option up
+    names: Option<Vec<String>>,
+}
+
+thread_local! {
+    static OBJECT_PROTOTYPE: JsValue = js_sys::Object::get_prototype_of(&js_sys::Object::new()).into();
+}
+
+impl<'a> Options<'a> {
+    pub(crate) fn new(value: &'a JsValue) -> Self {
+        let names = if !value.is_object() {
+            Some(Vec::new())
+        } else {
+            let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
+            let plain = prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype);
+            plain.then(|| {
+                js_sys::Object::keys(value.unchecked_ref::<js_sys::Object>())
+                    .iter()
+                    .filter_map(|name| name.as_string())
+                    .collect()
+            })
+        };
+        Self { value, names }
+    }
+
+    fn has(&self, name: &str) -> bool {
+        self.names
+            .as_ref()
+            .map_or(true, |names| names.iter().any(|n| n == name))
+    }
+
+    /// The option, unless it's unset, `null` or `undefined`
+    pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
+        if self.has(name) {
+            prop(self.value, name)
+        } else {
+            None
+        }
+    }
+
+    /// The option as it is, `null` included (`undefined` when unset)
+    fn raw(&self, name: &str) -> JsValue {
+        if self.has(name) {
+            js_sys::Reflect::get(self.value, &name.into()).unwrap_or(JsValue::UNDEFINED)
+        } else {
+            JsValue::UNDEFINED
+        }
+    }
+
+    /// An optional callback, which must be a function when set
+    fn callback(&self, name: &str) -> Result<Option<js_sys::Function>> {
+        self.get(name)
+            .map(|callback| {
+                callback
+                    .dyn_into()
+                    .map_err(|_| invalid(name, "must be a function"))
+            })
+            .transpose()
+    }
+}
+
 /// Build, send and convert a request coming from JavaScript
 pub(crate) async fn send(
     client: &Client,
     request: JsRequest,
     options: &JsValue,
 ) -> Result<JsValue> {
+    let options = &Options::new(options);
     let (mut builder, body) = request_builder(client, request, options)?;
-    let body_type = match prop(options, "responseType") {
+    let body_type = match options.get("responseType") {
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
     };
-    let signal = match prop(options, "signal") {
+    let signal = match options.get("signal") {
         Some(signal) if js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) => {
             Some(signal.unchecked_into::<web_sys::AbortSignal>())
         }
         Some(_) => return Err(invalid("signal", "must be an AbortSignal")),
         None => None,
     };
-    let progress = callback_option(options, "onDownloadProgress")?;
+    let progress = options.callback("onDownloadProgress")?;
     if let Some(callback) = &progress {
         builder = with_progress(builder, callback.clone());
     }
-    let upload_progress = callback_option(options, "onUploadProgress")?;
-    if let Some(redirect) = prop(options, "redirect") {
+    let upload_progress = options.callback("onUploadProgress")?;
+    if let Some(redirect) = options.get("redirect") {
         builder = builder.redirect(parse_redirect(&redirect)?);
     }
-    if let Some(max) = prop(options, "maxRedirects") {
+    if let Some(max) = options.get("maxRedirects") {
         builder = builder.max_redirects(parse_max_redirects(&max)?);
     }
 
@@ -799,7 +868,7 @@ fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Funct
 pub(crate) fn request_builder(
     client: &Client,
     request: JsRequest,
-    options: &JsValue,
+    options: &Options,
 ) -> Result<(RequestBuilder, BodyMode)> {
     let JsRequest {
         method,
@@ -813,21 +882,21 @@ pub(crate) fn request_builder(
         .response_format(ResponseFormat::Binary)
         .headers(headers);
 
-    if let Some(params) = prop(options, "params") {
+    if let Some(params) = options.get("params") {
         builder = builder.query(parse_params(&params)?);
     }
-    if let Some(allow) = prop(options, "allowAbsoluteUrls") {
+    if let Some(allow) = options.get("allowAbsoluteUrls") {
         builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
     }
     // `null` removes the client's limit for this request
-    match js_sys::Reflect::get(options, &"maxResponseBytes".into()) {
-        Ok(value) if value.is_null() => builder = builder.max_response_bytes(None),
-        Ok(value) if !value.is_undefined() => {
+    match options.raw("maxResponseBytes") {
+        value if value.is_null() => builder = builder.max_response_bytes(None),
+        value if !value.is_undefined() => {
             builder = builder.max_response_bytes(Some(parse_max_response_bytes(&value)?));
         }
         _ => {}
     }
-    if let Some(timeout) = prop(options, "timeoutMs") {
+    if let Some(timeout) = options.get("timeoutMs") {
         builder = match parse_timeout(&timeout)? {
             Some(timeout) => builder.timeout(timeout),
             None => builder.no_timeout(),
@@ -836,7 +905,7 @@ pub(crate) fn request_builder(
     #[cfg(target_arch = "wasm32")]
     {
         builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
-        if let Some(allow) = prop(options, "allowPrivateNetwork") {
+        if let Some(allow) = options.get("allowPrivateNetwork") {
             builder.allow_private_network = parse_bool(&allow, "allowPrivateNetwork")?;
         }
     }
@@ -847,7 +916,7 @@ pub(crate) fn request_builder(
 /// requests don't use them, so there they're only validated.
 #[cfg(target_arch = "wasm32")]
 fn parse_fetch_options(
-    options: &JsValue,
+    options: &Options,
     base: Option<&js_sys::Object>,
 ) -> Result<Option<js_sys::Object>> {
     const NAMES: [&str; 8] = [
@@ -860,16 +929,8 @@ fn parse_fetch_options(
         "integrity",
         "keepalive",
     ];
-    // Most requests set none of these: one Object.keys call instead of a
-    // property lookup per option (each a call into JS, ~5% per request)
-    let set_any = options.is_object()
-        && js_sys::Object::keys(options.unchecked_ref::<js_sys::Object>())
-            .iter()
-            .any(|key| {
-                key.as_string()
-                    .is_some_and(|key| NAMES.contains(&key.as_str()))
-            });
-    if !set_any {
+    // Most requests set none of these (see `Options`)
+    if !NAMES.iter().any(|name| options.has(name)) {
         return Ok(if transport::is_node() {
             None
         } else {
@@ -917,7 +978,7 @@ fn parse_fetch_options(
         set(target, name, value)
     };
     for (name, allowed) in CHOICES {
-        if let Some(value) = prop(options, name) {
+        if let Some(value) = options.get(name) {
             if !value
                 .as_string()
                 .is_some_and(|v| allowed.contains(&v.as_str()))
@@ -929,14 +990,14 @@ fn parse_fetch_options(
         }
     }
     for name in ["referrer", "integrity"] {
-        if let Some(value) = prop(options, name) {
+        if let Some(value) = options.get(name) {
             if !value.is_string() {
                 return Err(invalid(name, "must be a string"));
             }
             add(name, &value)?;
         }
     }
-    if let Some(value) = prop(options, "keepalive") {
+    if let Some(value) = options.get("keepalive") {
         add("keepalive", &parse_bool(&value, "keepalive")?.into())?;
     }
     if transport::is_node() {

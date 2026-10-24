@@ -235,6 +235,28 @@ describe('responses', () => {
   });
 });
 
+describe('per-request overhead', () => {
+  // 2.5.0 read an option with Reflect.get even without an options object,
+  // which throws on undefined: an exception per request, +91% client
+  // overhead (fixed in 2.5.1). No lookup may target a non-object.
+  it('makes no option lookup that throws, with or without options', async () => {
+    const original = Reflect.get;
+    let throwing = 0;
+    Reflect.get = function (target, ...rest) {
+      if (target === null || (typeof target !== 'object' && typeof target !== 'function')) throwing++;
+      return original.call(this, target, ...rest);
+    };
+    try {
+      const c = client();
+      for (let i = 0; i < 20; i++) await c.get(server.url('/echo'));
+      for (let i = 0; i < 20; i++) await c.get(server.url('/echo'), { responseType: 'json' });
+    } finally {
+      Reflect.get = original;
+    }
+    assert.equal(throwing, 0);
+  });
+});
+
 describe('allowAbsoluteUrls', () => {
   it('keeps absolute URLs, and the client credentials, from replacing baseUrl', async () => {
     const other = await startServer((req, res) => json(res, { other: true }));

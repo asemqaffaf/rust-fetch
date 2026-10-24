@@ -528,8 +528,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   let args;
   try {
     // IP-literal hosts don't go through DNS, so they're checked here
-    const host = url.hostname.replace(/^\[|\]$/g, '');
-    if (state.publicOnly && isPrivateAddress(host)) throw blockedAddress(url.hostname, host);
+    if (state.publicOnly) {
+      const host = url.hostname.replace(/^\[|\]$/g, '');
+      if (isPrivateAddress(host)) throw blockedAddress(url.hostname, host);
+    }
     args = requestOptions(url, method, headers, proxyFor(url, state.proxy), state.publicOnly);
   } catch (error) {
     return reject(error);
