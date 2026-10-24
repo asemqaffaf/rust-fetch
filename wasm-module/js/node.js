@@ -320,6 +320,9 @@ function release() {
 
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+// A redirect's body is drained up to this so its connection can be reused;
+// a longer (or endless) one closes the connection instead
+const REDIRECT_DRAIN = 64 * 1024;
 const ACCEPT_ENCODING = typeof zlib.zstdDecompressSync === 'function' ? 'gzip, deflate, br, zstd' : 'gzip, deflate, br';
 
 const textDecoder = new TextDecoder();
@@ -542,7 +545,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     const location = response.headers.location;
 
     if (REDIRECT_STATUSES.has(status) && location && !state.manual) {
-      response.resume();
+      let drained = 0;
+      response.on('data', (chunk) => {
+        if ((drained += chunk.length) > REDIRECT_DRAIN) response.destroy();
+      });
       if (redirects >= state.maxRedirects) {
         return reject(
           new TypeError(state.maxRedirects === 0 ? `Redirect not allowed: ${status} to ${location}` : `Too many redirects (more than ${state.maxRedirects})`),

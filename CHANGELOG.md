@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A redirect's body is read up to 64 KiB, then its connection is closed.** On the node:http transport, the body of a followed redirect was drained in the background with no end, so a server sending an endless redirect body kept that connection, and its slot in the pool of 256 per origin, busy for good. The native transport read the whole redirect body into memory before following it, so an endless one grew memory until the request timed out. Small redirect bodies are still drained so their connection is reused. Tests cover both transports: the redirect is followed promptly, each connection closes, 50 in a row keep memory bounded, and a redirect-limit error or cancellation closes them too.
+
 ## [2.5.1] - 2026-10-24
 
 ### Fixed

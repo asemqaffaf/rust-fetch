@@ -14,6 +14,8 @@ const SECRETS = { authorization: 'Bearer SECRET', cookie: 'sid=SECRET', 'proxy-a
 
 let api;
 let attacker;
+// Connections closed by the client: endless redirect bodies, and requests left hanging
+const closed = { endless: 0, hang: 0 };
 // 256 MB of zeros, compressed once up front (about 250 kB)
 const bomb = zlib.gzipSync(Buffer.alloc(256 * 1024 * 1024));
 
@@ -29,6 +31,21 @@ before(async () => {
     if (url.pathname === '/bomb') {
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-encoding': 'gzip' });
       return res.end(bomb);
+    }
+    if (url.pathname === '/endless-redirect') {
+      // A redirect whose body never ends
+      res.writeHead(302, { location: url.searchParams.get('next') ?? '/after-redirect' });
+      res.on('close', () => closed.endless++);
+      const chunk = Buffer.alloc(64 * 1024);
+      const pump = () => {
+        while (!res.destroyed && res.write(chunk));
+        if (!res.destroyed) res.once('drain', pump);
+      };
+      return pump();
+    }
+    if (url.pathname === '/hang') {
+      res.on('close', () => closed.hang++);
+      return;
     }
     if (url.pathname === '/loop') {
       res.writeHead(302, { location: '/loop' });
@@ -99,6 +116,49 @@ describe('redirects to other schemes and redirect loops', () => {
       assert.equal(error.kind, 'NetworkError');
     });
   }
+
+  // An endless body can't go back to the pool: it's drained up to 64 KiB, then its connection closes
+  const until = async (done) => {
+    for (let i = 0; i < 200 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    return done();
+  };
+
+  it('follows a redirect with an endless body promptly, and closes its connection', async () => {
+    const before = closed.endless;
+    const started = performance.now();
+    const response = await new WasmClient({ timeoutMs: 5000 }).get(api.url('/endless-redirect'));
+    assert.equal(response.body.path, '/after-redirect');
+    assert.ok(performance.now() - started < 2000, 'did not wait for the redirect body');
+    assert.ok(await until(() => closed.endless === before + 1), 'the redirect connection was closed');
+  });
+
+  it('50 redirects with endless bodies close every connection and keep memory bounded', async () => {
+    const client = new WasmClient({ timeoutMs: 5000 });
+    const before = closed.endless;
+    global.gc?.();
+    const rss = process.memoryUsage().rss;
+    for (let i = 0; i < 50; i++) assert.equal((await client.get(api.url('/endless-redirect'))).body.path, '/after-redirect');
+    assert.ok(await until(() => closed.endless === before + 50), `closed ${closed.endless - before} of 50 connections`);
+    assert.ok(process.memoryUsage().rss - rss < 64 * 1024 * 1024, 'memory stayed bounded');
+    assert.equal((await client.get(api.url('/still-works'))).body.path, '/still-works');
+  });
+
+  it('a redirect-limit error closes the endless connection too', async () => {
+    const before = closed.endless;
+    const error = await rejection(new WasmClient({ timeoutMs: 5000, maxRedirects: 0 }).get(api.url('/endless-redirect')));
+    assert.match(error.message, /Redirect not allowed/);
+    assert.ok(await until(() => closed.endless === before + 1), 'the redirect connection was closed');
+  });
+
+  it('cancelling after an endless redirect closes both connections', async () => {
+    const before = { ...closed };
+    const controller = new AbortController();
+    const pending = new WasmClient({ timeoutMs: 5000 }).get(api.url('/endless-redirect?next=/hang'), { signal: controller.signal });
+    assert.ok(await until(() => api.requests.some((r) => r.url === '/hang') && closed.hang === before.hang && closed.endless > before.endless));
+    controller.abort();
+    assert.equal((await rejection(pending)).kind, 'CancelledError');
+    assert.ok(await until(() => closed.hang === before.hang + 1), 'the hanging request was closed');
+  });
 
   it('stops redirect loops after 20 redirects', async () => {
     const error = await rejection(new WasmClient().get(api.url('/loop')));
