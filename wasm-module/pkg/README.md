@@ -936,7 +936,7 @@ for await (const event of client.events('/feed', { maxLineBytes: 64 * 1024 })) {
 - **Bytes, line break excluded.** A line is counted in UTF-8 bytes, without its `\n`, `\r\n` (or, in event streams, `\r`), the same however the network splits it, including a character or a `\r\n` split between chunks. A line exactly at the limit is accepted.
 - **Checked before it's buffered.** No more than the limit is ever held for one line, whether it arrives as one huge chunk or as an endless trickle.
 - **What happens:** the lines (or events) before the long one are delivered, then the stream errors with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed. An event stream ends and isn't reconnected, since it would get the same line again.
-- **Event streams:** every line counts, comments included. Each `data:` line is checked on its own, so **an event's total size isn't limited**: an event made of many `data:` lines is assembled in memory until the blank line that ends it, with `onEvent` as well as `for await` (`onEvent` changes how events are delivered, not how they're assembled). A client's `maxResponseBytes` caps the whole stream, which also ends a long-lived one, so it's only a backstop. A limit on an event's total size is tracked in [#121](https://github.com/asemqaffaf/rust-fetch/issues/121).
+- **Event streams:** every line counts, comments included. Each `data:` line is checked on its own, so `maxLineBytes` doesn't limit an event's total: an event made of many `data:` lines is assembled in memory until the blank line that ends it, with `onEvent` as well as `for await` (`onEvent` changes how events are delivered, not how they're assembled). Set **`maxEventBytes`** for that: an event whose data (its `data:` lines joined with `\n`) would pass it is refused before it's buffered, the events before it are delivered, and the stream errors with a `NetworkError` whose `maxEventBytes` is the limit, without reconnecting. Client option, or per stream with `events(url, { maxEventBytes })` (`null` for none). A client's `maxResponseBytes` caps the whole stream instead, which also ends a long-lived one.
 
 The default is no limit, as before.
 
@@ -1006,6 +1006,7 @@ const llm = new WasmClient({
   redirect: 'error',
   timeoutMs: 30_000,                  // until the response headers arrive
   maxLineBytes: 1024 * 1024,          // 1 MB per NDJSON line or SSE line
+  maxEventBytes: 4 * 1024 * 1024,     // 4 MB per SSE event, however many data: lines it has
   maxPendingRequests: 64,
 });
 const stream = llm.events('/v1/chat/completions', {
@@ -1016,7 +1017,7 @@ const stream = llm.events('/v1/chat/completions', {
 });
 ```
 
-`for await` over the stream holds the server back when your loop is slow. Not covered: an SSE event's total size (each `data:` line is limited, not their sum; see [Limiting line length](#limiting-line-length)), and `maxResponseBytes`, which would also end a long stream, so it's left out here.
+`for await` over the stream holds the server back when your loop is slow. Left out on purpose: `maxResponseBytes`, which would also end a long stream.
 
 ## Using it from Rust
 

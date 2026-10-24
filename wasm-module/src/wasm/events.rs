@@ -61,6 +61,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   allowAbsoluteUrls?: boolean;
   /** Overrides the client's `maxLineBytes`; `null` removes the limit for this stream */
   maxLineBytes?: number | null;
+  /** Overrides the client's `maxEventBytes`; `null` removes the limit for this stream */
+  maxEventBytes?: number | null;
   /** Closes the stream and stops reconnecting when aborted */
   signal?: AbortSignal;
   /** Called each time a connection opens, including after reconnecting */
@@ -125,6 +127,7 @@ struct Settings {
     body: JsValue,
     options: JsValue,
     max_line_bytes: Option<usize>,
+    max_event_bytes: Option<usize>,
     reconnect: Option<RetryConfig>,
     json: bool,
     end: Option<String>,
@@ -384,15 +387,17 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
                 .ok_or_else(|| invalid("end", "must be a string or null"))?,
         ),
     };
+    let stream_limit = |name: &str, client| {
+        let value = js_sys::Reflect::get(&options, &name.into()).unwrap_or(JsValue::UNDEFINED);
+        super::parse_stream_limit(&value, client, name)
+    };
     Ok(Settings {
         method,
         url,
         target,
         body: prop(&options, "body").unwrap_or(JsValue::UNDEFINED),
-        max_line_bytes: super::parse_max_line_bytes(
-            &js_sys::Reflect::get(&options, &"maxLineBytes".into()).unwrap_or(JsValue::UNDEFINED),
-            client.config.max_line_bytes,
-        )?,
+        max_line_bytes: stream_limit("maxLineBytes", client.config.max_line_bytes)?,
+        max_event_bytes: stream_limit("maxEventBytes", client.config.max_event_bytes)?,
         reconnect,
         json,
         end,
@@ -555,7 +560,8 @@ async fn connect(
     }
     opened(shared);
 
-    let mut parser = sse::Parser::with_limit(shared.settings.max_line_bytes);
+    let mut parser = sse::Parser::with_limit(shared.settings.max_line_bytes)
+        .event_limit(shared.settings.max_event_bytes);
     let mut body = AbortableStream::new(response.into_stream(), Some(shared.closer.signal()));
     while let Some(chunk) = body.next().await {
         let chunk = match chunk {
@@ -563,8 +569,8 @@ async fn connect(
             Err(_) if is_closed(shared) => return Ended::Finished,
             Err(error) => return Ended::Dropped(error),
         };
-        // A line over maxLineBytes ends the stream, after the events before
-        // it: reconnecting would get it again
+        // A line over maxLineBytes, or an event over maxEventBytes, ends the
+        // stream after the events before it: reconnecting would get it again
         let (events, too_long) = parser.feed(&chunk);
         if let Some(retry) = parser.take_retry() {
             *server_retry = Some(Duration::from_millis(retry));

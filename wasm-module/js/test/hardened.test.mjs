@@ -67,6 +67,12 @@ before(async () => {
         if (url.searchParams.has('long')) res.write(`data: ${'x'.repeat(1024 * 1024)}\n\n`);
         return; // stays open
       }
+      case '/big-event':
+        // A JSON event (the configuration's messageType), then one of 5 data lines of 1 MB each:
+        // every line is within maxLineBytes, the event isn't
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('data: "first"\n\n' + `data: ${'x'.repeat(1024 * 1024 - 6)}\n`.repeat(5) + '\n');
+        return; // stays open
       case '/ndjson':
         res.writeHead(200, { 'content-type': 'application/x-ndjson' });
         return res.end(`{"ok":true}\n"${'x'.repeat(1024 * 1024)}"\n`);
@@ -214,6 +220,17 @@ describe('hardened configuration: streaming APIs', () => {
     );
     assert.deepEqual(values, [{ ok: true }]);
     assert.equal(ndjsonError.maxLineBytes, 1024 * 1024);
+  });
+
+  it('ends a stream at an event over 4 MB, though each of its lines is within 1 MB', async () => {
+    const received = [];
+    const error = await rejection(
+      (async () => {
+        for await (const event of client().events('/big-event', { ...streamOptions, signal: undefined })) received.push(event.data);
+      })(),
+    );
+    assert.deepEqual(received, ['first']);
+    assert.equal(error.maxEventBytes, 4 * 1024 * 1024);
   });
 
   it('keeps the token with its host and sheds load beyond 64 pending', async () => {

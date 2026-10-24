@@ -5,8 +5,8 @@
 //! or `\r` (also across chunk boundaries) and decoded as UTF-8 only once
 //! complete, so a multi-byte character split between chunks is never broken.
 //! With a limit, a line (a field or a comment) longer than that many bytes is
-//! an error before it's buffered. An event's `data:` lines are each checked,
-//! not their total.
+//! an error before it's buffered; with an event limit, so is a `data:` line
+//! that would take the event's data over it.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 use crate::error::{Error, Result};
@@ -40,6 +40,8 @@ pub(crate) struct Parser {
     retry: Option<u64>,
     /// `maxLineBytes`
     limit: Option<usize>,
+    /// `maxEventBytes`: the most bytes of data one event can hold
+    event_limit: Option<usize>,
 }
 
 impl Parser {
@@ -53,6 +55,12 @@ impl Parser {
             limit,
             ..Self::default()
         }
+    }
+
+    /// With a limit on an event's data: its `data:` lines, joined with `\n`
+    pub(crate) fn event_limit(mut self, limit: Option<usize>) -> Self {
+        self.event_limit = limit;
+        self
     }
 
     /// The last event ID seen; the client reads it from each event instead
@@ -115,8 +123,10 @@ impl Parser {
             }
             self.line.extend_from_slice(&rest[..end]);
             let line = std::mem::take(&mut self.line);
-            if let Some(event) = self.process_line(&line) {
-                events.push(event);
+            match self.process_line(&line) {
+                Ok(Some(event)) => events.push(event),
+                Ok(None) => {}
+                Err(error) => return (events, Some(error)),
             }
             if rest[end] == b'\r' {
                 match rest.get(end + 1) {
@@ -138,12 +148,12 @@ impl Parser {
         (events, None)
     }
 
-    fn process_line(&mut self, line: &[u8]) -> Option<Event> {
+    fn process_line(&mut self, line: &[u8]) -> Result<Option<Event>> {
         if line.is_empty() {
-            return self.dispatch();
+            return Ok(self.dispatch());
         }
         if line[0] == b':' {
-            return None; // comment
+            return Ok(None); // comment
         }
         let line = String::from_utf8_lossy(line);
         let (field, value) = match line.split_once(':') {
@@ -153,6 +163,10 @@ impl Parser {
         match field {
             "event" => self.event = value.to_string(),
             "data" => {
+                let size = self.data.len() + usize::from(self.has_data) + value.len();
+                if let Some(limit) = self.event_limit.filter(|limit| size > *limit) {
+                    return Err(Error::event_too_large(limit));
+                }
                 if self.has_data {
                     self.data.push('\n');
                 }
@@ -165,7 +179,7 @@ impl Parser {
             }
             _ => {}
         }
-        None
+        Ok(None)
     }
 
     fn dispatch(&mut self) -> Option<Event> {
@@ -342,5 +356,33 @@ mod tests {
             parser.feed(b"data: ab\n").1.is_some(),
             "the \\xEF counts: 9 bytes"
         );
+    }
+
+    #[test]
+    fn limits_an_events_data_across_its_lines() {
+        // 4 + 1 (the joining \n) + 3 = 8 bytes: exactly at the limit
+        let mut parser = Parser::new().event_limit(Some(8));
+        let (events, error) = parser.feed(b"data: abcd\ndata: efg\n\n");
+        assert_eq!(
+            (events, error.is_none()),
+            (vec![event("message", "abcd\nefg", "")], true)
+        );
+        // One byte over, in the third line: the event before it is still delivered
+        let mut parser = Parser::new().event_limit(Some(8));
+        let (events, error) = parser.feed(b"data: ok\n\ndata: abcd\ndata: e\ndata: fg\n\n");
+        assert_eq!(events, vec![event("message", "ok", "")]);
+        assert_eq!(error.unwrap().event_too_large_limit(), Some(8));
+        // Events are counted on their own: many small ones are fine
+        let mut parser = Parser::new().event_limit(Some(2));
+        let (events, error) = parser.feed(&b"data: ab\n\n".repeat(50));
+        assert_eq!((events.len(), error.is_none()), (50, true));
+        // With a line limit too, either can stop the stream
+        let mut parser = Parser::with_limit(Some(16)).event_limit(Some(8));
+        assert!(parser
+            .feed(b"data: 1234567890\n")
+            .1
+            .unwrap()
+            .event_too_large_limit()
+            .is_some());
     }
 }

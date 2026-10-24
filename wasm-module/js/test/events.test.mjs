@@ -43,6 +43,15 @@ before(async () => {
         }
         return res.end();
       }
+      case '/v1/event-size': {
+        // "ok", then one event of `lines` data lines of `size` bytes each, then "after"
+        sse(res);
+        res.on('close', () => (flood.closed = true));
+        const lines = Number(url.searchParams.get('lines'));
+        const line = `data: ${'e'.repeat(Number(url.searchParams.get('size')))}\n`;
+        res.write(`data: ok\n\n${line.repeat(lines)}\ndata: after\n\n`);
+        return; // stays open: the client has to close it
+      }
       case '/v1/long-line': {
         // An event within the limit, then a data line (or a comment) over it
         sse(res);
@@ -304,6 +313,39 @@ describe('events', () => {
     assert.equal(events[1], 'd'.repeat(16));
   });
 
+  it('maxEventBytes limits an event’s data across its lines, at the exact boundary', async () => {
+    const read = async (lines, size, options = {}) => {
+      flood.closed = false;
+      const id = `event-size-${lines}-${size}-${JSON.stringify(options)}`;
+      const stream = new WasmClient({ maxEventBytes: 1000 }).events(server.url(`/v1/event-size?id=${encodeURIComponent(id)}&lines=${lines}&size=${size}`), options);
+      const received = [];
+      const error = await (async () => {
+        for await (const event of stream) {
+          received.push(event.data.length);
+          if (event.data === 'after') break;
+        }
+      })().catch((e) => e);
+      return { received, error, reconnects: connections.get(id).length - 1 };
+    };
+    // One line of exactly 1000 bytes; three of 332 (+ 2 joining newlines = 998)
+    assert.deepEqual((await read(1, 1000)).received, [2, 1000, 5]);
+    assert.deepEqual((await read(3, 332)).received, [2, 998, 5]);
+    // One byte over, in one line or across three (3 × 333 + 2 = 1001)
+    for (const [lines, size] of [[1, 1001], [3, 333], [50, 100]]) {
+      const { received, error, reconnects } = await read(lines, size);
+      assert.deepEqual(received, [2], 'the event before it was delivered');
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal(error.maxEventBytes, 1000);
+      assert.match(error.message, /Event larger than maxEventBytes \(1000 bytes\)/);
+      assert.equal(reconnects, 0, 'not reconnected');
+      for (let i = 0; i < 100 && !flood.closed; i++) await sleep(10);
+      assert.ok(flood.closed, 'the connection was closed');
+    }
+    // Per stream: another limit, or none
+    assert.deepEqual((await read(3, 333, { maxEventBytes: 1001 })).received, [2, 1001, 5]);
+    assert.deepEqual((await read(50, 100, { maxEventBytes: null })).received, [2, 5049, 5]);
+  });
+
   it('closes when the signal aborts', async () => {
     const aborted = client().events('/feed', { signal: AbortSignal.abort() });
     assert.equal((await rejection(aborted.opened)).kind, 'CancelledError');
@@ -320,6 +362,10 @@ describe('events', () => {
   });
 
   it('rejects invalid options', () => {
+    for (const value of [0, -1, 1.5, '8']) {
+      assert.throws(() => new WasmClient({ maxEventBytes: value }), (e) => e.kind === 'InvalidInputError' && e.parameter === 'maxEventBytes', String(value));
+      assert.throws(() => new WasmClient().events(server.url('/v1/feed'), { maxEventBytes: value }), (e) => e.parameter === 'maxEventBytes', String(value));
+    }
     const c = client();
     const invalid = (fn, parameter) => assert.throws(fn, (e) => e.kind === 'InvalidInputError' && e.parameter === parameter);
     invalid(() => c.events('/feed', { method: 1 }), 'method');
