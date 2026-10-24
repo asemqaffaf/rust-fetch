@@ -36,6 +36,9 @@ const MAX_REDIRECTS: u32 = 20;
 const TOO_LARGE: &str = "Response body larger than maxResponseBytes";
 /// A compressed body may be this much larger than the decompressed limit
 const COMPRESSED_SLACK: u64 = 1024 * 1024;
+/// A redirect's body is drained up to this so its connection can be reused;
+/// a longer (or endless) one closes the connection instead
+const REDIRECT_DRAIN: usize = 64 * 1024;
 /// Compressed bodies larger than this are decompressed off the runtime's thread
 const BLOCKING_DECOMPRESS: usize = 16 * 1024;
 
@@ -209,8 +212,8 @@ impl Transport {
                 !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
                 location,
             ) {
-                // Read the (small) body so the connection can be reused
-                if response.into_body().collect().await.is_ok() {
+                let drained = http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
+                if drained.collect().await.is_ok() {
                     connection.release();
                 }
                 if redirects >= max_redirects {
