@@ -140,12 +140,19 @@ export interface ClientOptions extends BrowserRequestOptions {
      */
     maxResponseBytes?: number;
     /**
-     * Reject a request at once while this client already has this many started and not yet settled (retries
-     * included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
+     * Reject a request at once while this client already has this many started and not yet settled, in flight or
+     * waiting (retries included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
      * response counts until its headers arrive. Rejects with a `NetworkError` whose `maxPendingRequests` is the
      * limit, before anything is sent. Applies on every transport. Default: no limit
      */
     maxPendingRequests?: number;
+    /**
+     * Reject a line longer than this many bytes (line break excluded) in `responseType: 'ndjson'` responses and
+     * `events()` streams, before it's buffered, so a server can't grow one line without bound. The stream errors
+     * with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed; an event stream isn't
+     * reconnected. For events, each line (a `data:` line, a comment…) is checked, not an event's total. Default: no limit
+     */
+    maxLineBytes?: number;
     /**
      * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
      * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
@@ -171,6 +178,8 @@ export interface RequestOptions extends BrowserRequestOptions {
     allowAbsoluteUrls?: boolean;
     /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
     maxResponseBytes?: number | null;
+    /** `responseType: 'ndjson'`: overrides the client's `maxLineBytes`; `null` removes the limit for this request */
+    maxLineBytes?: number | null;
     /** Overrides the client's `allowPrivateNetwork` */
     allowPrivateNetwork?: boolean;
     /**
@@ -248,6 +257,8 @@ export interface RustFetchError extends Error {
     maxResponseBytes?: number;
     /** NetworkError for a request refused by `maxPendingRequests`: the limit */
     maxPendingRequests?: number;
+    /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
+    maxLineBytes?: number;
 }
 
 
@@ -284,6 +295,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     end?: string | null;
     /** Overrides the client's `allowAbsoluteUrls` */
     allowAbsoluteUrls?: boolean;
+    /** Overrides the client's `maxLineBytes`; `null` removes the limit for this stream */
+    maxLineBytes?: number | null;
     /** Closes the stream and stops reconnecting when aborted */
     signal?: AbortSignal;
     /** Called each time a connection opens, including after reconnecting */

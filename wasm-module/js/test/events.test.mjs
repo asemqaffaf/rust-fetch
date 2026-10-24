@@ -43,6 +43,14 @@ before(async () => {
         }
         return res.end();
       }
+      case '/v1/long-line': {
+        // An event within the limit, then a data line (or a comment) over it
+        sse(res);
+        res.on('close', () => (flood.closed = true));
+        const long = url.searchParams.get('comment') ? `:${'c'.repeat(16)}\n` : `data: ${'d'.repeat(16)}\n\n`;
+        res.write(`data: ok\ndata: also ok\n\n${long}data: never\n\n`);
+        return; // stays open: the client has to close it
+      }
       case '/v1/count': {
         sse(res);
         for (let i = 1; i <= 100 && !res.destroyed; i++) {
@@ -265,6 +273,35 @@ describe('events', () => {
       if (received.length === 3000) break;
     }
     assert.deepEqual(received, Array.from({ length: 3000 }, (_, i) => i));
+  });
+
+  it('ends the stream at a line over maxLineBytes, without reconnecting, and closes the connection', async () => {
+    for (const query of ['', '&comment=1']) {
+      flood.closed = false;
+      const id = query ? "long-line-comment" : "long-line";
+      const stream = new WasmClient({ maxLineBytes: 16 }).events(server.url(`/v1/long-line?id=${id}${query}`));
+      const received = [];
+      const error = await rejection(
+        (async () => {
+          for await (const event of stream) received.push(event.data);
+        })(),
+      );
+      // Each data line is checked, not the event's total
+      assert.deepEqual(received, ['ok\nalso ok']);
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal(error.maxLineBytes, 16);
+      assert.equal(stream.state, 'closed');
+      for (let i = 0; i < 100 && !flood.closed; i++) await sleep(10);
+      assert.ok(flood.closed, 'the connection was closed');
+      assert.equal(connections.get(id).length, 1, 'not reconnected');
+    }
+    // A stream can lift the client's limit
+    const events = [];
+    for await (const event of new WasmClient({ maxLineBytes: 16 }).events(server.url('/v1/long-line?id=lifted'), { maxLineBytes: null })) {
+      events.push(event.data);
+      if (events.length === 2) break;
+    }
+    assert.equal(events[1], 'd'.repeat(16));
   });
 
   it('closes when the signal aborts', async () => {

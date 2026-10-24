@@ -24,6 +24,22 @@ impl fmt::Display for ResponseTooLarge {
 
 impl std::error::Error for ResponseTooLarge {}
 
+/// The source of an [`Error::Network`] when a line of a streamed format
+/// (NDJSON, Server-Sent Events) is longer than `maxLineBytes` allows
+#[derive(Debug)]
+pub(crate) struct LineTooLong {
+    /// The limit, in bytes, of one line without its line break
+    pub(crate) limit: usize,
+}
+
+impl fmt::Display for LineTooLong {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a line is longer than {} bytes", self.limit)
+    }
+}
+
+impl std::error::Error for LineTooLong {}
+
 /// The source of an [`Error::Network`] when a client already has as many
 /// requests pending as it allows (`max_pending_requests`,
 /// `maxPendingRequests` in JavaScript)
@@ -57,6 +73,25 @@ impl Error {
                 source: Some(source),
                 ..
             } => source.downcast_ref::<ResponseTooLarge>().map(|e| e.limit),
+            _ => None,
+        }
+    }
+
+    /// A streamed line longer than `limit` bytes
+    pub(crate) fn too_long(limit: usize) -> Self {
+        Error::Network {
+            message: format!("Line longer than maxLineBytes ({limit} bytes)"),
+            source: Some(Box::new(LineTooLong { limit })),
+        }
+    }
+
+    /// The limit, when a streamed line was longer than `maxLineBytes`
+    pub(crate) fn line_too_long(&self) -> Option<usize> {
+        match self {
+            Error::Network {
+                source: Some(source),
+                ..
+            } => source.downcast_ref::<LineTooLong>().map(|e| e.limit),
             _ => None,
         }
     }
@@ -175,10 +210,11 @@ impl fmt::Display for Error {
             Error::Network { message, source } => {
                 write!(f, "Network error: {}", message)?;
                 // These limits' messages already say everything
-                if let Some(src) = source
-                    .as_ref()
-                    .filter(|s| !s.is::<ResponseTooLarge>() && !s.is::<TooManyPendingRequests>())
-                {
+                if let Some(src) = source.as_ref().filter(|s| {
+                    !s.is::<ResponseTooLarge>()
+                        && !s.is::<TooManyPendingRequests>()
+                        && !s.is::<LineTooLong>()
+                }) {
                     write!(f, " (caused by: {})", src)?;
                 }
                 Ok(())
@@ -313,6 +349,22 @@ mod tests {
         );
         assert_eq!(error.response_too_large(), Some(5));
         assert_eq!(error.too_many_pending_requests(), None);
+    }
+
+    #[test]
+    fn line_too_long_reads_on_its_own_and_in_the_error() {
+        assert_eq!(
+            LineTooLong { limit: 8 }.to_string(),
+            "a line is longer than 8 bytes"
+        );
+        let error = Error::too_long(8);
+        assert_eq!(
+            error.to_string(),
+            "Network error: Line longer than maxLineBytes (8 bytes)"
+        );
+        assert_eq!(error.line_too_long(), Some(8));
+        assert_eq!(error.response_too_large(), None);
+        assert_eq!(Error::Timeout { duration_ms: 1 }.line_too_long(), None);
     }
 
     #[test]

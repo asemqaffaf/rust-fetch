@@ -4,7 +4,14 @@
 //! Bytes are fed in chunks as they arrive; lines are split on `\r\n`, `\n`
 //! or `\r` (also across chunk boundaries) and decoded as UTF-8 only once
 //! complete, so a multi-byte character split between chunks is never broken.
+//! With a limit, a line (a field or a comment) longer than that many bytes is
+//! an error before it's buffered. An event's `data:` lines are each checked,
+//! not their total.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+
+use crate::error::{Error, Result};
+
+const BOM: &[u8] = b"\xEF\xBB\xBF";
 
 /// One dispatched event
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,11 +38,21 @@ pub(crate) struct Parser {
     has_data: bool,
     last_event_id: String,
     retry: Option<u64>,
+    /// `maxLineBytes`
+    limit: Option<usize>,
 }
 
 impl Parser {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// With a limit on the bytes in one line, line break excluded
+    pub(crate) fn with_limit(limit: Option<usize>) -> Self {
+        Self {
+            limit,
+            ..Self::default()
+        }
     }
 
     /// The last event ID seen; the client reads it from each event instead
@@ -49,19 +66,28 @@ impl Parser {
         self.retry.take()
     }
 
-    /// Feed a chunk of the stream; returns the events it completes
-    pub(crate) fn feed(&mut self, mut chunk: &[u8]) -> Vec<Event> {
-        let mut events = Vec::new();
+    /// Feed a chunk of the stream; returns the events it completes, and an
+    /// error for a line over the limit (after the events before it)
+    pub(crate) fn feed(&mut self, mut chunk: &[u8]) -> (Vec<Event>, Option<Error>) {
         if !self.started && !chunk.is_empty() {
-            // A UTF-8 BOM at the very start of the stream is skipped
-            self.line.extend_from_slice(chunk);
-            if self.line.len() < 3 && b"\xEF\xBB\xBF".starts_with(&self.line) {
-                return events;
+            // A UTF-8 BOM at the very start of the stream is skipped. Until
+            // it's clear whether there is one, its first bytes wait in `line`.
+            let mut start = std::mem::take(&mut self.line);
+            let head = &chunk[..chunk.len().min(BOM.len() - start.len())];
+            start.extend_from_slice(head);
+            if start.len() < BOM.len() && BOM.starts_with(&start) {
+                self.line = start;
+                return (Vec::new(), None);
             }
             self.started = true;
-            let buffered = std::mem::take(&mut self.line);
-            let rest = buffered.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buffered);
-            return self.feed_lines(rest);
+            if start == BOM {
+                return self.feed_lines(&chunk[head.len()..]);
+            }
+            // Not a BOM: the bytes held back start the first line (they
+            // hold no line break, and `feed_lines` checks the limit)
+            start.truncate(start.len() - head.len());
+            self.line = start;
+            return self.feed_lines(chunk);
         }
         if self.after_cr {
             if let Some(rest) = chunk.strip_prefix(b"\n") {
@@ -69,14 +95,24 @@ impl Parser {
             }
             self.after_cr = false;
         }
-        events.extend(self.feed_lines(chunk));
-        events
+        self.feed_lines(chunk)
     }
 
-    fn feed_lines(&mut self, chunk: &[u8]) -> Vec<Event> {
+    /// Fail if `more` would take the current line over the limit
+    fn check(&self, more: usize) -> Result<()> {
+        match self.limit {
+            Some(limit) if self.line.len() + more > limit => Err(Error::too_long(limit)),
+            _ => Ok(()),
+        }
+    }
+
+    fn feed_lines(&mut self, chunk: &[u8]) -> (Vec<Event>, Option<Error>) {
         let mut events = Vec::new();
         let mut rest = chunk;
         while let Some(end) = rest.iter().position(|&b| b == b'\n' || b == b'\r') {
+            if let Err(error) = self.check(end) {
+                return (events, Some(error));
+            }
             self.line.extend_from_slice(&rest[..end]);
             let line = std::mem::take(&mut self.line);
             if let Some(event) = self.process_line(&line) {
@@ -95,8 +131,11 @@ impl Parser {
                 rest = &rest[end + 1..];
             }
         }
+        if let Err(error) = self.check(rest.len()) {
+            return (events, Some(error));
+        }
         self.line.extend_from_slice(rest);
-        events
+        (events, None)
     }
 
     fn process_line(&mut self, line: &[u8]) -> Option<Event> {
@@ -155,7 +194,7 @@ mod tests {
         let mut parser = Parser::new();
         let mut events = Vec::new();
         for chunk in chunks {
-            events.extend(parser.feed(chunk));
+            events.extend(parser.feed(chunk).0);
         }
         (events, parser)
     }
@@ -252,5 +291,56 @@ mod tests {
     fn discards_an_incomplete_event_at_the_end() {
         let (events, _) = parse_all(&[b"data: complete\n\ndata: partial"]);
         assert_eq!(events, vec![event("message", "complete", "")]);
+    }
+
+    #[test]
+    fn limits_lines_comments_included_without_counting_the_line_break() {
+        // Exactly at the limit: a field, a comment, and \r\n split across chunks
+        let mut parser = Parser::with_limit(Some(8));
+        let mut events = parser.feed(b"data: ab\r").0;
+        events.extend(parser.feed(b"\n:comment\r\n\n").0);
+        assert_eq!(events, vec![event("message", "ab", "")]);
+        // One byte over: a field, a comment, across chunks, and an endless line
+        for chunks in [
+            &[&b"data: abc\n"[..]][..],
+            &[b":comment!\n"],
+            &[b"data", b": a", b"bc"],
+        ] {
+            let mut parser = Parser::with_limit(Some(8));
+            let error = chunks
+                .iter()
+                .find_map(|chunk| parser.feed(chunk).1)
+                .unwrap();
+            assert_eq!(error.line_too_long(), Some(8));
+        }
+        let mut parser = Parser::with_limit(Some(1024));
+        while parser.feed(&[b'x'; 100]).1.is_none() {
+            assert!(parser.line.len() <= 1024);
+        }
+        // Each data line is checked, not the event's total
+        let mut parser = Parser::with_limit(Some(8));
+        let events = parser.feed(b"data: 12\ndata: 34\n\n").0;
+        assert_eq!(events, vec![event("message", "12\n34", "")]);
+        // Events before the long line in the same chunk are still returned
+        let (events, error) = Parser::with_limit(Some(8)).feed(b"data: a\n\ndata: abcdef\n\n");
+        assert_eq!(events, vec![event("message", "a", "")]);
+        assert_eq!(error.unwrap().line_too_long(), Some(8));
+    }
+
+    #[test]
+    fn a_bom_is_skipped_without_counting_towards_the_limit() {
+        let mut parser = Parser::with_limit(Some(8));
+        assert_eq!(parser.feed(b"\xEF").0, vec![]);
+        assert_eq!(
+            parser.feed(b"\xBB\xBFdata: ab\n\n").0,
+            vec![event("message", "ab", "")]
+        );
+        // Bytes that only looked like the start of a BOM are part of the first line
+        let mut parser = Parser::with_limit(Some(8));
+        assert_eq!(parser.feed(b"\xEF").0, vec![]);
+        assert!(
+            parser.feed(b"data: ab\n").1.is_some(),
+            "the \\xEF counts: 9 bytes"
+        );
     }
 }

@@ -837,6 +837,81 @@ describe('streaming and progress', () => {
   });
 });
 
+describe('maxLineBytes', () => {
+  // Reads an NDJSON body to the end, or to its error
+  const read = async (res) => {
+    const values = [];
+    try {
+      for await (const value of res.body) values.push(value);
+    } catch (error) {
+      return { values, error };
+    }
+    return { values };
+  };
+
+  it('accepts a line at the limit and errors one byte over, whatever the line break or chunking', async () => {
+    // '"abcdef"' is 8 bytes; "ë" is 2 bytes in UTF-8, so '"ëëë"' is 8 too
+    const s = await startServer(async (req, res) => {
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+      if (req.url === '/ok') {
+        for (const part of ['"abcdef"\r', '\n"ëë', 'ë"\n\n"abcdef"']) {
+          res.write(part);
+          await sleep(5);
+        }
+        return res.end();
+      }
+      res.end('"abcdef"\n"abcdefg"\n"never"\n');
+    });
+    try {
+      const c = new WasmClient({ maxLineBytes: 8 });
+      assert.deepEqual(await read(await c.get(s.url('/ok'), { responseType: 'ndjson' })), { values: ['abcdef', 'ëëë', 'abcdef'] });
+      const { values, error } = await read(await c.get(s.url('/over'), { responseType: 'ndjson' }));
+      assert.deepEqual(values, ['abcdef']);
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal(error.maxLineBytes, 8);
+      assert.match(error.message, /Line longer than maxLineBytes \(8 bytes\)/);
+      // Per request: a different limit, or none
+      assert.equal((await read(await c.get(s.url('/over'), { responseType: 'ndjson', maxLineBytes: 9 }))).values.length, 3);
+      assert.equal((await read(await c.get(s.url('/over'), { responseType: 'ndjson', maxLineBytes: null }))).values.length, 3);
+      assert.equal((await read(await new WasmClient().get(s.url('/over'), { responseType: 'ndjson' }))).values.length, 3, 'no limit by default');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('stops an endless line at the limit and closes the connection', async () => {
+    let closed = false;
+    let written = 0;
+    const s = await startServer(async (req, res) => {
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' });
+      res.on('close', () => (closed = true));
+      const chunk = Buffer.alloc(1024, 'x');
+      while (!res.destroyed) {
+        written += chunk.length;
+        if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve).once('close', resolve));
+      }
+    });
+    try {
+      const res = await new WasmClient({ maxLineBytes: 64 * 1024 }).get(s.url('/'), { responseType: 'ndjson' });
+      const { error } = await read(res);
+      assert.equal(error.maxLineBytes, 64 * 1024);
+      for (let i = 0; i < 100 && !closed; i++) await sleep(10);
+      assert.ok(closed, 'the connection was closed');
+      assert.ok(written < 16 * 1024 * 1024, `the server wrote ${written} bytes`);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('is validated', async () => {
+    for (const value of [0, -1, 1.5, '8']) {
+      assert.throws(() => new WasmClient({ maxLineBytes: value }), (e) => e.kind === 'InvalidInputError' && e.parameter === 'maxLineBytes', String(value));
+      assert.equal((await rejection(client().get(server.url('/ndjson'), { responseType: 'ndjson', maxLineBytes: value }))).parameter, 'maxLineBytes');
+      assert.throws(() => client().events(server.url('/ndjson'), { maxLineBytes: value }), (e) => e.parameter === 'maxLineBytes');
+    }
+  });
+});
+
 describe('newline-delimited JSON', () => {
   it("parses each line as it arrives with responseType: 'ndjson'", async () => {
     const res = await client().get(server.url('/ndjson'), { responseType: 'ndjson' });
