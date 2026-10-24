@@ -259,6 +259,10 @@ export interface RustFetchError extends Error {
     maxPendingRequests?: number;
     /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
     maxLineBytes?: number;
+    /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
+    maxQueuedMessages?: number;
+    /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
+    maxQueuedBytes?: number;
 }
 
 
@@ -367,6 +371,17 @@ export interface WebSocketOptions {
     reconnect?: boolean | number | ReconnectOptions;
     /** Overrides the client's `allowAbsoluteUrls` */
     allowAbsoluteUrls?: boolean;
+    /**
+     * The most messages `send()` queues while the connection isn't open yet (connecting or reconnecting). One more
+     * throws a `NetworkError` whose `maxQueuedMessages` is the limit, and isn't queued. Default: no limit
+     */
+    maxQueuedMessages?: number;
+    /**
+     * The most bytes (UTF-8 for text, `byteLength` or `size` otherwise) `send()` queues while the connection isn't
+     * open yet. A message that would go over throws a `NetworkError` whose `maxQueuedBytes` is the limit, and isn't
+     * queued. Once open, messages go to the runtime's socket: watch `bufferedAmount` there. Default: no limit
+     */
+    maxQueuedBytes?: number;
     /** Closes the connection and stops reconnecting when aborted */
     signal?: AbortSignal;
     /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */

@@ -280,6 +280,10 @@ export interface RustFetchError extends Error {
   maxPendingRequests?: number;
   /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
   maxLineBytes?: number;
+  /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
+  maxQueuedMessages?: number;
+  /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
+  maxQueuedBytes?: number;
 }
 "#;
 
@@ -1546,7 +1550,7 @@ pub(crate) fn parse_max_line_bytes(
     }
 }
 
-fn positive_u32(value: &JsValue, parameter: &str) -> Result<usize> {
+pub(crate) fn positive_u32(value: &JsValue, parameter: &str) -> Result<usize> {
     match non_negative_u32(value.as_f64().unwrap_or(f64::NAN), parameter) {
         Ok(0) | Err(_) => Err(invalid(parameter, "must be a positive integer")),
         Ok(max) => Ok(max as usize),
@@ -1753,6 +1757,10 @@ impl From<Error> for JsValue {
         if let Some(limit) = error.response_too_large() {
             #[allow(clippy::cast_precision_loss)]
             let _ = js_sys::Reflect::set(&obj, &"maxResponseBytes".into(), &(limit as f64).into());
+        }
+        if let Some((option, limit)) = error.full_queue() {
+            #[allow(clippy::cast_precision_loss)]
+            let _ = js_sys::Reflect::set(&obj, &option.into(), &(limit as f64).into());
         }
         if let Some(limit) = error.line_too_long() {
             #[allow(clippy::cast_precision_loss)]

@@ -79,6 +79,17 @@ export interface WebSocketOptions {
   reconnect?: boolean | number | ReconnectOptions;
   /** Overrides the client's `allowAbsoluteUrls` */
   allowAbsoluteUrls?: boolean;
+  /**
+   * The most messages `send()` queues while the connection isn't open yet (connecting or reconnecting). One more
+   * throws a `NetworkError` whose `maxQueuedMessages` is the limit, and isn't queued. Default: no limit
+   */
+  maxQueuedMessages?: number;
+  /**
+   * The most bytes (UTF-8 for text, `byteLength` or `size` otherwise) `send()` queues while the connection isn't
+   * open yet. A message that would go over throws a `NetworkError` whose `maxQueuedBytes` is the limit, and isn't
+   * queued. Once open, messages go to the runtime's socket: watch `bufferedAmount` there. Default: no limit
+   */
+  maxQueuedBytes?: number;
   /** Closes the connection and stops reconnecting when aborted */
   signal?: AbortSignal;
   /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */
@@ -190,6 +201,8 @@ struct Settings {
     timeout: Option<Duration>,
     reconnect: Option<RetryConfig>,
     json: bool,
+    max_queued_messages: Option<usize>,
+    max_queued_bytes: Option<usize>,
     on_open: Option<js_sys::Function>,
     on_message: Option<js_sys::Function>,
     on_error: Option<js_sys::Function>,
@@ -256,6 +269,8 @@ struct Inner {
     timer: Option<Timer>,
     /// Messages sent before the connection opened
     queue: Vec<JsValue>,
+    /// Their total size, as `data_length` counts it
+    queued_bytes: f64,
     /// Failed attempts in a row
     failures: u32,
     opened_once: bool,
@@ -309,7 +324,7 @@ impl WebSocketConnection {
     #[wasm_bindgen(getter = bufferedAmount)]
     pub fn buffered_amount(&self) -> f64 {
         let inner = self.shared.inner.borrow();
-        let queued: f64 = inner.queue.iter().map(data_length).sum();
+        let queued = inner.queued_bytes;
         inner
             .attempt
             .as_ref()
@@ -417,6 +432,7 @@ impl WasmClient {
                 attempt: None,
                 timer: None,
                 queue: Vec::new(),
+                queued_bytes: 0.0,
                 failures: 0,
                 opened_once: false,
                 resolve_opened,
@@ -557,6 +573,11 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         Some(Some(name)) if name == "json" => true,
         Some(_) => return Err(invalid("messageType", "must be 'auto' or 'json'")),
     };
+    let limit = |name| {
+        prop(options, name)
+            .map(|value| super::positive_u32(&value, name))
+            .transpose()
+    };
 
     Ok(Settings {
         url,
@@ -564,6 +585,8 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         timeout,
         reconnect,
         json,
+        max_queued_messages: limit("maxQueuedMessages")?,
+        max_queued_bytes: limit("maxQueuedBytes")?,
         on_open: callback_option(options, "onOpen")?,
         on_message: callback_option(options, "onMessage")?,
         on_error: callback_option(options, "onError")?,
@@ -722,7 +745,10 @@ fn opened(shared: &Rc<Shared>) {
         };
         (
             attempt.socket.clone().unchecked_into::<Socket>(),
-            std::mem::take(&mut inner.queue),
+            {
+                inner.queued_bytes = 0.0;
+                std::mem::take(&mut inner.queue)
+            },
             inner.resolve_opened.take(),
         )
     };
@@ -891,6 +917,7 @@ fn finish_with(
         }
         inner.state = State::Closed;
         inner.queue.clear();
+        inner.queued_bytes = 0.0;
         inner.resolve_opened = None;
         (
             inner.reject_opened.take(),
@@ -936,7 +963,21 @@ fn send(shared: &Rc<Shared>, data: JsValue) -> Result<()> {
             None => Err(closed_error()),
         },
         State::Connecting | State::Reconnecting => {
+            let settings = &shared.settings;
+            if let Some(limit) = settings.max_queued_messages {
+                if inner.queue.len() >= limit {
+                    return Err(Error::queue_full("maxQueuedMessages", limit));
+                }
+            }
+            let size = data_length(&data);
+            if let Some(limit) = settings.max_queued_bytes {
+                #[allow(clippy::cast_precision_loss)]
+                if inner.queued_bytes + size > limit as f64 {
+                    return Err(Error::queue_full("maxQueuedBytes", limit));
+                }
+            }
             inner.queue.push(data);
+            inner.queued_bytes += size;
             Ok(())
         }
         State::Closing | State::Closed => Err(closed_error()),
