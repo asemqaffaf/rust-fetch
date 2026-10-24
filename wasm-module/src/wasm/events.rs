@@ -59,6 +59,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   end?: string | null;
   /** Overrides the client's `allowAbsoluteUrls` */
   allowAbsoluteUrls?: boolean;
+  /** Overrides the client's `maxLineBytes`; `null` removes the limit for this stream */
+  maxLineBytes?: number | null;
   /** Closes the stream and stops reconnecting when aborted */
   signal?: AbortSignal;
   /** Called each time a connection opens, including after reconnecting */
@@ -122,6 +124,7 @@ struct Settings {
     target: String,
     body: JsValue,
     options: JsValue,
+    max_line_bytes: Option<usize>,
     reconnect: Option<RetryConfig>,
     json: bool,
     end: Option<String>,
@@ -386,6 +389,10 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         url,
         target,
         body: prop(&options, "body").unwrap_or(JsValue::UNDEFINED),
+        max_line_bytes: super::parse_max_line_bytes(
+            &js_sys::Reflect::get(&options, &"maxLineBytes".into()).unwrap_or(JsValue::UNDEFINED),
+            client.config.max_line_bytes,
+        )?,
         reconnect,
         json,
         end,
@@ -548,7 +555,7 @@ async fn connect(
     }
     opened(shared);
 
-    let mut parser = sse::Parser::new();
+    let mut parser = sse::Parser::with_limit(shared.settings.max_line_bytes);
     let mut body = AbortableStream::new(response.into_stream(), Some(shared.closer.signal()));
     while let Some(chunk) = body.next().await {
         let chunk = match chunk {
@@ -556,7 +563,9 @@ async fn connect(
             Err(_) if is_closed(shared) => return Ended::Finished,
             Err(error) => return Ended::Dropped(error),
         };
-        let events = parser.feed(&chunk);
+        // A line over maxLineBytes ends the stream, after the events before
+        // it: reconnecting would get it again
+        let (events, too_long) = parser.feed(&chunk);
         if let Some(retry) = parser.take_retry() {
             *server_retry = Some(Duration::from_millis(retry));
         }
@@ -569,6 +578,9 @@ async fn connect(
             if !dispatch(shared, event) || is_closed(shared) {
                 return Ended::Finished;
             }
+        }
+        if let Some(error) = too_long {
+            return Ended::Failed(error);
         }
         if let Some(room) = full_queue(shared) {
             let _ = wasm_bindgen_futures::JsFuture::from(room).await;

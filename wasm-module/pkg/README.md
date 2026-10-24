@@ -641,7 +641,7 @@ for await (const chunk of res.body) {
 }
 ```
 
-Lines may be split across network chunks, end in `\n` or `\r\n`, and the last one doesn't need a newline; empty lines are skipped. A line that isn't JSON errors the stream with a `ParseError` naming the line number.
+Lines may be split across network chunks, end in `\n` or `\r\n`, and the last one doesn't need a newline; empty lines are skipped. A line that isn't JSON errors the stream with a `ParseError` naming the line number. A line can be any length unless you set [`maxLineBytes`](#limiting-line-length).
 
 ### Server-Sent Events
 
@@ -668,7 +668,7 @@ await feed.opened;
 feed.close();
 ```
 
-Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream. A `for await` loop that falls behind holds the server back: with 64 events waiting, the stream stops reading until the loop has taken half of them, so the connection slows down instead of events piling up in memory. `onEvent` gets each event as it's parsed, so a slow handler should apply its own limit.
+Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream. A `for await` loop that falls behind holds the server back: with 64 events waiting, the stream stops reading until the loop has taken half of them, so demand propagates to the server instead of every event piling up in memory. This reduces read-ahead rather than setting a memory ceiling: the socket and stream buffers still fill (in a test, a server offering 20 MB of events wrote about 830 KB during a one-second pause, against 12 MB before). `onEvent` gets each event as it's parsed, so a slow handler should apply its own limit. To bound a single line, see [`maxLineBytes`](#limiting-line-length).
 
 | Option | Description |
 | --- | --- |
@@ -893,10 +893,28 @@ try {
 // → NetworkError "Too many pending requests (maxPendingRequests is 500)", error.maxPendingRequests === 500
 ```
 
-- A request is pending from the call until it settles, retries and their delays included. A streamed response (`'stream'`, `'ndjson'`) counts until its headers arrive.
+- **It limits every unfinished request, not only the waiting ones.** A request counts from the call until it settles: while it's in flight as well as while it waits for a connection, retries and their delays included. So it bounds the client's total work, and with a limit under 1,024 Node.js requests never queue behind the transport at all. A streamed response (`'stream'`, `'ndjson'`) counts until its headers arrive.
 - A request beyond the limit rejects at once, before anything is sent (request interceptors have already run), so the rejection costs almost nothing.
 - Failures, timeouts and cancellation free the place like successes do.
 - The count is per client, and it applies on every transport (node:http, native, browser `fetch()` and `XMLHttpRequest`) and in the Rust crate (`ClientBuilder::max_pending_requests`). `client.events()` and `client.websocket()` aren't counted.
+
+The default is no limit, as before.
+
+### Limiting line length
+
+`maxResponseBytes` limits a whole response, but a stream of newline-delimited JSON or Server-Sent Events can run for hours, and an incomplete line is held in memory until its line break arrives. A server that never sends one grows that line without bound. Set `maxLineBytes`:
+
+```js
+const client = new WasmClient({ maxLineBytes: 1024 * 1024 });                    // 1 MB per line
+const res = await client.get('/watch', { responseType: 'ndjson' });             // or per request; null for none
+for await (const event of client.events('/feed', { maxLineBytes: 64 * 1024 })) { /* … */ }
+// → NetworkError "Line longer than maxLineBytes (1048576 bytes)", error.maxLineBytes === 1048576
+```
+
+- **Bytes, line break excluded.** A line is counted in UTF-8 bytes, without its `\n`, `\r\n` (or, in event streams, `\r`), the same however the network splits it, including a character or a `\r\n` split between chunks. A line exactly at the limit is accepted.
+- **Checked before it's buffered.** No more than the limit is ever held for one line, whether it arrives as one huge chunk or as an endless trickle.
+- **What happens:** the lines (or events) before the long one are delivered, then the stream errors with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed. An event stream ends and isn't reconnected, since it would get the same line again.
+- **Event streams:** every line counts, comments included. Each `data:` line is checked on its own, so an event made of many `data:` lines can exceed the limit in total; limit the response with `maxResponseBytes` too, or handle large events with `onEvent`.
 
 The default is no limit, as before.
 

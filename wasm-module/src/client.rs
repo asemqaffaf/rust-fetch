@@ -45,6 +45,8 @@ pub(crate) struct ClientConfig {
     pub(crate) allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
     max_pending_requests: Option<usize>,
+    /// JavaScript: `maxLineBytes`, for NDJSON responses and event streams
+    pub(crate) max_line_bytes: Option<usize>,
     /// Browser `fetch()` options (`credentials`, `mode`, …), already validated
     #[cfg(target_arch = "wasm32")]
     pub(crate) fetch_options: Option<js_sys::Object>,
@@ -693,6 +695,7 @@ pub struct ClientBuilder {
     allow_absolute_urls: bool,
     max_response_bytes: Option<u64>,
     max_pending_requests: Option<usize>,
+    max_line_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
     fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
@@ -714,6 +717,7 @@ impl ClientBuilder {
             allow_absolute_urls: true,
             max_response_bytes: None,
             max_pending_requests: None,
+            max_line_bytes: None,
             #[cfg(target_arch = "wasm32")]
             fetch_options: None,
             #[cfg(target_arch = "wasm32")]
@@ -769,6 +773,12 @@ impl ClientBuilder {
     /// is a network error; see [`Error::response_too_large`].
     pub fn max_response_bytes(mut self, limit: u64) -> Self {
         self.max_response_bytes = Some(limit);
+        self
+    }
+
+    /// JavaScript: the longest line allowed in NDJSON responses and event streams
+    pub(crate) fn max_line_bytes(mut self, limit: usize) -> Self {
+        self.max_line_bytes = Some(limit);
         self
     }
 
@@ -865,6 +875,7 @@ impl ClientBuilder {
                 allow_absolute_urls: self.allow_absolute_urls,
                 max_response_bytes: self.max_response_bytes,
                 max_pending_requests: self.max_pending_requests,
+                max_line_bytes: self.max_line_bytes,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
                 #[cfg(target_arch = "wasm32")]
@@ -1192,6 +1203,13 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_line_bytes_is_kept_for_the_javascript_streams() {
+        let client = Client::builder().max_line_bytes(8).build().unwrap();
+        assert_eq!(client.config.max_line_bytes, Some(8));
+        assert_eq!(Client::new().unwrap().config.max_line_bytes, None);
+    }
 
     #[test]
     fn pending_requests_are_counted_until_dropped_and_shared_by_clones() {

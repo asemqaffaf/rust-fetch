@@ -161,12 +161,19 @@ export interface ClientOptions extends BrowserRequestOptions {
    */
   maxResponseBytes?: number;
   /**
-   * Reject a request at once while this client already has this many started and not yet settled (retries
-   * included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
+   * Reject a request at once while this client already has this many started and not yet settled, in flight or
+   * waiting (retries included), so a caller that can't keep up sheds load instead of queuing requests without bound. A streamed
    * response counts until its headers arrive. Rejects with a `NetworkError` whose `maxPendingRequests` is the
    * limit, before anything is sent. Applies on every transport. Default: no limit
    */
   maxPendingRequests?: number;
+  /**
+   * Reject a line longer than this many bytes (line break excluded) in `responseType: 'ndjson'` responses and
+   * `events()` streams, before it's buffered, so a server can't grow one line without bound. The stream errors
+   * with a `NetworkError` whose `maxLineBytes` is the limit, and the connection is closed; an event stream isn't
+   * reconnected. For events, each line (a `data:` line, a comment…) is checked, not an event's total. Default: no limit
+   */
+  maxLineBytes?: number;
   /**
    * Node.js: with `false`, requests whose host resolves to a private or reserved address (loopback, RFC 1918,
    * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
@@ -192,6 +199,8 @@ export interface RequestOptions extends BrowserRequestOptions {
   allowAbsoluteUrls?: boolean;
   /** Overrides the client's `maxResponseBytes`; `null` removes the limit for this request */
   maxResponseBytes?: number | null;
+  /** `responseType: 'ndjson'`: overrides the client's `maxLineBytes`; `null` removes the limit for this request */
+  maxLineBytes?: number | null;
   /** Overrides the client's `allowPrivateNetwork` */
   allowPrivateNetwork?: boolean;
   /**
@@ -269,6 +278,8 @@ export interface RustFetchError extends Error {
   maxResponseBytes?: number;
   /** NetworkError for a request refused by `maxPendingRequests`: the limit */
   maxPendingRequests?: number;
+  /** NetworkError for a streamed line longer than `maxLineBytes`: the limit */
+  maxLineBytes?: number;
 }
 "#;
 
@@ -362,6 +373,9 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxPendingRequests") {
                 builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
+            }
+            if let Some(max) = prop(options, "maxLineBytes") {
+                builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -842,9 +856,11 @@ pub(crate) async fn send(
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
+        let max_line_bytes =
+            parse_max_line_bytes(&options.raw("maxLineBytes"), client.config.max_line_bytes)?;
         let response = abortable(signal.clone(), builder.send_streaming()).await?;
         if let BodyType::Ndjson = body_type {
-            return ndjson_response_to_js(response, signal);
+            return ndjson_response_to_js(response, signal, max_line_bytes);
         }
         return streaming_response_to_js(response, signal);
     }
@@ -1243,6 +1259,7 @@ fn streaming_response_to_js(
 fn ndjson_response_to_js(
     response: StreamingResponse,
     signal: Option<web_sys::AbortSignal>,
+    max_line_bytes: Option<usize>,
 ) -> Result<JsValue> {
     let obj = response_head_to_js(
         response.status,
@@ -1250,14 +1267,17 @@ fn ndjson_response_to_js(
         &response.url,
         &response.headers,
     )?;
-    let mut lines = crate::lines::Lines::new();
+    let mut lines = crate::lines::Lines::with_limit(max_line_bytes);
     // Each chunk, then a final None to flush a last line without a newline
     let chunks = AbortableStream::new(response.into_stream(), signal)
         .map(Some)
         .chain(futures_util::stream::once(async { None }));
     let parsed = chunks.flat_map(move |chunk| {
         let lines: Vec<std::result::Result<crate::lines::Line, Error>> = match chunk {
-            Some(Ok(bytes)) => lines.feed(&bytes).into_iter().map(Ok).collect(),
+            Some(Ok(bytes)) => {
+                let (lines, error) = lines.feed(&bytes);
+                lines.into_iter().map(Ok).chain(error.map(Err)).collect()
+            }
             Some(Err(error)) => vec![Err(error)],
             None => lines.finish().into_iter().map(Ok).collect(),
         };
@@ -1511,8 +1531,24 @@ fn parse_max_redirects(value: &JsValue) -> Result<u32> {
 }
 
 fn parse_max_pending_requests(value: &JsValue) -> Result<usize> {
-    match non_negative_u32(value.as_f64().unwrap_or(f64::NAN), "maxPendingRequests") {
-        Ok(0) | Err(_) => Err(invalid("maxPendingRequests", "must be a positive integer")),
+    positive_u32(value, "maxPendingRequests")
+}
+
+/// `maxLineBytes` for a request or an event stream: the client's unless set; `null` for none
+pub(crate) fn parse_max_line_bytes(
+    value: &JsValue,
+    client: Option<usize>,
+) -> Result<Option<usize>> {
+    match value {
+        value if value.is_null() => Ok(None),
+        value if value.is_undefined() => Ok(client),
+        value => positive_u32(value, "maxLineBytes").map(Some),
+    }
+}
+
+fn positive_u32(value: &JsValue, parameter: &str) -> Result<usize> {
+    match non_negative_u32(value.as_f64().unwrap_or(f64::NAN), parameter) {
+        Ok(0) | Err(_) => Err(invalid(parameter, "must be a positive integer")),
         Ok(max) => Ok(max as usize),
     }
 }
@@ -1717,6 +1753,10 @@ impl From<Error> for JsValue {
         if let Some(limit) = error.response_too_large() {
             #[allow(clippy::cast_precision_loss)]
             let _ = js_sys::Reflect::set(&obj, &"maxResponseBytes".into(), &(limit as f64).into());
+        }
+        if let Some(limit) = error.line_too_long() {
+            #[allow(clippy::cast_precision_loss)]
+            let _ = js_sys::Reflect::set(&obj, &"maxLineBytes".into(), &(limit as f64).into());
         }
         if let Some(limit) = error.too_many_pending_requests() {
             #[allow(clippy::cast_precision_loss)]
