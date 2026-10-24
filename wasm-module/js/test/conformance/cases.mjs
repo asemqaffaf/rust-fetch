@@ -45,6 +45,16 @@ export const HELPERS = `
       return { text: parts.join(''), ...failure(error) };
     }
   };
+  /** /flood's progress for an id: bytes written, and whether the client closed the connection */
+  const flood = async (id) => (await fetch(ctx.a + '/flood-progress?of=' + encodeURIComponent(id))).json();
+  /** Wait until the client has closed /flood's connection for an id (up to 3 s) */
+  const closedFlood = async (id) => {
+    for (let i = 0; i < 60; i++) {
+      if ((await flood(id))?.closed) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  };
   /** Read an async iterable to the end: its items, or the error that ended it */
   const collect = async (iterable) => {
     const items = [];
@@ -342,6 +352,66 @@ export const cases = [
     title: 'A connection dropped mid-body errors the stream with a NetworkError',
     run: `async (rf, ctx) => drain((await new WasmClient().get(ctx.a + '/stream-error', { responseType: 'stream' })).body)`,
     expect: { text: 'partial', error: 'NetworkError' },
+  },
+  ...[
+    ['stream', 'a streamed body'],
+    ['ndjson', 'NDJSON'],
+  ].map(([type, what]) => ({
+    id: `stream-slow-reader-${type}`,
+    area: 'Streaming',
+    title: `A slow reader of ${what} holds the server back, and cancel() closes the connection`,
+    run: `async (rf, ctx) => {
+      const id = ctx.id('slow-${type}');
+      const res = await new WasmClient().get(ctx.a + '/flood?${type === 'ndjson' ? 'ndjson=1&' : ''}id=' + id, { responseType: '${type}' });
+      const reader = res.body.getReader();
+      await reader.read();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Of the 64 MB on offer, only what the socket and stream buffers hold has left the server
+      const { written } = await flood(id);
+      await reader.cancel();
+      return { readAhead: written < 16 * 1024 * 1024 ? 'under 16 MB' : 'over 16 MB', closed: await closedFlood(id) };
+    }`,
+    expect: { readAhead: 'under 16 MB', closed: true },
+    differs: Object.fromEntries(
+      browsers.map((name) => [
+        name,
+        {
+          anyOf: [
+            { readAhead: 'under 16 MB', closed: true },
+            { readAhead: 'over 16 MB', closed: true },
+          ],
+          why: "browsers read a response ahead of the page themselves, however slowly it's consumed: their own fetch() took 59–64 MB of 64 in this test, as rust-fetch did; how far varies by browser and machine",
+        },
+      ]),
+    ),
+  })),
+  {
+    id: 'stream-abort-closes',
+    area: 'Streaming',
+    title: 'Aborting mid-stream closes the connection',
+    run: `async (rf, ctx) => {
+      const id = ctx.id('abort-flood');
+      const controller = new AbortController();
+      const res = await new WasmClient().get(ctx.a + '/flood?id=' + id, { responseType: 'stream', signal: controller.signal });
+      const reader = res.body.getReader();
+      await reader.read();
+      controller.abort();
+      const error = await reader.read().then(() => null, (e) => e.kind);
+      return { error, closed: await closedFlood(id) };
+    }`,
+    expect: { error: 'CancelledError', closed: true },
+  },
+  {
+    id: 'stream-limit-closes',
+    area: 'Streaming',
+    title: 'maxResponseBytes reached mid-stream closes the connection',
+    run: `async (rf, ctx) => {
+      const id = ctx.id('limit-flood');
+      const res = await new WasmClient({ maxResponseBytes: 1048576 }).get(ctx.a + '/flood?id=' + id, { responseType: 'stream' });
+      const { error, maxResponseBytes } = await drain(res.body);
+      return { error, maxResponseBytes, closed: await closedFlood(id) };
+    }`,
+    expect: { error: 'NetworkError', maxResponseBytes: 1048576, closed: true },
   },
   {
     id: 'stream-ndjson',

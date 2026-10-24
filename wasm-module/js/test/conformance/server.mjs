@@ -24,6 +24,8 @@ const compressed = {
 export async function startServers(extra = () => false) {
   // Requests seen, per `id` query parameter, so a case can ask what reached a server
   const seen = new Map();
+  // For /flood, per id: bytes written so far, and whether the client closed the connection
+  const floods = new Map();
   const record = (id, entry) => {
     if (!id) return;
     if (!seen.has(id)) seen.set(id, []);
@@ -64,6 +66,27 @@ export async function startServers(extra = () => false) {
         return json(res, { origin, method: req.method, body });
       case '/seen':
         return json(res, seen.get(url.searchParams.get('of')) ?? []);
+      case '/flood-progress':
+        return json(res, floods.get(url.searchParams.get('of')) ?? null);
+      case '/flood': {
+        // Up to 64 MB as fast as the client takes it (64 kB chunks, or 1 kB NDJSON lines)
+        const progress = { written: 0, closed: false };
+        floods.set(id, progress);
+        const ndjson = url.searchParams.has('ndjson');
+        const chunk = ndjson ? Buffer.from(`"${'x'.repeat(1021)}"\n`) : Buffer.alloc(64 * 1024, 120);
+        let resume;
+        res.on('close', () => {
+          progress.closed = true;
+          resume?.();
+        });
+        res.on('drain', () => resume?.());
+        res.writeHead(200, { 'content-type': ndjson ? 'application/x-ndjson' : 'application/octet-stream' });
+        while (progress.written < 64 * 1024 * 1024 && !res.destroyed) {
+          progress.written += chunk.length;
+          if (!res.write(chunk)) await new Promise((r) => (resume = r));
+        }
+        return res.end();
+      }
       case '/redirect': {
         // to: a path (same origin) or `other` for the same path on the other origin
         const status = Number(url.searchParams.get('status') ?? 302);
