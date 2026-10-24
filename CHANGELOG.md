@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The WebAssembly module's budget is 187 kB brotli and 590 kB raw (from 183 kB and 580 kB): `maxPendingRequests`, SSE backpressure, `maxLineBytes` and the WebSocket queue limits add about 2.6 kB together (181.1 → 183.7 kB), and the retry budget about 1.9 kB more (185.5 kB), until #93 removes the URL parser's Unicode tables.
 
+### Documentation
+- **Hardened configurations** in the README's Security section: a fixed API with credentials, fetching URLs from users, and streaming APIs. Each turns on the protections that fit and says what it doesn't cover. A test reads each configuration from the README and exercises every protection its comments claim, so the README can't drift from the client (#122).
+
 ## [2.5.2] - 2026-10-24
 
 A security patch: a server can no longer tie up connections, or memory on the native transport, with a long or endless redirect body. Performance: the base-against-head benchmark detected no slowdown. Comparisons against `fetch()` and axios were not rerun, so the comparative results in the README remain tied to the versions they tested.
