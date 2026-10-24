@@ -409,6 +409,13 @@ export interface WebSocketOptions {
     /** Overrides the client's `allowAbsoluteUrls` */
     allowAbsoluteUrls?: boolean;
     /**
+     * Node.js: overrides the client's `allowPrivateNetwork`. With `false`, an IP address that is private or reserved
+     * throws a `NetworkError` from `websocket()`, and a host name is checked on every connection, reconnections
+     * included (a blocked one fails the attempt with "Blocked: …"). Can't be combined with `dispatcher`, and fails
+     * while another undici global dispatcher is installed. Browsers have their own rules.
+     */
+    allowPrivateNetwork?: boolean;
+    /**
      * The most messages `send()` queues while the connection isn't open yet (connecting or reconnecting). One more
      * throws a `NetworkError` whose `maxQueuedMessages` is the limit, and isn't queued. Default: no limit
      */

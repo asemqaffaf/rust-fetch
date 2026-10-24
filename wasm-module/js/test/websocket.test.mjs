@@ -5,6 +5,9 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import dns from 'node:dns';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ProxyAgent } from 'undici';
 import { WasmClient } from '../../pkg/node.js';
 import { rejection, sleep, startServer, startWebSocketServer } from './helpers.mjs';
@@ -338,6 +341,108 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     assert.equal(await greeting, 'hello');
     await sleep(10);
     peers.at(-1).close();
+  });
+
+  describe('allowPrivateNetwork: false (SSRF)', () => {
+    const guarded = (options = {}) => new WasmClient({ allowPrivateNetwork: false, timeoutMs: 2000, ...options });
+    const blocked = (error) => error.kind === 'NetworkError' && /^Network error: Blocked: /.test(error.message);
+
+    // Not on fetch's list of blocked ports (9 is), so connections get as far as DNS
+    const PORT = 59999;
+
+    /** Run `fn` with dns.lookup answering `answer(hostname)` for hosts ending in .test; resolves to the hosts looked up */
+    async function withDns(answer, fn) {
+      const lookup = dns.lookup;
+      const looked = [];
+      dns.lookup = (hostname, options, callback) => {
+        if (!hostname.endsWith('.test')) return lookup(hostname, options, callback);
+        looked.push(hostname);
+        const address = answer(hostname);
+        const family = net.isIP(address);
+        return options?.all ? callback(null, [{ address, family }]) : callback(null, address, family);
+      };
+      try {
+        await fn();
+      } finally {
+        dns.lookup = lookup;
+      }
+      return looked;
+    }
+
+    it('blocks private and reserved IP addresses before connecting', () => {
+      const before = server.handshakes.length;
+      for (const host of ['127.0.0.1', '[::1]', '169.254.169.254', '[::ffff:127.0.0.1]', '[::ffff:a9fe:a9fe]', '10.0.0.1', '0.0.0.0', '[fd00::1]']) {
+        assert.throws(() => guarded().websocket(`ws://${host}:${server.port}/`), blocked, host);
+      }
+      assert.equal(server.handshakes.length, before, 'no handshake reached the server');
+    });
+
+    it('checks host names when connecting, and says why one was blocked', async () => {
+      const before = server.handshakes.length;
+      const socket = guarded().websocket(`ws://localhost:${server.port}/`);
+      const error = await rejection(socket.opened);
+      assert.ok(blocked(error), error.message);
+      assert.match(error.message, /localhost is or resolves to (127\.0\.0\.1|::1)/);
+      assert.equal(server.handshakes.length, before);
+    });
+
+    it('checks every reconnection again (DNS rebinding)', async () => {
+      // public first (it fails some other way: nothing listens there), then private
+      let lookups = 0;
+      const looked = await withDns(() => (lookups++ === 0 ? '1.1.1.1' : '127.0.0.1'), async () => {
+        const errors = [];
+        const socket = guarded({ timeoutMs: 300 }).websocket(`ws://rebind.test:${PORT}/`, {
+          reconnect: { maxRetries: 1, initialDelayMs: 10 },
+          onError: (error) => errors.push(error),
+        });
+        await socket.closed;
+        assert.equal(errors.length, 2);
+        assert.ok(!blocked(errors[0]), `the public address wasn't blocked: ${errors[0].message}`);
+        assert.ok(blocked(errors[1]), `the private address was: ${errors[1].message}`);
+        assert.match(errors[1].message, /rebind\.test is or resolves to 127\.0\.0\.1/);
+      });
+      assert.deepEqual(looked, ['rebind.test', 'rebind.test'], 'each attempt resolved the name');
+    });
+
+    it('lets public addresses through, and can be overridden per connection', async () => {
+      const looked = await withDns(() => '1.1.1.1', async () => {
+        const error = await rejection(guarded({ timeoutMs: 300 }).websocket(`ws://public.test:${PORT}/`).opened);
+        assert.ok(!blocked(error), error.message);
+      });
+      assert.deepEqual(looked, ['public.test'], 'it was resolved and let through');
+      const allowed = guarded().websocket(server.url('/'), { allowPrivateNetwork: true });
+      await allowed.opened;
+      allowed.close();
+      await allowed.closed;
+      assert.throws(() => new WasmClient().websocket(server.url('/'), { allowPrivateNetwork: false }), blocked);
+    });
+
+    it("can't be combined with a dispatcher, and fails closed with another global dispatcher", async () => {
+      assert.throws(
+        () => guarded().websocket('ws://example.com/', { dispatcher: new ProxyAgent('http://127.0.0.1:9') }),
+        (e) => e.kind === 'InvalidInputError' && e.parameter === 'dispatcher',
+      );
+      assert.throws(() => guarded().websocket('ws://example.com/', { allowPrivateNetwork: 'no' }), (e) => e.parameter === 'allowPrivateNetwork');
+      // A ProxyAgent installed as undici's global dispatcher, here after the checked one was made…
+      const key = Symbol.for('undici.globalDispatcher.1');
+      const installed = globalThis[key];
+      globalThis[key] = new ProxyAgent('http://127.0.0.1:9');
+      try {
+        assert.throws(() => guarded().websocket('ws://example.com/'), (e) => e.kind === 'InvalidInputError' && e.parameter === 'allowPrivateNetwork' && /another undici global dispatcher/.test(e.message));
+      } finally {
+        globalThis[key] = installed;
+      }
+      // …and in a fresh process, before any checked connection
+      const script = `import { setGlobalDispatcher, ProxyAgent } from 'undici';
+        const { WasmClient } = await import(${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)});
+        setGlobalDispatcher(new ProxyAgent('http://127.0.0.1:9'));
+        try { new WasmClient({ allowPrivateNetwork: false }).websocket('ws://example.com/'); console.log('connected unchecked'); }
+        catch (e) { console.log(e.kind, e.parameter, e.message); }`;
+      // Node.js 20 needs its flag in the child too
+      const flags = process.execArgv.filter((flag) => flag === '--experimental-websocket');
+      const { stdout } = await promisify(execFile)(process.execPath, [...flags, '--input-type=module', '-e', script], { cwd: new URL('.', import.meta.url) });
+      assert.match(stdout, /^InvalidInputError allowPrivateNetwork .*another undici global dispatcher is installed/);
+    });
   });
 
   it('rejects invalid options and arguments', async () => {

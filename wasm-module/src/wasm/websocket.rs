@@ -80,6 +80,13 @@ export interface WebSocketOptions {
   /** Overrides the client's `allowAbsoluteUrls` */
   allowAbsoluteUrls?: boolean;
   /**
+   * Node.js: overrides the client's `allowPrivateNetwork`. With `false`, an IP address that is private or reserved
+   * throws a `NetworkError` from `websocket()`, and a host name is checked on every connection, reconnections
+   * included (a blocked one fails the attempt with "Blocked: …"). Can't be combined with `dispatcher`, and fails
+   * while another undici global dispatcher is installed. Browsers have their own rules.
+   */
+  allowPrivateNetwork?: boolean;
+  /**
    * The most messages `send()` queues while the connection isn't open yet (connecting or reconnecting). One more
    * throws a `NetworkError` whose `maxQueuedMessages` is the limit, and isn't queued. Default: no limit
    */
@@ -201,6 +208,8 @@ struct Settings {
     timeout: Option<Duration>,
     reconnect: Option<RetryConfig>,
     json: bool,
+    /// Node.js: `allowPrivateNetwork: false`
+    block_private_network: bool,
     max_queued_messages: Option<usize>,
     max_queued_bytes: Option<usize>,
     on_open: Option<js_sys::Function>,
@@ -517,7 +526,24 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
             "must be an undici dispatcher, e.g. a ProxyAgent",
         ));
     }
+    let block_private_network = match prop(options, "allowPrivateNetwork") {
+        Some(value) => !super::parse_bool(&value, "allowPrivateNetwork")?,
+        None => !config.allow_private_network,
+    };
     let protocols: JsValue = if super::transport::is_node() {
+        // allowPrivateNetwork: false connects through a dispatcher that checks
+        // where it connects; another dispatcher couldn't be checked
+        let dispatcher = if block_private_network {
+            if dispatcher.is_some() {
+                return Err(invalid(
+                    "dispatcher",
+                    "can't be combined with allowPrivateNetwork: false, which needs its own dispatcher to check where connections go",
+                ));
+            }
+            Some(super::transport::websocket_guard(&url)?)
+        } else {
+            dispatcher
+        };
         // Node's WebSocket (undici) takes `{ protocols, headers }`
         let mut merged = config.default_headers.clone();
         for (name, values) in headers.iter().flat_map(crate::types::Headers::iter) {
@@ -585,6 +611,7 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         timeout,
         reconnect,
         json,
+        block_private_network: block_private_network && super::transport::is_node(),
         max_queued_messages: limit("maxQueuedMessages")?,
         max_queued_bytes: limit("maxQueuedBytes")?,
         on_open: callback_option(options, "onOpen")?,
@@ -792,15 +819,21 @@ fn dropped(shared: &Rc<Shared>, code: u16, reason: String, was_clean: bool) {
     let state = shared.inner.borrow().state;
     match state {
         State::Closing => finish(shared, code, reason, was_clean, Some(Error::Cancelled)),
-        State::Connecting => failed(
-            shared,
-            Error::Network {
-                message: format!("WebSocket connection to {} failed", shared.settings.url),
+        State::Connecting => {
+            let url = &shared.settings.url;
+            let blocked = shared
+                .settings
+                .block_private_network
+                .then(|| super::transport::websocket_blocked(url))
+                .flatten();
+            let message =
+                blocked.unwrap_or_else(|| format!("WebSocket connection to {url} failed"));
+            let error = Error::Network {
+                message,
                 source: None,
-            },
-            code,
-            reason,
-        ),
+            };
+            failed(shared, error, code, reason);
+        }
         // 1001 going away, 1006 abnormal, 1011 server error, 1012 restart,
         // 1013 try again later, 1014 bad gateway: worth another attempt
         State::Open if matches!(code, 1001 | 1006 | 1011..=1014) => failed(

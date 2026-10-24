@@ -268,6 +268,59 @@ function publicLookup(hostname, options, callback) {
   });
 }
 
+// --- WebSockets with allowPrivateNetwork: false -------------------------------------
+//
+// Node's WebSocket connects through undici, not node:http, so it gets an undici
+// Agent whose connections resolve with publicLookup. undici checks host names
+// when connecting (DNS rebinding can't get past it), but connects to IP
+// addresses directly, so those are checked here.
+const UNDICI_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+const ignore = () => {};
+let checkedWebSocketDispatcher;
+// Why the last connection to each host was blocked: undici reports only a
+// generic error, so the core asks for the reason (websocketGuard.blocked)
+const blockedWebSocketHosts = new Map();
+
+/**
+ * Called by the core for `websocket()` with `allowPrivateNetwork: false`:
+ * throws RUST_FETCH_BLOCKED for a private or reserved IP address, and
+ * RUST_FETCH_UNCHECKED when no checked dispatcher can be made; otherwise
+ * returns the dispatcher to connect with.
+ */
+function websocketGuard(url) {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  if (isPrivateAddress(host)) throw blockedAddress(host, host);
+  // undici isn't importable, but its Agent class is the global dispatcher's,
+  // which Node creates on the first fetch(); a data: URL makes no connection
+  if (!globalThis[UNDICI_DISPATCHER]) fetch('data:,').catch(ignore);
+  const global = globalThis[UNDICI_DISPATCHER];
+  // Checked on every call: replacing a ProxyAgent from setGlobalDispatcher, even
+  // one installed later, would bypass the proxy
+  if (global?.constructor?.name !== 'Agent') {
+    throw coded(new Error("allowPrivateNetwork: false can't check WebSocket connections while another undici global dispatcher is installed"), 'RUST_FETCH_UNCHECKED');
+  }
+  if (!checkedWebSocketDispatcher) {
+    const lookup = (hostname, options, callback) =>
+      publicLookup(hostname, options, (error, ...result) => {
+        if (error?.code === 'RUST_FETCH_BLOCKED') {
+          if (blockedWebSocketHosts.size >= 100) blockedWebSocketHosts.clear();
+          blockedWebSocketHosts.set(hostname, error.message);
+        }
+        callback(error, ...result);
+      });
+    checkedWebSocketDispatcher = new global.constructor({ connect: { lookup } });
+  }
+  return checkedWebSocketDispatcher;
+}
+
+/** Why the last connection to `url`'s host was blocked, once */
+websocketGuard.blocked = (url) => {
+  const host = new URL(url).hostname;
+  const reason = blockedWebSocketHosts.get(host);
+  blockedWebSocketHosts.delete(host);
+  return reason;
+};
+
 // Connections made under the check are pooled apart, so a connection another
 // client made to a private address is never reused for a checked request
 const publicPools = new Map([
@@ -442,7 +495,7 @@ function bodyStream(response, method) {
     .map((e) => e.trim())
     .filter((e) => e && e !== 'identity');
   const decoders = encodings.reverse().map(decoderStream).filter(Boolean);
-  const source = decoders.length ? pipeline(response, ...decoders, () => {}) : response;
+  const source = decoders.length ? pipeline(response, ...decoders, ignore) : response;
   // A queue of several chunks, so the socket isn't paused after each one
   return Readable.toWeb(source, { strategy: new CountQueuingStrategy({ highWaterMark: 16 }) });
 }
@@ -831,6 +884,7 @@ function finishResponse({ status, url, headers, body }, bodyType, manual) {
 }
 
 globalThis[Symbol.for('rust-fetch.transport')] = nodeTransport;
+globalThis[Symbol.for('rust-fetch.websocketGuard')] = websocketGuard;
 
 export { default } from './rust_fetch.js';
 export * from './rust_fetch.js';
