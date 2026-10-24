@@ -317,6 +317,25 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
     });
 
+    /** Two requests from a new process; resolves to the warnings it printed and the response it got */
+    async function warningsInProcess(env) {
+      const script = `import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
+        const c = new WasmClient({ timeoutMs: 5000 });
+        for (let i = 0; i < 2; i++) await c.get(${JSON.stringify(url())}).then(() => console.log('ok'), (e) => console.log(e.kind));`;
+      const { stdout, stderr } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, ...env } });
+      return { responses: stdout.trim().split('\n'), warnings: stderr.split('\n').filter((line) => line.includes('NODE_TLS_REJECT_UNAUTHORIZED')) };
+    }
+
+    it('warns once, as Node does, when NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off', async () => {
+      const off = await warningsInProcess({ NODE_TLS_REJECT_UNAUTHORIZED: '0' });
+      assert.deepEqual(off.responses, ['ok', 'ok'], 'verification is off');
+      assert.equal(off.warnings.length, 1, off.warnings.join('\n'));
+      assert.match(off.warnings[0], /Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification\./);
+      const on = await warningsInProcess({ NODE_TLS_REJECT_UNAUTHORIZED: '' });
+      assert.deepEqual(on.responses, ['NetworkError', 'NetworkError'], 'verification is on');
+      assert.deepEqual(on.warnings, []);
+    });
+
     it('still checks the name of a trusted certificate', async () => {
       const result = await getInProcess({ NODE_EXTRA_CA_CERTS: join(dir, 'example.com.crt') }, url(misnamed));
       assert.deepEqual(result, { error: 'NetworkError' });
