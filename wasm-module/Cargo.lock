@@ -961,6 +961,7 @@ dependencies = [
  "dlmalloc",
  "futures-util",
  "js-sys",
+ "pin-project-lite",
  "reqwest",
  "serde",
  "serde-wasm-bindgen",

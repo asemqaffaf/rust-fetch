@@ -110,25 +110,86 @@ impl Drop for Aborted {
 /// Run a future, failing with [`Error::Cancelled`] if the signal aborts first.
 ///
 /// The future is dropped on abort, which aborts the underlying request
-/// and any pending retry delay.
-pub(crate) async fn abortable<T>(
-    signal: Option<web_sys::AbortSignal>,
-    fut: impl Future<Output = Result<T>>,
-) -> Result<T> {
-    use futures_util::future::{select, Either};
-
-    let Some(signal) = signal else {
-        return fut.await;
-    };
-    // Already aborted: don't start the request at all (polling it first
-    // would send it before the signal is looked at)
-    if signal.aborted() {
-        return Err(Error::Cancelled);
+/// and any pending retry delay. An already-aborted signal fails without
+/// polling it at all, so the request isn't even started.
+pub(crate) fn abortable<F>(signal: Option<web_sys::AbortSignal>, fut: F) -> Abortable<F> {
+    let cancelled = signal.as_ref().is_some_and(web_sys::AbortSignal::aborted);
+    Abortable {
+        fut,
+        aborted: signal.filter(|_| !cancelled).map(Aborted::new),
+        cancelled,
     }
-    let fut = std::pin::pin!(fut);
-    match select(fut, Aborted::new(signal)).await {
-        Either::Left((result, _)) => result,
-        Either::Right(_) => Err(Error::Cancelled),
+}
+
+pin_project_lite::pin_project! {
+    /// See [`abortable`]. A hand-written future rather than an `async fn`:
+    /// the compiler kept two copies of the wrapped future in the `async fn`'s
+    /// state (its argument, then the pinned local), which doubled the memory
+    /// every pending request holds.
+    pub(crate) struct Abortable<F> {
+        #[pin]
+        fut: F,
+        aborted: Option<Aborted>,
+        cancelled: bool,
+    }
+}
+
+impl<T, F: Future<Output = Result<T>>> Future for Abortable<F> {
+    type Output = Result<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<T>> {
+        let this = self.project();
+        if *this.cancelled {
+            return Poll::Ready(Err(Error::Cancelled));
+        }
+        // The work first, as `select` did: a result that's ready wins
+        if let Poll::Ready(result) = this.fut.poll(cx) {
+            return Poll::Ready(result);
+        }
+        let aborted = this
+            .aborted
+            .as_mut()
+            .is_some_and(|aborted| Pin::new(aborted).poll(cx).is_ready());
+        if aborted {
+            *this.cancelled = true;
+            return Poll::Ready(Err(Error::Cancelled));
+        }
+        Poll::Pending
+    }
+}
+
+pin_project_lite::pin_project! {
+    /// A future with a deadline: its output, or `Err(())` once `duration`
+    /// passes first (for `runtime::timeout`)
+    pub(crate) struct Deadline<F> {
+        #[pin]
+        fut: F,
+        delay: Delay,
+    }
+}
+
+impl<F> Deadline<F> {
+    pub(crate) fn new(fut: F, duration: Duration) -> Self {
+        Self {
+            fut,
+            delay: Delay::new(duration),
+        }
+    }
+}
+
+impl<F: Future> Future for Deadline<F> {
+    type Output = std::result::Result<F::Output, ()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        // The work first, as `select` did: a result that's ready wins
+        if let Poll::Ready(output) = this.fut.poll(cx) {
+            return Poll::Ready(Ok(output));
+        }
+        match Pin::new(this.delay).poll(cx) {
+            Poll::Ready(()) => Poll::Ready(Err(())),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
