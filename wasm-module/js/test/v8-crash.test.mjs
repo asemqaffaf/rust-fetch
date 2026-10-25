@@ -27,7 +27,7 @@ server.close();
 
 function run() {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 30_000 });
     let stderr = '';
     child.stderr.on('data', (chunk) => (stderr += chunk));
     child.on('exit', (code, signal) => resolve({ code, signal, stderr }));

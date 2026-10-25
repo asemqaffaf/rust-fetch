@@ -28,4 +28,15 @@ For Server-Sent Events APIs (OpenAI-compatible and others), use `client.events(u
 No. The npm package is used from JavaScript or TypeScript like any other; Rust is only how the core is built. Rust developers can also [use the crate directly](/rust#using-it-from-rust).
 
 **Node.js aborted with "Fatal error in , line 0 # unreachable code". Is that rust-fetch?**
-Probably, on Node.js 20 or 22 with rust-fetch 2.5.2 or earlier. It's a bug in V8 before 13: it could crash the process when it deoptimized `client.get()` during the call into WebAssembly, as bursts of cancelled or timed-out requests did. The process exits with SIGTRAP, and the native stack trace names `Deoptimizer`. 2.6.0 prevents it on Node.js 20 to 23 by turning off the V8 optimization involved ([Limitations](/compatibility#limitations)). On an earlier version, upgrade, or start Node.js with `--no-turbo-inline-js-wasm-calls` (`NODE_OPTIONS=--no-turbo-inline-js-wasm-calls`). Node.js 24 isn't affected.
+Probably, on Node.js 20 or 22 with rust-fetch 2.5.2 or earlier. It's a bug in V8 before 13: it could crash the process when it deoptimized `client.get()` during the call into WebAssembly, as bursts of cancelled or timed-out requests did. The process exits with SIGTRAP, and the native stack trace names `Deoptimizer`. 2.6.0 prevents it on Node.js 20 to 23 by turning off the V8 optimization involved ([Limitations](/compatibility#limitations)). On an earlier version, upgrade, or turn that optimization off yourself:
+
+- on the command line: `node --no-turbo-inline-js-wasm-calls app.js` (Node.js doesn't allow this flag in `NODE_OPTIONS`);
+- or from code that runs before rust-fetch is imported, such as a module preloaded with `NODE_OPTIONS="--import ./no-wasm-inlining.mjs"`:
+
+  ```js
+  // no-wasm-inlining.mjs
+  import v8 from 'node:v8';
+  v8.setFlagsFromString('--no-turbo-inline-js-wasm-calls');
+  ```
+
+Either one stopped the crash on 2.5.2 (none in 30 runs on Node.js 20, against 11 without). Node.js 24 isn't affected.

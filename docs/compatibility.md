@@ -23,7 +23,7 @@
   import { ProxyAgent } from 'undici'; // npm install undici
   const socket = client.websocket('wss://stream.example.com/', { dispatcher: new ProxyAgent(process.env.HTTPS_PROXY) });
   ```
-- **A V8 flag on Node.js 20 to 23:** importing rust-fetch turns off V8's `--turbo-inline-js-wasm-calls` for the process. With it on, V8 before 13 could abort the process ("Fatal error … unreachable code") when it deoptimized `client.get()` during its call into WebAssembly, as bursts of cancelled requests did. Throughput is unchanged; other WebAssembly in the process loses that one optimization too. Node.js 24 and newer are unaffected and keep it. With 2.5.2 and earlier, start Node.js with `--no-turbo-inline-js-wasm-calls` instead ([FAQ](/faq)).
+- **A V8 flag on Node.js 20 to 23:** importing rust-fetch turns off V8's `--turbo-inline-js-wasm-calls` for the process. With it on, V8 before 13 could abort the process ("Fatal error … unreachable code") when it deoptimized `client.get()` during its call into WebAssembly, as bursts of cancelled requests did. Throughput is unchanged; other WebAssembly in the process loses that one optimization too. Node.js 24 and newer are unaffected and keep it. Passing `--turbo-inline-js-wasm-calls` (or `--no-…`) on the command line keeps your choice. With 2.5.2 and earlier, turn it off yourself ([FAQ](/faq)).
 - **Upload progress** in browsers needs `XMLHttpRequest`, which makes cross-origin requests preflighted (see [Upload progress](/guide/uploads#upload-progress)).
 
 ## Upgrading to 2.0
