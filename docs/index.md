@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: rust-fetch
-  text: fetch() plus the policy production code needs
+  text: "<code>fetch()</code> plus the policy production code needs"
   tagline: Timeouts, retries, typed errors, streaming and security limits, from one Rust core that behaves the same in browsers, Web Workers and Node.js.
   actions:
     - theme: brand
