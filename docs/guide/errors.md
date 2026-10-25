@@ -1,0 +1,29 @@
+# Errors
+
+Every rejection is an `Error` whose `name` and `kind` are one of:
+
+| `kind` | When | Extra fields |
+| --- | --- | --- |
+| `HttpError` | Non-2xx response | `status`, `statusText`, `body` (full response body as text) |
+| `TimeoutError` | An attempt exceeded `timeoutMs` | `timeoutMs` |
+| `NetworkError` | DNS, connection, TLS or CORS failure, a body cut off mid-transfer, or a WebSocket that fails to connect or drops | |
+| `CancelledError` | The `signal` was aborted | |
+| `InvalidInputError` | Bad URL, method, header, option or body. Rejected before anything is sent. | `parameter` |
+| `ParseError` | `responseType: 'json'` and the body isn't JSON | |
+| `JsInteropError` | Unexpected JS ↔ Wasm conversion failure | |
+
+```js
+try {
+  await client.get('/users/9');
+} catch (error) {
+  if (error.kind === 'HttpError' && error.status === 404) {
+    // not found
+  } else if (error.kind === 'TimeoutError') {
+    console.warn(`gave up after ${error.timeoutMs} ms`);
+  } else {
+    throw error;
+  }
+}
+```
+
+Long error bodies (such as an HTML error page) are truncated to 200 characters in `message`. `error.body` always has the full text.
