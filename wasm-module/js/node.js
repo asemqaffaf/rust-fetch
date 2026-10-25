@@ -32,7 +32,7 @@ import { initSync } from './rust_fetch.js';
 // either way. Bun reports a V8 version but throws here.
 const wasmInlining = 'turbo-inline-js-wasm-calls';
 // prettier-ignore
-if (Number(process.versions.v8?.split('.')[0]) < 13 && !process.execArgv.join(' ').includes(wasmInlining)) try { v8.setFlagsFromString(`--no-${wasmInlining}`); } catch {}
+if (Number(process.versions.v8?.split('.')[0]) < 13 && !process.execArgv.includes(`--${wasmInlining}`) && !process.execArgv.includes(`--no-${wasmInlining}`)) try { v8.setFlagsFromString(`--no-${wasmInlining}`); } catch {}
 
 initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
 
