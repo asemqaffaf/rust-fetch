@@ -21,8 +21,15 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import { pipeline, Readable, Transform } from 'node:stream';
 import tls from 'node:tls';
+import v8 from 'node:v8';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
+
+// V8 before 13 (Node.js 20 to 23) can abort with "unreachable code" when it
+// deoptimizes code that inlined a call into WebAssembly during that call, as
+// bursts of cancelled requests did. No inlining, no crash, and no measurable
+// cost; the flag applies to the whole process.
+if (Number(process.versions.v8.split('.')[0]) < 13) v8.setFlagsFromString('--no-turbo-inline-js-wasm-calls');
 
 initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
 
