@@ -1,8 +1,6 @@
 # TypeScript
 
-## TypeScript
-
-Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `FetchInit`, `RetryOptions`, `HttpResponse`, `RustFetchError`, `DownloadProgress`, `UploadProgress` and `InterceptedRequest`, for WebSockets `WebSocketConnection`, `WebSocketOptions`, `ReconnectOptions`, `WebSocketCloseInfo`, `WebSocketReconnectInfo`, `WebSocketState` and `WebSocketData`, and for Server-Sent Events `EventStream`, `EventStreamOptions`, `EventStreamState` and `ServerSentEvent`.
+Type definitions ship with the package and need TypeScript 5.2 or newer. Besides `WasmClient`, it exports the option and result types `ClientOptions`, `RequestOptions`, `BrowserRequestOptions`, `FetchInit`, `RetryOptions`, `RetryBudgetOptions`, `HttpResponse`, `RustFetchError`, `RustFetchErrorKind`, `DownloadProgress`, `UploadProgress`, `HeadersLike`, `QueryParams`, `RequestBody`, `ResponseBodyType` and `RedirectMode`, for interceptors `InterceptedRequest`, `RequestInterceptor`, `ResponseFulfilledInterceptor` and `ResponseRejectedInterceptor`, for WebSockets `WebSocketConnection`, `WebSocketOptions`, `ReconnectOptions`, `WebSocketCloseInfo`, `WebSocketReconnectInfo`, `WebSocketState` and `WebSocketData`, and for Server-Sent Events `EventStream`, `EventStreamOptions`, `EventStreamState` and `ServerSentEvent`.
 
 Every request method takes the response body's type as a type parameter, defaulting to `any`:
 

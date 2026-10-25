@@ -1,6 +1,6 @@
 # Client options
 
-The examples in this section use a client like this one:
+The examples in these docs use a client like this one:
 
 ```js
 import { WasmClient } from 'rust-fetch';
@@ -20,6 +20,28 @@ const client = new WasmClient({
   allowAbsoluteUrls: false,               // reject absolute URLs instead of letting them replace baseUrl; see Security. Default: true
 });
 ```
+
+Every client option:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `baseUrl` | none | Relative request URLs resolve under it; see [Making requests](/guide/requests#making-requests) |
+| `headers` | none | Sent with every request; a request header with the same name wins |
+| `timeoutMs` | `30000` | Per attempt, until the last byte of the body; `0` disables it. See [Timeouts](/guide/timeouts-and-retries#timeouts) |
+| `retries` | no retries | A count or `RetryOptions`; see [Retries](/guide/timeouts-and-retries#retries) |
+| `retryBudget` | no budget | `true` or `{ ratio, minPerSecond, windowMs }`: limits retries across the client; see [Retries](/guide/timeouts-and-retries#retries) |
+| `redirect`, `maxRedirects` | `'follow'`, `20` | See [Redirects](/guide/requests#redirects) |
+| `sensitiveHeaders` | none | Your own credential headers (e.g. `X-Api-Key`), dropped on cross-origin redirects like `Authorization` (Node.js); see [Security](/security#security) |
+| `allowInsecureRedirects` | `true` | `false` rejects a redirect from `https:` to `http:` (Node.js); see [Security](/security#security) |
+| `allowAbsoluteUrls` | `true` | `false` rejects absolute URLs; see [Absolute URLs](/security#absolute-urls-and-baseurl) |
+| `allowPrivateNetwork` | `true` | `false` blocks loopback, private, link-local and metadata addresses (Node.js); see [SSRF](/security#fetching-user-supplied-urls-ssrf) |
+| `maxResponseBytes` | no limit | Largest response body, after decompression; see [Size limits](/security#response-size-limits-and-decompression-bombs) |
+| `maxPendingRequests` | no limit | Refuse requests beyond this many unfinished ones; see [Load shedding](/security#limiting-pending-requests-load-shedding) |
+| `maxLineBytes`, `maxEventBytes` | no limit | Longest NDJSON or SSE line, and largest SSE event; see [Limiting line length](/security#limiting-line-length) |
+| `proxy` | none | Node.js; see [Proxies](#proxies) |
+| `credentials`, `mode`, `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity` | as in `fetch()` | Browsers; see [Browser request options](/guide/requests#browser-request-options) |
+
+Most of them can also be set per request; see [Request options](/guide/requests#request-options).
 
 ## Proxies
 

@@ -7,7 +7,7 @@
 | Browsers, Web Workers and service workers | Supported, directly or through bundlers like Vite and webpack; call `init()` first. Tested in CI in Chromium, Firefox and WebKit (Safari's engine), on pages, in dedicated workers and in module service workers. [`fetch()` options](/guide/requests#browser-request-options) such as `credentials` and `cache` are passed through |
 | Node.js 20, 22 and 24 | Supported and tested in CI; Node.js 20 is the minimum |
 | TypeScript | Definitions included; TypeScript 5.2 or newer |
-| Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 22 and 24 |
+| Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 20 (with that flag), 22 and 24 |
 | Rust | The same client as a Rust library ([usage](/rust#using-it-from-rust)), on tokio or in your own wasm crates |
 | Native Node.js transport | In the repository, not yet in the npm package (no prebuilt binaries); build it with `npm run build:native`. Tested in CI on Linux with Node.js 20, 22 and 24, and run on macOS (Apple silicon); not tried on Windows |
 
@@ -16,7 +16,7 @@
 - **Bundle size:** the WebAssembly module adds about 121 KB (brotli) to a browser bundle, plus 10 KB of JS glue.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](/guide/configuration#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
-- **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses or requests with progress callbacks, and the p99 stall once seen in the independent harness no longer reproduces: p99 4.7 ms at a steady 15,000 requests per second (see [Under load](/performance#under-load-all-clients)).
+- **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses, requests with progress callbacks, the `proxy` option or `allowPrivateNetwork: false` (see [Architecture](/architecture#architecture)), and the p99 stall once seen in the independent harness no longer reproduces: p99 4.7 ms at a steady 15,000 requests per second (see [Under load](/performance#under-load-all-clients)).
 - **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent` or the client's `proxy` option; pass an undici `ProxyAgent` as `dispatcher` to connect through a proxy:
 
   ```js

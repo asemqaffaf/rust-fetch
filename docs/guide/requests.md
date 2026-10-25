@@ -31,11 +31,14 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `onUploadProgress` | `({ loaded, total }) => void` | See [Upload progress](/guide/uploads#upload-progress) |
 | `redirect` | `'follow'` \| `'manual'` \| `'error'` | Overrides the client's; see [Redirects](#redirects) |
 | `maxRedirects` | number | Overrides the client's; see [Redirects](#redirects) |
+| `sensitiveHeaders`, `allowInsecureRedirects` | `string[]`, boolean | Override the client's; see [Redirects](#redirects) |
+| `allowAbsoluteUrls`, `allowPrivateNetwork` | boolean | Override the client's; see [Security](/security#security) |
+| `maxResponseBytes`, `maxLineBytes` | number or `null` | Override the client's limit; `null` for none. See [Size limits](/security#response-size-limits-and-decompression-bombs) |
 | `credentials`, `mode`, `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity` | as in `fetch()` | Browsers; see [Browser request options](#browser-request-options) |
 
 ### Browser request options
 
-In browsers, Web Workers and other `fetch()` runtimes (Deno, Bun), the standard `fetch()` options are passed through: set them on the client for every request, or per request, where each one overrides the client's.
+In browsers and Web Workers, the standard `fetch()` options are passed through: set them on the client for every request, or per request, where each one overrides the client's.
 
 ```js
 const api = new WasmClient({ baseUrl: 'https://api.example.com', credentials: 'include' }); // send cookies cross-origin
@@ -57,7 +60,7 @@ They apply to every request, streamed responses and `client.events()`. With uplo
 
 ### Redirects
 
-Redirects (301, 302, 303, 307 and 308) are followed the way `fetch()` follows them: a 303, or a 301 or 302 after `POST`, becomes a `GET` without a body, and `res.url` is the final URL. In Node.js, `Authorization`, `Cookie` and `Proxy-Authorization` headers are dropped when a redirect leaves the origin; browsers apply their own rules.
+Redirects (301, 302, 303, 307 and 308) are followed the way `fetch()` follows them: a 303, or a 301 or 302 after `POST`, becomes a `GET` without a body, and `res.url` is the final URL. In Node.js, `Authorization`, `Cookie` and `Proxy-Authorization` headers are dropped when a redirect leaves the origin, and so are the headers you list in `sensitiveHeaders`; `allowInsecureRedirects: false` refuses a redirect from `https:` to `http:` ([Security](/security#security)). Browsers apply their own rules.
 
 | `redirect` | What happens |
 | --- | --- |

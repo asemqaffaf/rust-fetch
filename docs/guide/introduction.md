@@ -72,7 +72,7 @@ Unless noted, each of these works the same in browsers, Web Workers and Node.js 
 - **Backpressure:** a slow reader of a stream or a `for await` over Server-Sent Events holds the server back instead of buffering everything. [Memory while streaming](/guide/streaming#streaming)
 
 **Real-time**
-- **WebSockets on the same client**: the same base URL, timeouts and typed errors as your requests, plus reconnection with jittered backoff after unexpected drops. Browsers and Node.js 22+. [WebSockets](/guide/websockets#websockets)
+- **WebSockets on the same client**: the same base URL, timeouts and typed errors as your requests, plus reconnection with jittered backoff after unexpected drops. Browsers and Node.js 22+ (Node.js 20 with `--experimental-websocket`). [WebSockets](/guide/websockets#websockets)
 
 **Node.js**
 - **A bounded connection pool**: up to 256 keep-alive connections per origin, so traffic bursts queue and reuse connections instead of exhausting local ports. [Connection pooling](/architecture#connection-pooling)

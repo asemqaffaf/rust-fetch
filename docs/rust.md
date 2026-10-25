@@ -24,4 +24,6 @@ let mut chunks = client.get_streaming("export.csv").await?.into_stream(); // a f
 
 Redirects: `.redirect(Redirect::Manual)` or `Redirect::Error`, and `.max_redirects(n)` (default 20), on the `ClientBuilder` or per request on the `RequestBuilder`.
 
+The security and load options are there too, with the same defaults as in JavaScript: `allow_absolute_urls`, `max_response_bytes`, `sensitive_headers` and `allow_insecure_redirects` (on the `ClientBuilder` and per request), and `retry_budget(RetryBudget::new())` and `max_pending_requests` (on the `ClientBuilder`; `Client::retries_refused()` counts refusals). `maxLineBytes`, `maxEventBytes` and `allowPrivateNetwork` are JavaScript only.
+
 Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (`on_download_progress`) must be `Send + Sync` on native targets. Upload progress, WebSockets and interceptors are only in the JavaScript API.

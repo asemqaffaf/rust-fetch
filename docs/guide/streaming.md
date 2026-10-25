@@ -59,7 +59,7 @@ await feed.opened;
 feed.close();
 ```
 
-Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream. A `for await` loop that falls behind holds the server back: with 64 events waiting, the stream stops reading until the loop has taken half of them, so demand propagates to the server instead of every event piling up in memory. This reduces read-ahead rather than setting a memory ceiling: the socket and stream buffers still fill (in a test, a server offering 20 MB of events wrote about 830 KB during a one-second pause, against 12 MB before). `onEvent` gets each event as it's parsed, so a slow handler should apply its own limit. To bound a single line, see [`maxLineBytes`](/security#limiting-line-length).
+Each event is `{ event, data, id }`: `event` is `'message'` unless the server set one, `data` is the `data:` lines joined with `\n` (or parsed JSON with `messageType: 'json'`), and `id` is the last event ID. Events go to `onEvent` when it's set; otherwise they're buffered for `for await`, and `break` closes the stream. A `for await` loop that falls behind holds the server back: with 64 events waiting, the stream stops reading until the loop has taken half of them, so demand propagates to the server instead of every event piling up in memory. This reduces read-ahead rather than setting a memory ceiling: the socket and stream buffers still fill (in a test, a server offering 20 MB of events wrote about 830 KB during a one-second pause, against 12 MB before). `onEvent` gets each event as it's parsed, so a slow handler should apply its own limit. To bound a single line or event, see [`maxLineBytes` and `maxEventBytes`](/security#limiting-line-length).
 
 | Option | Description |
 | --- | --- |
@@ -67,6 +67,8 @@ Each event is `{ event, data, id }`: `event` is `'message'` unless the server se
 | `reconnect` | Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and waiting the server's `retry:` delay (otherwise backing off like WebSockets). `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }`. Default: on for `GET`, off for other methods, which would resend their body |
 | `messageType` | `'auto'` (default: `data` is a string) or `'json'` |
 | `end` | Close the stream normally when an event's `data` equals this. Default: `'[DONE]'` with `messageType: 'json'` |
+| `maxLineBytes`, `maxEventBytes` | Override the client's limits for this stream; `null` for none. See [Limiting line length](/security#limiting-line-length) |
+| `allowAbsoluteUrls` | Overrides the client's |
 | `signal` | Closes the stream and stops reconnecting when aborted |
 | `onOpen`, `onEvent`, `onError`, `onReconnect`, `onClose` | Callbacks; `onClose` runs once, when the stream is closed for good |
 
