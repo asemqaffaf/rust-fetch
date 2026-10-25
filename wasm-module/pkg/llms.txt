@@ -37,7 +37,7 @@ const client = new WasmClient({
 - `maxLineBytes` (client, per `ndjson` request or `events()` stream; `null` for none): longest line in UTF-8 bytes without its line break, checked before buffering; earlier lines are delivered, then the stream errors with a `NetworkError` carrying `maxLineBytes` and closes (events aren't reconnected); SSE `data:` lines are checked one at a time, not an event's total
 - `maxEventBytes` (client, or per `events()` stream; `null` for none): most bytes of data one SSE event can hold (its `data:` lines joined); checked before buffering; earlier events delivered, then a `NetworkError` carrying `maxEventBytes`, no reconnect
 - `websocket()` `maxQueuedMessages` / `maxQueuedBytes`: limit what `send()` queues before the connection opens or while reconnecting; past either, `send()` throws a `NetworkError` carrying the limit and doesn't queue
-- Hardened configurations (README, Security): a fixed API with credentials (`allowAbsoluteUrls: false`, `redirect: 'error'`, `retryBudget`, `maxPendingRequests`, `maxResponseBytes`), fetching user URLs (`allowPrivateNetwork: false`, `maxRedirects`, limits, no credentials), streaming APIs (`maxLineBytes`, an `AbortSignal` for the whole stream)
+- Hardened configurations ([Security](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations)): a fixed API with credentials (`allowAbsoluteUrls: false`, `redirect: 'error'`, `retryBudget`, `maxPendingRequests`, `maxResponseBytes`), fetching user URLs (`allowPrivateNetwork: false`, `maxRedirects`, limits, no credentials), streaming APIs (`maxLineBytes`, an `AbortSignal` for the whole stream)
 - Redirect credentials: `Authorization`, `Cookie`, `Proxy-Authorization` are always dropped cross-origin (Node.js); `sensitiveHeaders: ['x-api-key']` drops your own too; `allowInsecureRedirects: false` rejects https:→http: redirects (NetworkError); client or per request; not applied in browsers
 - `allowPrivateNetwork: false` (Node.js, client or per request, and per `websocket()`): SSRF protection; blocks loopback/private/link-local/metadata/reserved addresses, checked on resolved addresses at connect time, on every redirect, and on every WebSocket (re)connection; can't be combined with a WebSocket `dispatcher`
 - Node.js proxies (client option): `proxy: 'env'` (`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`; also on with `NODE_USE_ENV_PROXY=1`) or `proxy: 'http://user:pass@host:3128'`; HTTPS via CONNECT tunnels
@@ -114,12 +114,12 @@ Needs a built-in `WebSocket`: browsers and Node.js 22+ (Node.js 20 with `--exper
 
 ## Docs
 
-- [README](https://github.com/asemqaffaf/rust-fetch#readme): full guide, performance results and limitations
+- [Documentation](https://asemqaffaf.github.io/rust-fetch/): full guide, security, performance results and limitations
 - [CHANGELOG](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md): changes per version
 - [Roadmap](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md): planned work
 
 ## Optional
 
-- [Performance](https://github.com/asemqaffaf/rust-fetch#performance): Node.js benchmarks against `fetch()`, `undici.request()` and axios, including an independent benchmark
-- [Using it from Rust](https://github.com/asemqaffaf/rust-fetch#using-it-from-rust): the same client as a Rust crate (no interceptors, upload progress or WebSockets there)
+- [Performance](https://asemqaffaf.github.io/rust-fetch/performance): Node.js benchmarks against `fetch()`, `undici.request()` and axios, including an independent benchmark
+- [Using it from Rust](https://asemqaffaf.github.io/rust-fetch/rust): the same client as a Rust crate (no interceptors, upload progress or WebSockets there)
 - [npm package](https://www.npmjs.com/package/rust-fetch)

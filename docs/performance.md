@@ -9,7 +9,7 @@ These results are about Node.js. In browsers, `fetch()` is the only way to make 
 
 ## The npm package today
 
-rust-fetch as published (2.1.x, `node:http` transport) against Node.js `fetch()`. The independent column is summarized from the [full report below](#independent-benchmark-of-rust-fetch-210); ours from the [all-client tables](#throughput-all-clients):
+The published `node:http` transport against Node.js `fetch()`, as measured with rust-fetch 2.1.x. Later releases haven't been re-run against `fetch()` and axios in these harnesses, except the [2026-10-25 rerun of the p99 stall](#under-load-all-clients); the CI benchmark checks each pull request against the previous version instead. The independent column is summarized from the [full report below](#independent-benchmark-of-rust-fetch-210); ours from the [all-client tables](#throughput-all-clients):
 
 | Workload | Independent benchmark (2.1.0, M4 Pro) | Our measurements (M1 Pro) |
 | --- | --- | --- |

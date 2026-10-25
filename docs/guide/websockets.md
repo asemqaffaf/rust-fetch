@@ -35,6 +35,9 @@ Early Node.js 20 releases (20.11 tested) fail to connect when offered more than 
 | `timeoutMs` | Time allowed for each connection attempt; defaults to the client's `timeoutMs`, `0` disables it |
 | `reconnect` | `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }` (defaults: unlimited, 1000, 30000, 2). Off by default |
 | `messageType` | `'auto'` (default: text as strings, binary as `Uint8Array`) or `'json'` |
+| `maxQueuedMessages`, `maxQueuedBytes` | Limits on what `send()` queues before the connection opens or while it reconnects (see above). Default: no limit |
+| `allowAbsoluteUrls` | Overrides the client's |
+| `allowPrivateNetwork` | Node.js: overrides the client's; see [SSRF](/security#fetching-user-supplied-urls-ssrf) |
 | `signal` | Closes the connection and stops reconnecting when aborted |
 | `onOpen`, `onMessage`, `onError`, `onReconnect`, `onClose` | Callbacks; `onClose` runs once, when the connection is closed for good |
 

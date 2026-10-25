@@ -21,7 +21,7 @@ features:
     details: Every failure rejects with a typed Error (HttpError with the status and body, TimeoutError, NetworkError, CancelledError…), so one catch handles them all.
     link: /guide/errors
   - title: Timeouts and retries done right
-    details: timeoutMs covers each attempt up to the last byte of the body. Retries back off with jitter, honour Retry-After, never repeat a POST unless you allow it, and can share a client-wide retry budget.
+    details: timeoutMs covers each attempt up to the last byte of the body. Retries back off with jitter, honour Retry-After, never repeat a POST or PATCH unless you allow it, and can share a client-wide retry budget.
     link: /guide/timeouts-and-retries
   - title: Safe with servers and URLs you don't control
     details: Block private networks (SSRF, checked on the resolved address, for requests and WebSockets), cap response, line and event sizes, drop credentials on cross-origin redirects, refuse HTTPS downgrades.

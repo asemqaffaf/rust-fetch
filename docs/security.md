@@ -173,7 +173,7 @@ const llm = new WasmClient({
   timeoutMs: 30_000,                  // until the response headers arrive
   maxLineBytes: 1024 * 1024,          // 1 MB per NDJSON line or SSE line
   maxEventBytes: 4 * 1024 * 1024,     // 4 MB per SSE event, however many data: lines it has
-  maxPendingRequests: 64,
+  maxPendingRequests: 64,             // requests on this client; events() streams aren't counted
 });
 const stream = llm.events('/v1/chat/completions', {
   method: 'POST',
