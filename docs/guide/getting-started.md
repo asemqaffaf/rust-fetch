@@ -4,6 +4,8 @@
 npm install rust-fetch
 ```
 
+## Your first request
+
 **Node.js** (20 or newer): the WebAssembly module loads on import.
 
 ```js
@@ -25,7 +27,9 @@ const client = new WasmClient();
 
 `init()` is safe to call more than once, and calling it in Node.js is harmless, so shared code can always call it. Serve the `.wasm` file with `Content-Type: application/wasm`, so the browser compiles it while it downloads, and consider preloading it (see [Startup](/performance#startup)).
 
-**A client set up for production**, with a base URL, timeouts, retries and error handling:
+## Handling errors
+
+A client with a base URL, timeouts and retries. Every failure rejects with a typed error, so one `catch` handles them all:
 
 ```js
 import { WasmClient } from 'rust-fetch';
@@ -48,6 +52,92 @@ try {
   }
 }
 ```
+
+See [Errors](/guide/errors#errors) for every `kind` and its fields.
+
+## A recommended production client
+
+The protections against retry storms, unbounded queues, oversized responses and leaked credentials are off by default, so upgrading never changes behaviour. For a server or app calling an API you know, turn them on:
+
+```js
+import { WasmClient } from 'rust-fetch';
+
+const api = new WasmClient({
+  baseUrl: 'https://api.example.com/v1',
+  timeoutMs: 10_000,                  // per attempt, including the body
+  retries: 2,                         // GET, HEAD, PUT, DELETE…; POST and PATCH aren't retried
+  retryBudget: true,                  // no retry storms when the API struggles
+  maxPendingRequests: 256,            // shed load instead of queuing without bound
+  maxResponseBytes: 10 * 1024 * 1024, // 10 MB, after decompression
+  allowAbsoluteUrls: false,           // a path can't replace the host, so credentials stay with it
+});
+
+// Credentials that change: add them to each request as it starts
+api.addRequestInterceptor(async (request) => {
+  request.headers.authorization = `Bearer ${await getAccessToken()}`;
+});
+```
+
+`getAccessToken()` stands for your own auth code. This is the [fixed API configuration](/security#hardened-configurations) from the security page, with the token in an interceptor instead of a fixed header; that page also has configurations for fetching URLs from users and for streaming APIs.
+
+## Interceptors
+
+Interceptors run code around every request on the client: add headers, unwrap bodies, report failures in one place.
+
+```js
+// Resolve to the body instead of the whole response
+api.addResponseInterceptor((response) => response.body);
+
+// Report failures, then keep rejecting
+api.addResponseInterceptor(undefined, (error) => {
+  console.error('request failed:', error.kind, error.message);
+  throw error;
+});
+
+const user = await api.get('/users/42'); // the body, thanks to the first interceptor
+```
+
+See [Interceptors](/guide/interceptors#interceptors) for their order, how to remove them, and recovering from errors.
+
+## Streaming a response
+
+`client.events()` reads Server-Sent Events, as streaming LLM APIs send them, in browsers and Node.js, with any method, headers and body:
+
+```js
+const stream = api.events('/chat/completions', {
+  method: 'POST',
+  body: { model: 'my-model', messages: [{ role: 'user', content: 'Hello' }], stream: true },
+  messageType: 'json', // parse each event's data; ends at `data: [DONE]`
+});
+for await (const { data } of stream) {
+  console.log(data.choices[0].delta.content ?? '');
+}
+```
+
+For raw bytes, use `responseType: 'stream'`; for newline-delimited JSON, `responseType: 'ndjson'`. See [Streaming and Server-Sent Events](/guide/streaming#streaming).
+
+## Opening a WebSocket
+
+A WebSocket on the same client uses its base URL, timeout and typed errors, and can reconnect after unexpected drops (browsers and Node.js 22+):
+
+```js
+const socket = api.websocket('/live', {   // wss://api.example.com/v1/live
+  messageType: 'json',
+  reconnect: true,                        // 1 s doubling to 30 s, with jitter
+  onMessage: (message) => console.log(message),
+});
+
+await socket.opened;
+socket.sendJson({ type: 'subscribe', channel: 'prices' });
+```
+
+See [WebSockets](/guide/websockets#websockets) for every option, queue limits and close codes.
+
+## Next steps
+
+- [Guide overview](/guide/): every method and the options you'll use most, on one page.
+- [Timeouts, retries and cancellation](/guide/timeouts-and-retries#timeouts-retries-and-cancellation): what each attempt covers, and the retry budget.
+- [Security](/security#security): SSRF protection, size limits and hardened configurations.
 
 > **Release status**
 > - **On npm (2.6.0):** everything in these docs, including the [security options](/security#security) (SSRF protection, response size limits, `allowAbsoluteUrls`), [redirect control](/guide/requests#redirects), [browser `fetch()` options](/guide/requests#browser-request-options), [proxies in Node.js](/guide/configuration#proxies), [Server-Sent Events](/guide/streaming#server-sent-events), newline-delimited JSON, [upload progress](/guide/uploads#upload-progress) and [WebSockets](/guide/websockets#websockets), except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.

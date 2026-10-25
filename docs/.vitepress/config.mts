@@ -40,20 +40,39 @@ export default defineConfig({
         items: [
           { text: 'Introduction', link: '/guide/introduction' },
           { text: 'Getting started', link: '/guide/getting-started' },
+          { text: 'Guide overview', link: '/guide/' },
         ],
       },
       {
         text: 'Guide',
         items: [
-          { text: 'Client options', link: '/guide/configuration' },
-          { text: 'Requests and responses', link: '/guide/requests' },
-          { text: 'Errors', link: '/guide/errors' },
-          { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
-          { text: 'Interceptors', link: '/guide/interceptors' },
-          { text: 'Streaming and Server-Sent Events', link: '/guide/streaming' },
-          { text: 'Uploads', link: '/guide/uploads' },
-          { text: 'WebSockets', link: '/guide/websockets' },
-          { text: 'TypeScript', link: '/guide/typescript' },
+          {
+            text: 'Basics',
+            items: [
+              { text: 'Client options', link: '/guide/configuration' },
+              { text: 'Requests and responses', link: '/guide/requests' },
+              { text: 'Errors', link: '/guide/errors' },
+            ],
+          },
+          {
+            text: 'Reliability',
+            items: [
+              { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
+              { text: 'Interceptors', link: '/guide/interceptors' },
+            ],
+          },
+          {
+            text: 'Streaming and real-time',
+            items: [
+              { text: 'Streaming and Server-Sent Events', link: '/guide/streaming' },
+              { text: 'Uploads', link: '/guide/uploads' },
+              { text: 'WebSockets', link: '/guide/websockets' },
+            ],
+          },
+          {
+            text: 'Tooling',
+            items: [{ text: 'TypeScript', link: '/guide/typescript' }],
+          },
         ],
       },
       {
