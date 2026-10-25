@@ -172,7 +172,7 @@ rust-fetch as published (2.1.x, `node:http` transport) against Node.js `fetch()`
 
 | Workload | Independent benchmark (2.1.0, M4 Pro) | Our measurements (M1 Pro) |
 | --- | --- | --- |
-| Steady 15,000 requests/s | p99 **11.2 ms against 450 ms**; slowest request 64 ms against 1.5 s; **202 MB against 635 MB** of memory (one run) | Independent harness: kept up (14,981/s against 13,026/s); p50 6.3 ms against 449 ms; p99 565 ms against 920 ms; event-loop delay 9.8 ms against 310 ms. Our harness: 12,955/s against 11,557/s, but a worse p99 (1.6 s against 1.2 s) |
+| Steady 15,000 requests/s | p99 **11.2 ms against 450 ms**; slowest request 64 ms against 1.5 s; **202 MB against 635 MB** of memory (one run) | Independent harness: kept up (14,981/s against 13,026/s); p50 6.3 ms against 449 ms; p99 565 ms against 920 ms (565 ms no longer reproduces: 19.6 ms on node:http and 4.7 ms on native in a 2026-10-25 rerun); event-loop delay 9.8 ms against 310 ms. Our harness: 12,955/s against 11,557/s, but a worse p99 (1.6 s against 1.2 s) |
 | 50 to 500 requests in flight | **105% to 116%** throughput at every level | **107% to 114%**, with a lower p99 at every level |
 | Overload (offered 40,000 and 50,000 requests/s) | Found a port-exhaustion bug in 2.1.0, fixed in 2.1.1 | **1.7×** and **1.4×** the requests delivered |
 | 8 MB binary bodies | **115%** (faster in 10 of 10 runs) | **133%** |
@@ -329,7 +329,19 @@ The [aakjp/stress-test](https://github.com/aakjp/stress-test) harness (60 s, six
 
 Event-loop delay is how late the harness's 10 ms scheduler ran: how long your own code would wait behind the HTTP client.
 
-In both harnesses, the native transport sustained approximately the target rate and `fetch()` didn't. In the independent harness, both rust-fetch transports still show a p99 stall of about 565 ms even though the native transport's p95 was 4.8 ms. Its cause hasn't been verified.
+In both harnesses, the native transport sustained approximately the target rate and `fetch()` didn't. In that independent run, both rust-fetch transports showed a p99 of about 565 ms even though the native transport's p95 was 4.8 ms.
+
+**That stall no longer reproduces.** The same harness (commit 2d6db73), the same scenario (a steady 15,000 requests per second for 60 s, six server processes), one machine (Apple silicon, Node.js 22.13), rerun on 2026-10-25:
+
+| rust-fetch | Transport | Delivered | p50 | p95 | p99 | Slowest | Errors |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2.3.0 | node:http | 15,001/s | 5.8 ms | 8.4 ms | 53 ms | 124 ms | 0 |
+| 2.4.0 | node:http | 15,001/s | 5.7 ms | 8.0 ms | 19.7 ms | 100 ms | 0 |
+| 2.5.2 | node:http | 15,001/s | 5.5 ms | 7.8 ms | 19.7 ms | 105 ms | 0 |
+| 2.6.0 | node:http | 15,001/s | 5.4 ms | 7.6 ms | 19.6 ms | 105 ms | 0 |
+| 2.6.0 | native | 15,002/s | 3.4 ms | 4.3 ms | **4.7 ms** | 17 ms | 0 |
+
+Even 2.3.0 no longer shows 565 ms here, so the original cause can't be pinned down with certainty. The drop from 2.3.0 to 2.4.0 matches 2.4.0's changes: at most 1,024 requests handed to a transport at once, and streaming moved onto node:http. Details are in [#16](https://github.com/asemqaffaf/rust-fetch/issues/16).
 
 ### Startup
 
@@ -1105,7 +1117,7 @@ Browsers pool connections for `fetch()`. In Node.js, both transports keep up to 
 - **Bundle size:** the WebAssembly module adds about 129 KB (brotli) to a browser bundle, plus 10 KB of JS glue.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
-- **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses or requests with progress callbacks, and the p99 stall seen in the independent harness is unexplained (see [Under load](#under-load-all-clients)).
+- **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses or requests with progress callbacks, and the p99 stall once seen in the independent harness no longer reproduces: p99 4.7 ms at a steady 15,000 requests per second (see [Under load](#under-load-all-clients)).
 - **WebSockets** use the runtime's own `WebSocket`: built into browsers and Node.js 22 and newer, and into Node.js 20 only with `--experimental-websocket` (without it, `websocket()` throws a `NetworkError`). In Node.js it doesn't go through `http.globalAgent` or the client's `proxy` option; pass an undici `ProxyAgent` as `dispatcher` to connect through a proxy:
 
   ```js
