@@ -64,6 +64,10 @@ export async function startServers(extra = () => false) {
     switch (url.pathname) {
       case '/echo':
         return json(res, { origin, method: req.method, body });
+      case '/v1/target':
+      case '/target':
+        // The request target as it arrived (path and query)
+        return json(res, { target: req.url });
       case '/seen':
         return json(res, seen.get(url.searchParams.get('of')) ?? []);
       case '/flood-progress':

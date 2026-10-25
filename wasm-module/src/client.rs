@@ -327,6 +327,11 @@ impl Client {
         guards: RedirectGuards,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
+        // reqwest takes its own URL type; in WebAssembly the bindings' URLs are
+        // the runtime's (crate::url), and this reqwest path isn't reached from JS
+        #[cfg(target_arch = "wasm32")]
+        let url = reqwest::Url::parse(url.as_str())
+            .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
         self.execute_retrying(config.method, config.timeout, None, || async {
             let raw = self
                 .execute_once(&url, config, stream, progress, limit, guards)
@@ -583,7 +588,7 @@ fn redirect_policy(
 /// With a base URL and `allow` off, an absolute URL is an error: it would
 /// replace the base URL and receive the client's default headers
 pub(crate) fn check_absolute_url(base: Option<&str>, url: &str, allow: bool) -> Result<()> {
-    if allow || base.is_none() || reqwest::Url::parse(url).is_err() {
+    if allow || base.is_none() || crate::url::Url::parse(url).is_err() {
         return Ok(());
     }
     Err(Error::InvalidInput {
@@ -600,20 +605,20 @@ pub(crate) fn check_absolute_url(base: Option<&str>, url: &str, allow: bool) -> 
 /// else resolved against `page` (the browser page URL, when there is one).
 pub(crate) fn resolve_url(
     base: Option<&str>,
-    page: Option<reqwest::Url>,
+    page: Option<crate::url::Url>,
     url: &str,
     query: &[(String, String)],
-) -> Result<reqwest::Url> {
+) -> Result<crate::url::Url> {
     let invalid = |reason: String| Error::InvalidInput {
         parameter: "url".to_string(),
         reason,
     };
 
-    let mut resolved = match (reqwest::Url::parse(url), base, page) {
+    let mut resolved = match (crate::url::Url::parse(url), base, page) {
         (Ok(absolute), _, _) => absolute,
         (Err(_), Some(base), _) => {
             let joined = join_base_url(base, url);
-            reqwest::Url::parse(&joined).map_err(|e| invalid(format!("'{joined}': {e}")))?
+            crate::url::Url::parse(&joined).map_err(|e| invalid(format!("'{joined}': {e}")))?
         }
         (Err(_), None, Some(page)) => page
             .join(url)
@@ -686,7 +691,7 @@ fn join_base_url(base: &str, path: &str) -> String {
 }
 
 /// The current page URL, used to resolve relative URLs in browsers
-pub(crate) fn page_url() -> Option<reqwest::Url> {
+pub(crate) fn page_url() -> Option<crate::url::Url> {
     #[cfg(target_arch = "wasm32")]
     {
         let location = js_sys::Reflect::get(&js_sys::global(), &"location".into()).ok()?;
@@ -696,7 +701,7 @@ pub(crate) fn page_url() -> Option<reqwest::Url> {
         let href = js_sys::Reflect::get(&location, &"href".into())
             .ok()?
             .as_string()?;
-        reqwest::Url::parse(&href).ok()
+        crate::url::Url::parse(&href).ok()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1030,7 +1035,7 @@ impl ClientBuilder {
             });
         }
         if let Some(base) = &self.base_url {
-            let parsed = reqwest::Url::parse(base).map_err(|e| Error::InvalidInput {
+            let parsed = crate::url::Url::parse(base).map_err(|e| Error::InvalidInput {
                 parameter: "baseUrl".to_string(),
                 reason: format!("'{base}' is not a valid absolute URL: {e}"),
             })?;
@@ -1736,7 +1741,7 @@ mod tests {
 
     #[test]
     fn test_resolve_url() {
-        let page = reqwest::Url::parse("https://app.example.com/dashboard/index.html").ok();
+        let page = crate::url::Url::parse("https://app.example.com/dashboard/index.html").ok();
         let none: &[(String, String)] = &[];
 
         let resolve = |base, page, url| resolve_url(base, page, url, none).map(|u| u.to_string());
@@ -1760,6 +1765,15 @@ mod tests {
             resolve(None, page.clone(), "/api/items").unwrap(),
             "https://app.example.com/api/items"
         );
+        // The same results as the runtime's URL in WebAssembly (wasm tests)
+        assert_eq!(
+            resolve(None, None, "https://bücher.example/ä?q=ü").unwrap(),
+            "https://xn--bcher-kva.example/%C3%A4?q=%C3%BC"
+        );
+        assert_eq!(
+            resolve(Some("https://api.com/v1"), None, "//evil.example/x").unwrap(),
+            "https://api.com/v1/evil.example/x"
+        );
 
         let query = [
             ("q".to_string(), "a&b".to_string()),
@@ -1774,7 +1788,7 @@ mod tests {
             (Some("not a base"), None, "users"),
             (
                 None,
-                Some(reqwest::Url::parse("data:text/plain,hi").unwrap()),
+                Some(crate::url::Url::parse("data:text/plain,hi").unwrap()),
                 "x",
             ),
         ] {

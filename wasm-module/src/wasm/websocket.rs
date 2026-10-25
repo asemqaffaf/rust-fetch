@@ -624,7 +624,7 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
 
 /// Resolve like an HTTP request URL, then switch `http(s):` to `ws(s):`
 fn websocket_url(base: Option<&str>, url: &str, params: &[(String, String)]) -> Result<String> {
-    if let Ok(mut absolute) = reqwest::Url::parse(url) {
+    if let Ok(mut absolute) = crate::url::Url::parse(url) {
         if matches!(absolute.scheme(), "ws" | "wss") {
             if !params.is_empty() {
                 absolute.query_pairs_mut().extend_pairs(params);

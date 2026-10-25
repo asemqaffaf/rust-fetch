@@ -12,6 +12,8 @@ pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod url;
+#[cfg(target_arch = "wasm32")]
 mod websocket;
 
 use self::futures::{abortable, AbortableStream};
@@ -1674,7 +1676,7 @@ fn parse_proxy(value: &JsValue) -> Result<String> {
     if proxy == "env" {
         return Ok(proxy);
     }
-    match reqwest::Url::parse(&proxy) {
+    match crate::url::Url::parse(&proxy) {
         Ok(url) if matches!(url.scheme(), "http" | "https") && url.has_host() => Ok(url.into()),
         _ => Err(invalid("proxy", reason)),
     }

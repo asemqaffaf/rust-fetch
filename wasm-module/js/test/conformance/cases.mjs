@@ -450,6 +450,23 @@ export const cases = [
     expect: { items: ['one', 'two'], error: 'NetworkError', maxEventBytes: 100 },
   },
 
+  // --- URLs --------------------------------------------------------------------------
+  {
+    id: 'url-resolution',
+    area: 'URLs',
+    title: 'baseUrl joining, relative paths and query parameters encode the same everywhere',
+    run: `async (rf, ctx) => {
+      const client = new WasmClient({ baseUrl: ctx.a + '/v1' });
+      const target = async (url, params) => (await client.get(url, { params })).body.target;
+      return [
+        await target('target'),
+        await target('/target?x=0', { q: 'a&b c', n: 1, 'ä': 'ü' }),
+        await target(ctx.a + '/target?y=1#fragment'),
+      ];
+    }`,
+    expect: ['/v1/target', '/v1/target?x=0&q=a%26b+c&n=1&%C3%A4=%C3%BC', '/target?y=1'],
+  },
+
   // --- Security ----------------------------------------------------------------------
   {
     id: 'security-base-url',
