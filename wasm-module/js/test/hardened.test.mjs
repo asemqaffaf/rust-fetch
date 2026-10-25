@@ -1,19 +1,19 @@
-// The hardened configurations in README.md ("Hardened configurations"),
-// read from the README itself and checked against local servers: each
+// The hardened configurations in the docs (docs/security.md, "Hardened
+// configurations"), read from that page and checked against local servers: each
 // protection a configuration's comments claim is exercised here, so the
-// README can't drift from what the client does. Run `npm run build` first.
+// documentation can't drift from what the client does. Run `npm run build` first.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { WasmClient } from '../../pkg/node.js';
 import { json, rejection, sleep, startServer } from './helpers.mjs';
 
-const readme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
+const readme = readFileSync(new URL('../../../docs/security.md', import.meta.url), 'utf8');
 
 /** The code block after `<!-- hardened:name -->` */
 function block(name) {
   const match = readme.match(new RegExp(`<!-- hardened:${name} -->\\n\`\`\`js\\n([\\s\\S]*?)\`\`\``));
-  assert.ok(match, `README has a hardened:${name} block`);
+  assert.ok(match, `docs/security.md has a hardened:${name} block`);
   return match[1];
 }
 

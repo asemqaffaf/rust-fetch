@@ -17,14 +17,14 @@ npm test           # Rust unit + integration tests, then the JS tests
 cd wasm-module && wasm-pack test --node   # wasm tests for the JS bindings
 ```
 
-The [README](README.md#development) describes each test suite.
+[Development and benchmarking](https://asemqaffaf.github.io/rust-fetch/development) in the docs describes each test suite.
 
 ## Pull requests
 
 - Branch from `main` (or from `v1.x` for a 1.x fix) and open the PR against that branch.
 - Add tests for every behaviour change. CI fails if line or function coverage of the Rust core (`src/` outside `src/wasm/` and `src/http.rs`) drops below 100%. JS-facing code needs wasm tests (`src/wasm/tests.rs`) or JS tests (`wasm-module/js/test/`).
 - Tests must not use the internet. Use the local test servers in `tests/integration_tests.rs` and `js/test/helpers.mjs`.
-- Update the README for user-visible changes, and add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
+- Update the documentation in [`docs/`](docs) for user-visible changes (and the README, if the overview, quick start or comparison changes), and add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). `cd docs && npm install && npm run dev` previews the site; `npm run build` builds it and checks every link.
 - Run `cargo fmt` on Rust changes.
 
 CI also enforces these gates on every PR:
