@@ -78,6 +78,12 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | Server-Sent Events: types, ids and multi-line data, until [DONE] | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | maxEventBytes: the events before a large one, then a NetworkError | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+## URLs
+
+| Behaviour | node:http | native | fetch() in Node.js | Chromium | Firefox | WebKit |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| baseUrl joining, relative paths and query parameters encode the same everywhere | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
 ## Security
 
 | Behaviour | node:http | native | fetch() in Node.js | Chromium | Firefox | WebKit |

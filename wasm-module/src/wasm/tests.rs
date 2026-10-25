@@ -902,3 +902,108 @@ async fn invalid_progress_callbacks_are_rejected() {
         "onDownloadProgress"
     );
 }
+
+/// The same URL resolution as the native `test_resolve_url`, through the
+/// runtime's `URL` (crate::url in WebAssembly), plus what only it does here
+#[wasm_bindgen_test]
+fn urls_resolve_with_the_runtime_url_as_with_the_url_crate() {
+    use crate::client::resolve_url;
+    use crate::url::Url;
+    let page = Url::parse("https://app.example.com/dashboard/index.html").ok();
+    let none: &[(String, String)] = &[];
+    let resolve = |base, page, url| resolve_url(base, page, url, none).map(|u| u.to_string());
+    let cases = [
+        (None, None, "https://a.com/x", "https://a.com/x"),
+        (
+            Some("https://api.com/v1"),
+            page.clone(),
+            "https://a.com/x",
+            "https://a.com/x",
+        ),
+        (
+            Some("https://api.com/v1"),
+            page.clone(),
+            "users",
+            "https://api.com/v1/users",
+        ),
+        (
+            None,
+            page.clone(),
+            "api/items",
+            "https://app.example.com/dashboard/api/items",
+        ),
+        (
+            None,
+            page.clone(),
+            "/api/items",
+            "https://app.example.com/api/items",
+        ),
+        // International domain names become punycode, as with the url crate
+        (
+            None,
+            None,
+            "https://bücher.example/ä?q=ü",
+            "https://xn--bcher-kva.example/%C3%A4?q=%C3%BC",
+        ),
+        // Paths can't climb out of the base URL's host
+        (
+            Some("https://api.com/v1"),
+            None,
+            "//evil.example/x",
+            "https://api.com/v1/evil.example/x",
+        ),
+    ];
+    for (base, page, url, expected) in cases {
+        assert_eq!(resolve(base, page, url).unwrap(), expected, "{url}");
+    }
+
+    let query = [
+        ("q".to_string(), "a&b c".to_string()),
+        ("n".to_string(), "1".to_string()),
+    ];
+    let url = resolve_url(None, None, "https://a.com/s?x=0", &query).unwrap();
+    assert_eq!(url.as_str(), "https://a.com/s?x=0&q=a%26b+c&n=1");
+
+    for (base, page, url) in [
+        (None, None, "/no/base"),
+        (Some("https://api.com"), None, "ftp://a.com/x"),
+        (Some("not a base"), None, "users"),
+        (None, Some(Url::parse("data:text/plain,hi").unwrap()), "x"),
+    ] {
+        let error = resolve_url(base, page, url, none).expect_err(url);
+        assert!(
+            matches!(error, Error::InvalidInput { ref parameter, .. } if parameter == "url"),
+            "{url}: {error}"
+        );
+    }
+
+    // The rest of the Url API the bindings use
+    let mut ws = Url::parse("https://example.com/live?a=1").unwrap();
+    assert_eq!(ws.scheme(), "https");
+    assert!(ws.has_host());
+    ws.set_scheme("wss").unwrap();
+    assert_eq!(ws.as_str(), "wss://example.com/live?a=1");
+    assert!(
+        ws.set_scheme("mailto").is_err(),
+        "only between special schemes"
+    );
+    assert_eq!(
+        ws.as_str(),
+        "wss://example.com/live?a=1",
+        "unchanged on error"
+    );
+    assert!(!Url::parse("file:///etc/passwd").unwrap().has_host());
+    assert!(Url::parse("not a url").unwrap_err().to_string().len() > 0);
+    assert_eq!(
+        Url::parse("https://a.com/x")
+            .unwrap()
+            .join("../y")
+            .unwrap()
+            .as_str(),
+        "https://a.com/y"
+    );
+    assert_eq!(
+        String::from(Url::parse("https://a.com").unwrap()),
+        "https://a.com/"
+    );
+}

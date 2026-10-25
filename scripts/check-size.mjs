@@ -9,8 +9,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 595_000, gzip: 234_000, brotli: 190_000 }, // 180 kB in 2.4; +2.2 kB for 2.5's security limits, about +7 kB for 2.6's resource and security limits (187.2 kB on CI's Linux build), until #93 drops url/idna
-  'rust_fetch.js': { raw: 70_000, gzip: 11_500, brotli: 10_000 },
+  'rust_fetch_bg.wasm': { raw: 440_000, gzip: 165_000, brotli: 133_000 }, // 129.2 kB since #93 parses URLs with the runtime's URL (188.5 kB with the url crate and its Unicode tables)
+  'rust_fetch.js': { raw: 72_000, gzip: 12_000, brotli: 10_500 }, // the JS glue; #93 added the URL bindings
   'node.js': { raw: 38_000, gzip: 12_500, brotli: 11_000 }, // the Node.js transports, request queue, proxies, SSRF guards (requests and WebSockets) and the native addon's loader (not loaded by browsers)
 };
 

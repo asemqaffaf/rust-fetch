@@ -51,6 +51,7 @@ mod budget;
 mod lines;
 mod runtime;
 mod sse;
+mod url;
 mod wasm;
 
 pub use wasm::WasmClient;

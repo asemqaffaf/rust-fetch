@@ -773,7 +773,7 @@ export interface InitOutput {
     readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___js_sys_6cf4d9cd98c8a011___Function_fn_wasm_bindgen_9d298ef7e71c0d11___JsValue_____wasm_bindgen_9d298ef7e71c0d11___sys__Undefined___js_sys_6cf4d9cd98c8a011___Function_fn_wasm_bindgen_9d298ef7e71c0d11___JsValue_____wasm_bindgen_9d298ef7e71c0d11___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___wasm_bindgen_9d298ef7e71c0d11___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9d298ef7e71c0d11___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___wasm_bindgen_9d298ef7e71c0d11___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_e9a7b01c56fed3da___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_d6c9c4134d6de53a___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
