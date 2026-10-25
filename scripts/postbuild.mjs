@@ -78,7 +78,7 @@ manifest.keywords = [
   'upload-progress', 'download-progress', 'streaming', 'websocket', 'websockets', 'reconnect',
   'typescript', 'nodejs', 'browser', 'isomorphic', 'webassembly', 'wasm', 'rust', 'napi',
 ];
-manifest.homepage = 'https://github.com/asemqaffaf/rust-fetch#readme';
+manifest.homepage = 'https://asemqaffaf.github.io/rust-fetch/';
 manifest.bugs = { url: 'https://github.com/asemqaffaf/rust-fetch/issues' };
 
 writeFileSync(manifestUrl, JSON.stringify(manifest, null, 2) + '\n');

@@ -1,12 +1,12 @@
 [package]
 name = "rust-fetch"
-version = "2.5.2"
+version = "2.6.0"
 edition = "2021"
 authors = ["Asem Qaffaf <asem@qaffaf.com>"]
 license = "MIT OR Apache-2.0"
 description = "Resilient HTTP client for JavaScript, TypeScript and Rust: fetch() with timeouts, retries, typed errors, interceptors, upload and download progress, and WebSockets, from one Rust core compiled to WebAssembly for browsers and Node.js"
 repository = "https://github.com/asemqaffaf/rust-fetch"
-homepage = "https://github.com/asemqaffaf/rust-fetch#readme"
+homepage = "https://asemqaffaf.github.io/rust-fetch/"
 keywords = ["http-client", "fetch", "retry", "wasm", "webassembly"]
 categories = ["wasm", "web-programming", "web-programming::http-client"]
 
