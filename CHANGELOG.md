@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Documentation
+- **A clearer path through the guide.** `/guide/` is now a Guide overview page (it was a 404) with a reading order and every client method and the most-used client and request options on one page. Getting started adds a recommended production client, interceptors, a Server-Sent Events stream and a WebSocket. The performance page opens with a short summary, and the guide's sidebar is grouped into Basics, Reliability, Streaming and real-time, and Tooling.
 - **A review of the documentation site against the code.** The client options page lists all 16 options with their defaults (it had 8, none of 2.6's), and the request, `events()` and `websocket()` option tables gain the per-request and per-stream security and size options. The errors page lists the limit fields a `NetworkError` carries and `retryBudgetExhausted`. Corrected: the conformance count on the architecture page (52, not 47); when the native transport steps aside (also for `proxy` and `allowPrivateNetwork: false`); WebSockets are tested on Node.js 20 too; Deno and Bun were described as `fetch()` runtimes, which they aren't for this package (Bun loads its Node.js entry, and neither is tested); the performance summary now says it was measured with 2.1.x. `llms.txt`, which ships in the package, linked README sections that moved to the site.
 
 ## [2.6.0] - 2026-10-25

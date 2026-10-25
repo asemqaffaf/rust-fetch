@@ -1,11 +1,15 @@
 # Performance
 
-All results are from local servers over loopback, so they compare each client's own overhead, not network performance. Percentages are relative throughput (requests per second), not latency. Two sources:
+**In short**, the npm package against Node's built-in `fetch()`:
 
-- **Our measurements** of the `node:http` transport that the npm package uses and of the native transport (not in the npm package yet), next to Node's `fetch()` and `undici.request()`. Apple M1 Pro, Node.js 22.13.
-- **An [independent benchmark](https://github.com/aakjp/stress-test/blob/main/BENCHMARK.md)** of the published rust-fetch 2.1.0 against `fetch()` and axios. Apple M4 Pro, Node.js 22.15.
+- **Level one request at a time** (100% to 104%), and **ahead with many requests in flight** (102% to 116% since 2.2.0) and with large binary bodies (112% to 133%).
+- **Steadier under sustained load:** at 15,000 requests per second in an independent benchmark, a p99 of 11.2 ms against 450 ms, and 202 MB of memory against 635 MB (one run; in one of our two harnesses its tail was worse).
+- **Behind on concurrent HTTPS** (92%), and in our harness on 0.6 MB JSON (95%).
+- **In browsers**, rust-fetch uses `fetch()`, so it can't be faster than it; the difference is a fraction of a millisecond per request.
 
-These results are about Node.js. In browsers, `fetch()` is the only way to make requests, so rust-fetch uses it and can't be faster than it; the difference is a fraction of a millisecond per request, which matters little once a request crosses a real network.
+The largest gains come from the [native transport](#the-native-transport-not-in-the-npm-package-yet), which isn't in the npm package yet.
+
+**About these numbers.** All results are from local servers over loopback, so they compare each client's own overhead, not network performance. Percentages are relative throughput (requests per second), not latency. There are two sources: **our measurements** (Apple M1 Pro, Node.js 22.13) of both transports next to `fetch()` and `undici.request()`, and an **[independent benchmark](https://github.com/aakjp/stress-test/blob/main/BENCHMARK.md)** of the published 2.1.0 and 2.2.0 against `fetch()` and axios (Apple M4 Pro, Node.js 22.15). See [Reading these results](#reading-these-results) before relying on a number.
 
 ## The npm package today
 
@@ -13,7 +17,7 @@ The published `node:http` transport against Node.js `fetch()`, as measured with 
 
 | Workload | Independent benchmark (2.1.0, M4 Pro) | Our measurements (M1 Pro) |
 | --- | --- | --- |
-| Steady 15,000 requests/s | p99 **11.2 ms against 450 ms**; slowest request 64 ms against 1.5 s; **202 MB against 635 MB** of memory (one run) | Independent harness: kept up (14,981/s against 13,026/s); p50 6.3 ms against 449 ms; p99 565 ms against 920 ms (565 ms no longer reproduces: 19.6 ms on node:http and 4.7 ms on native in a 2026-10-25 rerun); event-loop delay 9.8 ms against 310 ms. Our harness: 12,955/s against 11,557/s, but a worse p99 (1.6 s against 1.2 s) |
+| Steady 15,000 requests/s | p99 **11.2 ms against 450 ms**; slowest request 64 ms against 1.5 s; **202 MB against 635 MB** of memory (one run) | Independent harness: kept up (14,981/s against 13,026/s); p50 6.3 ms against 449 ms; p99 565 ms against 920 ms¹; event-loop delay 9.8 ms against 310 ms. Our harness: 12,955/s against 11,557/s, but a worse p99 (1.6 s against 1.2 s) |
 | 50 to 500 requests in flight | **105% to 116%** throughput at every level | **107% to 114%**, with a lower p99 at every level |
 | Overload (offered 40,000 and 50,000 requests/s) | Found a port-exhaustion bug in 2.1.0, fixed in 2.1.1 | **1.7×** and **1.4×** the requests delivered |
 | 8 MB binary bodies | **115%** (faster in 10 of 10 runs) | **133%** |
@@ -22,7 +26,7 @@ The published `node:http` transport against Node.js `fetch()`, as measured with 
 | Small JSON, 50 at a time | 91% | 105% (500 at a time: 112%) |
 | HTTPS small JSON, 50 at a time | not tested | 92% |
 
-The published client matches `fetch()` one request at a time, is ahead with large binary bodies and many requests in flight, and stays steadier under sustained load in tail latency and memory. It's behind on concurrent HTTPS, and in one of the two 15,000 requests/s harnesses its tail was worse.
+¹ The 565 ms p99 no longer reproduces: 19.6 ms on node:http and 4.7 ms on native in a [2026-10-25 rerun](#under-load-all-clients).
 
 The same independent harness later re-tested **2.2.0** ([below](#independent-benchmark-of-rust-fetch-220)): ahead of `fetch()` in all four throughput workloads (102% to 112%), including 50 requests at a time, where 2.1.0 was at 91%, and at an offered 50,000 requests/s it delivered 1.3 times `fetch()`'s requests with no errors and a third less memory.
 
