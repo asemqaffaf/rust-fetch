@@ -21,8 +21,18 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import { pipeline, Readable, Transform } from 'node:stream';
 import tls from 'node:tls';
+import v8 from 'node:v8';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
+
+// V8 before 13 (Node.js 20 to 23) can abort with "unreachable code" when it
+// deoptimizes code that inlined a call into WebAssembly during that call, as
+// bursts of cancelled requests did. No inlining, no crash, and no measurable
+// cost. It applies to the whole process, unless the command line sets it
+// either way. Bun reports a V8 version but throws here.
+const wasmInlining = 'turbo-inline-js-wasm-calls';
+// prettier-ignore
+if (Number(process.versions.v8?.split('.')[0]) < 13 && !process.execArgv.includes(`--${wasmInlining}`) && !process.execArgv.includes(`--no-${wasmInlining}`)) try { v8.setFlagsFromString(`--no-${wasmInlining}`); } catch {}
 
 initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
 
