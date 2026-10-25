@@ -37,12 +37,11 @@ pub(crate) async fn timeout<T>(
 
     #[cfg(target_arch = "wasm32")]
     {
-        use futures_util::future::{select, Either};
-        let fut = std::pin::pin!(fut);
-        match select(fut, crate::wasm::futures::Delay::new(duration)).await {
-            Either::Left((result, _)) => result,
-            Either::Right(_) => Err(timed_out()),
-        }
+        // A future of its own, not `select` on a pinned local: that kept two
+        // copies of `fut` in this function's state (see `Abortable`)
+        crate::wasm::futures::Deadline::new(fut, duration)
+            .await
+            .unwrap_or_else(|()| Err(timed_out()))
     }
 }
 
