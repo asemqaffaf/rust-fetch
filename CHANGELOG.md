@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-10-29
+
+A maintenance release with no changes to the client's code. The package now includes its contribution guide, code of conduct and security policy, and `llms.txt` links to the documentation site instead of README sections that moved there. The documentation site was reviewed against the code. The native transport, which isn't in the npm package yet, gets a zstd update that fixes three advisories.
+
 ### Security
 - **The native transport's zstd decoder is updated to 0.14 (zstd-safe 8.2.0)**, fixing RUSTSEC-2026-0391 (data from an abandoned stream leaking into the next on a reused context), RUSTSEC-2026-0398 (`Seekable::decompress` setting a `Vec` length beyond its capacity) and RUSTSEC-2026-0403 (uninitialized memory exposed when streaming decompression of a legacy frame fails). They affect the optional native addon only, not the WebAssembly build, the `node:http` transport or browsers. Decompression limits are unchanged (#160).
 
@@ -272,7 +276,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...v2.5.1
