@@ -47,12 +47,15 @@ function run(file, source) {
 }
 
 describe('published package', () => {
-  it('ships exactly the runtime files', () => {
+  it('ships exactly the runtime files and project policies', () => {
     const files = packed.files.map((f) => f.path).sort();
     assert.deepEqual(files, [
+      'CODE_OF_CONDUCT.md',
+      'CONTRIBUTING.md',
       'LICENSE-APACHE',
       'LICENSE-MIT',
       'README.md',
+      'SECURITY.md',
       'llms.txt',
       'node.js',
       'package.json',

@@ -8,6 +8,25 @@ updates:
       rust-dependencies:
         patterns: ["*"]
 
+  - package-ecosystem: cargo
+    directory: /native
+    schedule:
+      interval: weekly
+    groups:
+      native-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directories: ["/", "/docs", "/examples"]
+    schedule:
+      interval: weekly
+    ignore:
+      # This alias tests our minimum supported TypeScript version, not latest.
+      - dependency-name: typescript-5.2
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

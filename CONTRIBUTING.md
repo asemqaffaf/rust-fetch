@@ -2,6 +2,14 @@
 
 Thanks for helping. This guide covers the development setup, what a pull request needs, and how releases are cut.
 
+Everyone participating in the project is expected to follow the [code of conduct](CODE_OF_CONDUCT.md).
+
+## Ways to help
+
+Documentation corrections, minimal bug reproductions, tests, and compatibility reports are welcome alongside code changes. Read the [guide](https://asemqaffaf.github.io/rust-fetch/guide/) and [roadmap](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md) to find an area to work on. For a larger change, open an issue first so we can agree on its scope.
+
+Use the [issue forms](https://github.com/asemqaffaf/rust-fetch/issues/new/choose) for bugs and feature requests. Include the rust-fetch version, runtime, and a reproduction without credentials or private data. Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+
 ## Setup
 
 You need:
@@ -24,7 +32,7 @@ cd wasm-module && wasm-pack test --node   # wasm tests for the JS bindings
 - Branch from `main` (or from `v1.x` for a 1.x fix) and open the PR against that branch.
 - Add tests for every behaviour change. CI fails if line or function coverage of the Rust core (`src/` outside `src/wasm/` and `src/http.rs`) drops below 100%. JS-facing code needs wasm tests (`src/wasm/tests.rs`) or JS tests (`wasm-module/js/test/`).
 - Tests must not use the internet. Use the local test servers in `tests/integration_tests.rs` and `js/test/helpers.mjs`.
-- Update the documentation in [`docs/`](docs) for user-visible changes (and the README, if the overview, quick start or comparison changes), and add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). `cd docs && npm install && npm run dev` previews the site; `npm run build` builds it and checks every link.
+- Update the documentation in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/main/docs) for user-visible changes (and the README, if the overview, quick start or comparison changes), and add an entry under `## [Unreleased]` in [CHANGELOG.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md). `cd docs && npm install && npm run dev` previews the site; `npm run build` builds it and checks every link.
 - Run `cargo fmt` on Rust changes.
 
 CI also enforces these gates on every PR:
@@ -32,6 +40,7 @@ CI also enforces these gates on every PR:
 | Gate | Command | Fails when |
 | --- | --- | --- |
 | Dependency audit | `cd wasm-module && cargo deny check`, and `cargo deny --manifest-path native/Cargo.toml --config wasm-module/deny.toml check` | A dependency has a security advisory, a license not allowed in `deny.toml`, or comes from an unknown source |
+| JavaScript dependency audit | `npm audit --package-lock-only --audit-level=low` in the root, `docs/`, and `examples/` | A locked dependency has a known vulnerability, including development dependencies, or the registry audit cannot complete |
 | Native transport lints | `cd native && cargo fmt --check && cargo clippy --release -- -D warnings` | The native transport isn't formatted or has a clippy warning |
 | Rust API compatibility | `cargo semver-checks --manifest-path wasm-module/Cargo.toml --baseline-rev main` | The Rust API changes in a way the version number doesn't allow |
 | TypeScript API snapshot | `npm run api:check` | The published `.d.ts` differs from `api/rust-fetch.d.ts`. If the change is intended, run `npm run api:update` and commit the snapshot. |
@@ -70,7 +79,7 @@ Fixes that also apply to an older major version are made on `main` first, then c
    git tag -a vX.Y.Z -m "rust-fetch X.Y.Z"
    git push origin vX.Y.Z
    ```
-4. The [release workflow](.github/workflows/release.yml) then:
+4. The [release workflow](https://github.com/asemqaffaf/rust-fetch/blob/main/.github/workflows/release.yml) then:
    - builds and tests the package
    - checks that the tag matches the package version
    - publishes to npm with [provenance](https://docs.npmjs.com/generating-provenance-statements)

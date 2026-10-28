@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a use case and the behavior that would help.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Explain what you are trying to do and any current workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: An API example and alternatives considered are helpful.
+    validations:
+      required: true

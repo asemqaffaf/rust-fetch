@@ -8,8 +8,9 @@ const pkgDir = new URL('wasm-module/pkg/', root);
 copyFileSync(new URL('wasm-module/js/node.js', root), new URL('node.js', pkgDir));
 copyFileSync(new URL('README.md', root), new URL('README.md', pkgDir));
 copyFileSync(new URL('llms.txt', root), new URL('llms.txt', pkgDir));
-for (const license of ['LICENSE-MIT', 'LICENSE-APACHE']) {
-  copyFileSync(new URL(license, root), new URL(license, pkgDir));
+const policies = ['LICENSE-MIT', 'LICENSE-APACHE', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'SECURITY.md'];
+for (const policy of policies) {
+  copyFileSync(new URL(policy, root), new URL(policy, pkgDir));
 }
 rmSync(new URL('.gitignore', pkgDir), { force: true });
 
@@ -56,7 +57,7 @@ writeFileSync(typesUrl, types);
 const manifestUrl = new URL('package.json', pkgDir);
 const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8'));
 
-manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'llms.txt', 'LICENSE-MIT', 'LICENSE-APACHE'];
+manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'llms.txt', ...policies];
 manifest.exports = {
   '.': {
     types: './rust_fetch.d.ts',

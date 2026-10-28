@@ -8,7 +8,15 @@ What the client does for you, each behaviour covered by tests:
 - **Only `http:` and `https:`.** Request URLs, `baseUrl`, and redirect targets with any other scheme (`file:`, `data:`, …) are rejected.
 - **Paths stay under `baseUrl`.** Relative paths, including tricks like `//other.host/x` or `/\other.host`, resolve under the base URL (the class of axios CVE-2024-39338).
 - **Proxy credentials go only to the proxy.** They're sent as `Proxy-Authorization` to the proxy, never to the origin.
-- **No runtime dependencies.** The npm package has none, and every release is published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Rust dependencies are audited in CI (`cargo-deny`: advisories, licenses, sources).
+- **No runtime dependencies.** The npm package has none, and every release is published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Rust dependencies are audited in CI (`cargo-deny`: advisories, licenses, sources). JavaScript lockfiles for development, docs, and examples are audited with `npm audit`, including development dependencies.
+
+## Supply chain review
+
+The npm package includes its WebAssembly module and JavaScript bindings, has no install scripts, and does not download or compile a native addon during installation. The optional native transport is built separately. The contribution guide, code of conduct, and security policy are included in the package.
+
+Network access is expected: requests, redirects, Server-Sent Events, and WebSockets connect to destinations supplied by the application. Browser initialization also fetches the `.wasm` asset unless given bytes or a compiled module. Importing the Node.js entry reads the bundled `.wasm` locally and does not make an outbound request. There is no usage telemetry or update check. The [security policy](https://github.com/asemqaffaf/rust-fetch/blob/main/SECURITY.md#package-contents-and-expected-capabilities) describes file access, optional addon loading, and environment settings too.
+
+Package ratings combine different signals. A capability alert such as network access needs review in the context of an HTTP client, while popularity and community ratings depend on adoption and participation. A rating or an absence of known vulnerabilities does not replace a review of the application's configuration and trust boundaries.
 
 ## Security compared with `fetch()` and axios
 

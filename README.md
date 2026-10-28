@@ -111,4 +111,6 @@ The documentation is in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/
 
 Contributions are welcome. See [CONTRIBUTING.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CONTRIBUTING.md) for the development process and pull request checks, and [SECURITY.md](https://github.com/asemqaffaf/rust-fetch/blob/main/SECURITY.md) to report a vulnerability. Releases are published by CI when a version tag is pushed; see [CONTRIBUTING.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CONTRIBUTING.md#releasing). Planned work is in the [roadmap](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md).
 
+Community participation follows the [code of conduct](https://github.com/asemqaffaf/rust-fetch/blob/main/CODE_OF_CONDUCT.md). Bug reports and feature requests can use the [issue forms](https://github.com/asemqaffaf/rust-fetch/issues/new/choose).
+
 Licensed under either of [MIT](https://github.com/asemqaffaf/rust-fetch/blob/main/LICENSE-MIT) or [Apache-2.0](https://github.com/asemqaffaf/rust-fetch/blob/main/LICENSE-APACHE), at your option.

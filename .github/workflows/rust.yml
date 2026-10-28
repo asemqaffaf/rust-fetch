@@ -91,6 +91,25 @@ jobs:
           manifest-path: wasm-module/Cargo.toml
           baseline-rev: ${{ github.event.pull_request.base.sha }}
 
+  npm-audit:
+    name: JavaScript dependency audit (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [".", "docs", "examples"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      # Audit the committed graph without installing packages or running scripts.
+      - name: Check all locked dependencies for known vulnerabilities
+        working-directory: ${{ matrix.directory }}
+        run: npm audit --package-lock-only --audit-level=low
+
   native:
     name: Native transport (format, lints)
     runs-on: ubuntu-latest

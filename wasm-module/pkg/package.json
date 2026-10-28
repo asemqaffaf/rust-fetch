@@ -19,7 +19,10 @@
     "node.js",
     "llms.txt",
     "LICENSE-MIT",
-    "LICENSE-APACHE"
+    "LICENSE-APACHE",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md"
   ],
   "main": "rust_fetch.js",
   "homepage": "https://asemqaffaf.github.io/rust-fetch/",

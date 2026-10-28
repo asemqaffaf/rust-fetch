@@ -1,0 +1,42 @@
+name: Bug report
+description: Report unexpected behavior with a minimal reproduction.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, use the private security reporting link instead.
+        Remove tokens, credentials, and private data from reproductions and logs.
+  - type: input
+    id: version
+    attributes:
+      label: rust-fetch version
+      placeholder: "2.6.0"
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and operating system
+      description: Include the Node.js, browser, or Rust version and any bundler.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide code or a small public repository and steps to run it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error.kind, status, and relevant logs when available.
+    validations:
+      required: true
