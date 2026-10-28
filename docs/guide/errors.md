@@ -6,6 +6,7 @@ Every rejection is an `Error` whose `name` and `kind` are one of:
 | --- | --- | --- |
 | `HttpError` | Non-2xx response | `status`, `statusText`, `body` (full response body as text) |
 | `TimeoutError` | An attempt exceeded `timeoutMs` | `timeoutMs` |
+| `CircuitOpenError` | Opt-in [circuit breaker](/guide/circuit-breakers) refused the attempt | `origin`, `retryAfterMs` |
 | `NetworkError` | DNS, connection, TLS or CORS failure, a body cut off mid-transfer, a WebSocket that fails to connect or drops, or a limit you set | The limit that was reached, when one was: `maxResponseBytes`, `maxPendingRequests`, `maxLineBytes`, `maxEventBytes`, `maxQueuedMessages` or `maxQueuedBytes` |
 | `CancelledError` | The `signal` was aborted | |
 | `InvalidInputError` | Bad URL, method, header, option or body. Rejected before anything is sent. | `parameter` |

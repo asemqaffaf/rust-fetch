@@ -467,6 +467,27 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.ok(result.gap >= 40, `rate gap ${result.gap}`);
     });
 
+    it('opens per-origin circuits and probes failed and successful recovery', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const changes = [];
+        const c = new WasmClient({ baseUrl: origin, circuitBreaker: { failureThreshold: 1, resetAfterMs: 200 }, onCircuitChange: (e) => changes.push([e.from, e.to]) });
+        const path = `/flaky?id=${crypto.randomUUID()}&failures=2&status=503`;
+        const fail = () => c.get(path).then(() => 'ok', (e) => e.kind);
+        const first = await fail();
+        const blocked = await fail();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const probe = await fail();
+        const blockedAgain = await fail();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const recovered = (await c.get(path)).body.attempts;
+        return { first, blocked, probe, blockedAgain, recovered, changes };
+      });
+      assert.deepEqual(result, {
+        first: 'HttpError', blocked: 'CircuitOpenError', probe: 'HttpError', blockedAgain: 'CircuitOpenError', recovered: 3,
+        changes: [['closed', 'open'], ['open', 'half-open'], ['half-open', 'open'], ['open', 'half-open'], ['half-open', 'closed']],
+      });
+    });
+
     it('streams responses and reports download progress', async () => {
       const result = await inPage(page, async ({ WasmClient }, { origin }) => {
         const client = new WasmClient({ baseUrl: origin });

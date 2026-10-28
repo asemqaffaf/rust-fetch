@@ -252,8 +252,22 @@ impl Error {
         }
     }
 
+    /// Details when an opt-in circuit breaker refused this request.
+    pub fn circuit_open(&self) -> Option<&crate::CircuitOpenError> {
+        match self {
+            Self::Network {
+                source: Some(source),
+                ..
+            } => source.downcast_ref(),
+            _ => None,
+        }
+    }
+
     /// Get the error kind as a string (useful for JS interop)
     pub fn kind(&self) -> &'static str {
+        if self.circuit_open().is_some() {
+            return "CircuitOpenError";
+        }
         match self {
             Error::Network { .. } => "NetworkError",
             Error::Http { .. } => "HttpError",
@@ -267,6 +281,9 @@ impl Error {
 
     /// Check if this is a retryable error
     pub fn is_retryable(&self) -> bool {
+        if self.circuit_open().is_some() {
+            return false;
+        }
         match self {
             Error::Network { .. } => true,
             Error::Timeout { .. } => true,
