@@ -415,7 +415,10 @@ impl Client {
 
         loop {
             let permit = match &gate {
-                Some(gate) => Some(gate.acquire().await),
+                // Keep the optional admission future out of the ordinary
+                // request's inline state: none of its queue/timer state is
+                // needed when limits are disabled.
+                Some(gate) => Some(Box::pin(gate.acquire()).await),
                 None => None,
             };
             if let Some(error) = retry_error.take() {
