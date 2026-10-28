@@ -10,6 +10,6 @@
   },
   "devDependencies": {
     "github-slugger": "2.0.0",
-    "vitepress": "2.0.0-alpha.20"
+    "vitepress": "2.0.0-alpha.21"
   }
 }
