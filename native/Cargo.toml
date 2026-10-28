@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-brotli = "8"
+brotli = "9"
 bytes = "1"
 flate2 = "1"
 futures-util = { version = "0.3", default-features = false }
