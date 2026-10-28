@@ -134,7 +134,8 @@ describe('published package', () => {
          type RequestOptions, type FetchInit, type DownloadProgress, type InterceptedRequest } from 'rust-fetch';
        interface User { id: number; name: string }
        await init();
-       const options: ClientOptions = { baseUrl: 'https://api.example.com', timeoutMs: 1000, retries: { maxRetries: 2, retryOn: [503] } };
+       const options: ClientOptions = { baseUrl: 'https://api.example.com', timeoutMs: 1000, retries: { maxRetries: 2, retryOn: [503] },
+         maxConcurrent: 10, rateLimit: { requests: 100, perMs: 60000 }, limitsPerOrigin: true };
        const client = new WasmClient(options);
        const res: HttpResponse<User> = await client.get('/users/1');
        const name: string = res.body.name;

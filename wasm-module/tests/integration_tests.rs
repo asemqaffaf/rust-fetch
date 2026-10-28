@@ -1410,6 +1410,79 @@ async fn max_pending_requests_refuses_requests_beyond_the_limit() {
     );
 }
 
+#[tokio::test]
+async fn limits_queue_fifo_and_start_attempt_timeouts_after_admission() {
+    let server = TestServer::start(|req, _| {
+        let reply = Reply::new(200, "ok");
+        if req.target == "/first" {
+            reply.delay(Duration::from_millis(100))
+        } else {
+            reply
+        }
+    });
+    let client = Client::builder().max_concurrent(1).build().unwrap();
+    let (first, second) = tokio::join!(
+        client.get(server.url("/first")),
+        client
+            .request(Method::Get, server.url("/second"))
+            .timeout(Duration::from_millis(40))
+            .send()
+    );
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(
+        server
+            .requests()
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/first", "/second"]
+    );
+}
+
+#[tokio::test]
+async fn a_429_pauses_the_rate_bucket_and_retries_reenter_it() {
+    let server = TestServer::start(|_, i| {
+        if i == 0 {
+            Reply::new(429, "wait").header("retry-after", "1")
+        } else {
+            Reply::new(200, "ok")
+        }
+    });
+    let client = Client::builder()
+        .rate_limit(rust_fetch::RateLimit::new(10, Duration::from_millis(100)))
+        .retry_config(fast_retries(1))
+        .build()
+        .unwrap();
+    let start = Instant::now();
+    assert_eq!(client.get(server.url("/")).await.unwrap().status, 200);
+    assert!(start.elapsed() >= Duration::from_millis(900));
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn per_origin_limits_keep_stream_slots_until_the_body_is_dropped() {
+    let slow = TestServer::start(|_, _| {
+        Reply::raw(vec![
+            (
+                Duration::ZERO,
+                "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\na",
+            ),
+            (Duration::from_millis(300), "b"),
+        ])
+    });
+    let fast = TestServer::start(|_, _| Reply::new(200, "fast"));
+    let client = Client::builder()
+        .max_concurrent(1)
+        .limits_per_origin(true)
+        .build()
+        .unwrap();
+    let held = client.get_streaming(slow.url("/")).await.unwrap();
+    assert_eq!(client.get(fast.url("/")).await.unwrap().status, 200);
+    drop(held);
+    assert_eq!(client.get(slow.url("/")).await.unwrap().status, 200);
+}
+
 #[test]
 fn max_pending_requests_must_be_at_least_one() {
     let error = Client::builder()

@@ -442,6 +442,31 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result.disabled, 'HttpError');
     });
 
+    it('queues requests under concurrency/rate limits and releases streams on cancellation', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const c = new WasmClient({ baseUrl: origin, maxConcurrent: 1 });
+        const held = await c.get('/stream', { responseType: 'stream' });
+        let settled = false;
+        const controller = new AbortController();
+        const cancelled = c.get('/echo', { signal: controller.signal }).catch((e) => e.kind);
+        const queued = c.get('/echo', { timeoutMs: 100 }).then((r) => { settled = true; return r.status; });
+        controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const wasQueued = !settled;
+        await held.body.cancel();
+        const status = await queued;
+        const rate = new WasmClient({ baseUrl: origin, rateLimit: { requests: 1, perMs: 70 } });
+        await rate.get('/echo');
+        const start = performance.now();
+        await rate.get('/echo');
+        return { wasQueued, status, cancelled: await cancelled, gap: performance.now() - start };
+      });
+      assert.equal(result.wasQueued, true);
+      assert.equal(result.status, 200);
+      assert.equal(result.cancelled, 'CancelledError');
+      assert.ok(result.gap >= 40, `rate gap ${result.gap}`);
+    });
+
     it('streams responses and reports download progress', async () => {
       const result = await inPage(page, async ({ WasmClient }, { origin }) => {
         const client = new WasmClient({ baseUrl: origin });

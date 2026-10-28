@@ -753,6 +753,92 @@ describe('retries', () => {
   });
 });
 
+describe('client load limits', () => {
+  it('queues attempts FIFO within maxConcurrent and cancels queued calls without sending', async () => {
+    let active = 0;
+    let peak = 0;
+    const s = await startServer(async (req, res) => {
+      peak = Math.max(peak, ++active);
+      await sleep(40);
+      --active;
+      json(res, { path: req.url });
+    });
+    try {
+      const c = new WasmClient({ maxConcurrent: 1 });
+      const controller = new AbortController();
+      const first = c.get(s.url('/first'));
+      const cancelled = rejection(c.get(s.url('/cancelled'), { signal: controller.signal }));
+      const third = c.get(s.url('/third'));
+      controller.abort();
+      assert.equal((await cancelled).kind, 'CancelledError');
+      await Promise.all([first, third]);
+      assert.equal(peak, 1);
+      assert.deepEqual(s.requests.map((r) => r.url), ['/first', '/third']);
+      // A short per-attempt timer does not expire in the admission queue.
+      const held = c.get(s.url('/held'));
+      const queued = c.get(server.url('/echo'), { timeoutMs: 30 });
+      await held;
+      assert.equal((await queued).status, 200);
+    } finally { await s.close(); }
+  });
+
+  it('refills a token bucket and makes retries re-enter FIFO admission', async () => {
+    const times = [];
+    const s = await startServer((req, res, ctx) => {
+      times.push(Date.now());
+      if (ctx.count === 0) { res.writeHead(503); res.end('busy'); }
+      else json(res, { ok: true });
+    });
+    try {
+      const c = new WasmClient({ rateLimit: { requests: 1, perMs: 100 }, retries: { maxRetries: 1, initialDelayMs: 0 } });
+      await Promise.all([c.get(s.url('/first')), c.get(s.url('/second'))]);
+      assert.equal(times.length, 3);
+      assert.ok(times[1] - times[0] >= 75);
+      assert.ok(times[2] - times[1] >= 75);
+      assert.deepEqual(s.requests.map((r) => r.url), ['/first', '/second', '/first']);
+    } finally { await s.close(); }
+  });
+
+  it('pauses future attempts after 429 Retry-After even when retries are disabled', async () => {
+    const s = await startServer((req, res, ctx) => {
+      if (ctx.count === 0) { res.writeHead(429, { 'retry-after': '1' }); res.end('slow down'); }
+      else json(res, { ok: true });
+    });
+    try {
+      const c = new WasmClient({ rateLimit: { requests: 10, perMs: 100 } });
+      await rejection(c.get(s.url()));
+      const started = Date.now();
+      await c.get(s.url());
+      assert.ok(Date.now() - started >= 850);
+    } finally { await s.close(); }
+  });
+
+  it('holds concurrency for streamed bodies until cancelled or fully read', async () => {
+    const c = new WasmClient({ maxConcurrent: 1 });
+    const first = await c.get(server.url('/stream'), { responseType: 'stream' });
+    let settled = false;
+    const second = c.get(server.url('/echo')).then((r) => { settled = true; return r; });
+    await sleep(40);
+    assert.equal(settled, false);
+    await first.body.cancel();
+    assert.equal((await second).status, 200);
+    const third = await c.get(server.url('/stream'), { responseType: 'stream' });
+    await new Response(third.body).text();
+    assert.equal((await c.get(server.url('/echo'))).status, 200);
+  });
+
+  it('can isolate limits by origin and validates options', async () => {
+    const c = new WasmClient({ maxConcurrent: 1, limitsPerOrigin: true });
+    const held = await c.get(server.url('/stream'), { responseType: 'stream' });
+    const other = await startServer((req, res) => json(res, { ok: true }));
+    try { assert.equal((await c.get(other.url())).status, 200); }
+    finally { await held.body.cancel(); await other.close(); }
+    for (const options of [{ maxConcurrent: 0 }, { maxConcurrent: 1.5 }, { rateLimit: {} }, { rateLimit: { requests: 0, perMs: 1 } }, { rateLimit: { requests: 1, perMs: 0 } }, { limitsPerOrigin: 'yes' }]) {
+      assert.throws(() => new WasmClient(options), (e) => e.kind === 'InvalidInputError');
+    }
+  });
+});
+
 describe('idempotency keys', () => {
   const retries = { maxRetries: 1, initialDelayMs: 0 };
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

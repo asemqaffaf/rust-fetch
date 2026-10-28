@@ -37,6 +37,7 @@ Every client option:
 | `allowAbsoluteUrls` | `true` | `false` rejects absolute URLs; see [Absolute URLs](/security#absolute-urls-and-baseurl) |
 | `allowPrivateNetwork` | `true` | `false` blocks loopback, private, link-local and metadata addresses (Node.js); see [SSRF](/security#fetching-user-supplied-urls-ssrf) |
 | `maxResponseBytes` | no limit | Largest response body, after decompression; see [Size limits](/security#response-size-limits-and-decompression-bombs) |
+| `maxConcurrent`, `rateLimit`, `limitsPerOrigin` | off, off, `false` | Limit attempts in flight and their rate, globally or per origin; see [Load limits](/guide/load-limits) |
 | `maxPendingRequests` | no limit | Refuse requests beyond this many unfinished ones; see [Load shedding](/security#limiting-pending-requests-load-shedding) |
 | `maxLineBytes`, `maxEventBytes` | no limit | Longest NDJSON or SSE line, and largest SSE event; see [Limiting line length](/security#limiting-line-length) |
 | `proxy` | none | Node.js; see [Proxies](#proxies) |

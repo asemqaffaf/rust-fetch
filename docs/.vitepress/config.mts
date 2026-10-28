@@ -71,6 +71,7 @@ export default defineConfig({
             text: 'Reliability',
             items: [
               { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
+              { text: 'Concurrency and rate limits', link: '/guide/load-limits' },
               { text: 'Interceptors', link: '/guide/interceptors' },
             ],
           },
