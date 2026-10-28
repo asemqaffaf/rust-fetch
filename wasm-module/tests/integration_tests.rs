@@ -365,6 +365,34 @@ async fn retries_retryable_status_then_succeeds() {
 }
 
 #[tokio::test]
+async fn per_request_retries_replace_client_policy_without_changing_it() {
+    let server = TestServer::start(|_, _| Reply::new(503, "busy"));
+    let client = Client::builder()
+        .retry_config(fast_retries(2))
+        .build()
+        .unwrap();
+    let get = || client.request(Method::Get, server.url("/"));
+
+    assert!(get().no_retries().send().await.is_err());
+    assert_eq!(server.requests().len(), 1);
+    assert!(get().retry_config(fast_retries(1)).send().await.is_err());
+    assert_eq!(server.requests().len(), 3);
+    assert!(get().send().await.is_err());
+    assert_eq!(server.requests().len(), 6);
+
+    // A request can enable retries on a client whose default is none, also
+    // when returning an unread body rather than a buffered response.
+    assert!(Client::new()
+        .unwrap()
+        .request(Method::Get, server.url("/"))
+        .retry_config(fast_retries(1))
+        .send_streaming()
+        .await
+        .is_err());
+    assert_eq!(server.requests().len(), 8);
+}
+
+#[tokio::test]
 async fn gives_up_after_max_retries() {
     let server = TestServer::start(|_, _| Reply::new(502, "bad gateway"));
     let client = Client::builder()

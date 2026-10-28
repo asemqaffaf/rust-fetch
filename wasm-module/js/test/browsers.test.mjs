@@ -92,8 +92,8 @@ function handler(cors) {
         const id = url.searchParams.get('id');
         const n = (attempts.get(id) ?? 0) + 1;
         attempts.set(id, n);
-        if (n === 1) {
-          res.writeHead(429, { ...headers, 'retry-after': '0', 'content-type': 'text/plain' });
+        if (n <= Number(url.searchParams.get('failures') ?? 1)) {
+          res.writeHead(Number(url.searchParams.get('status') ?? 429), { ...headers, 'retry-after': '0', 'content-type': 'text/plain' });
           return res.end('slow down');
         }
         res.writeHead(200, { ...headers, 'content-type': 'application/json' });
@@ -384,6 +384,35 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.deepEqual(result.timeout, { kind: 'TimeoutError', timeoutMs: 200 });
       assert.deepEqual(result.retried, { attempts: 2 }); // Retry-After: 0 overrode the 5 s backoff
       assert.equal(result.cancelled, 'CancelledError');
+    });
+
+    it('replaces retry policies per request, including streaming, uploads and SSE', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const c = new WasmClient({ baseUrl: origin, retries: { maxRetries: 1, initialDelayMs: 0 } });
+        const path = () => `/flaky?id=${crypto.randomUUID()}`;
+        const disabledPath = path();
+        const disabled = await c.get(disabledPath, { retries: 0 }).catch((e) => e.kind);
+        const afterDisabled = (await c.get(disabledPath)).body.attempts;
+        const inherited = (await c.get(path())).body.attempts;
+        const enabled = (await new WasmClient({ baseUrl: origin }).get(path(), { retries: 1 })).body.attempts;
+        const custom = new WasmClient({ baseUrl: origin, retries: { maxRetries: 0, retryOn: [409], retryNonIdempotent: true } });
+        const defaults = (await custom.get(`${path()}&failures=3`, { retries: {} })).body.attempts;
+        const post = await custom.post(path(), { body: 'x', retries: {} }).catch((e) => e.kind);
+        const upload = (await custom.post(path(), {
+          body: 'x', onUploadProgress() {}, retries: { maxRetries: 1, retryNonIdempotent: true },
+        })).body.attempts;
+        const stream = await custom.get(path(), { responseType: 'stream', retries: 1 });
+        const streamed = (await new Response(stream.body).json()).attempts;
+        const events = c.events('/status?code=503', { retries: 0, reconnect: false });
+        const sse = await events.opened.catch((e) => e.kind);
+        await events.closed;
+        const invalid = await c.get(path(), { retries: -1 }).catch((e) => [e.kind, e.parameter]);
+        return { disabled, afterDisabled, inherited, enabled, defaults, post, upload, streamed, sse, invalid };
+      });
+      assert.deepEqual(result, {
+        disabled: 'HttpError', afterDisabled: 2, inherited: 2, enabled: 2, defaults: 4,
+        post: 'HttpError', upload: 2, streamed: 2, sse: 'HttpError', invalid: ['InvalidInputError', 'retries'],
+      });
     });
 
     it('streams responses and reports download progress', async () => {

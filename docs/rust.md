@@ -22,6 +22,8 @@ client.post("upload").multipart(&form).send().await?;
 let mut chunks = client.get_streaming("export.csv").await?.into_stream(); // a futures::Stream of Vec<u8>
 ```
 
+Per-request retries: `.retry_config(RetryConfig { … })` replaces the client's policy; `.no_retries()` disables retries for that request, including streamed responses.
+
 Redirects: `.redirect(Redirect::Manual)` or `Redirect::Error`, and `.max_redirects(n)` (default 20), on the `ClientBuilder` or per request on the `RequestBuilder`.
 
 The security and load options are there too, with the same defaults as in JavaScript: `allow_absolute_urls`, `max_response_bytes`, `sensitive_headers` and `allow_insecure_redirects` (on the `ClientBuilder` and per request), and `retry_budget(RetryBudget::new())` and `max_pending_requests` (on the `ClientBuilder`; `Client::retries_refused()` counts refusals). `maxLineBytes`, `maxEventBytes` and `allowPrivateNetwork` are JavaScript only.

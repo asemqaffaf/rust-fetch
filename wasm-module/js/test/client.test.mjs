@@ -606,6 +606,65 @@ describe('timeouts', () => {
 });
 
 describe('retries', () => {
+  it('replaces the client policy per request and leaves the default unchanged', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
+    try {
+      const c = new WasmClient({ retries: { maxRetries: 2, initialDelayMs: 0 } });
+      for (const [options, total] of [
+        [{ retries: 0 }, 1],
+        [{ retries: { maxRetries: 1, initialDelayMs: 0 } }, 3],
+        [{ retries: undefined }, 6],
+        [{ retries: null }, 9],
+      ]) {
+        assert.equal((await rejection(c.get(s.url(), options))).status, 503);
+        assert.equal(s.requests.length, total);
+      }
+      assert.equal((await rejection(new WasmClient().get(s.url(), { retries: 1 }))).status, 503);
+      assert.equal(s.requests.length, 11);
+    } finally { await s.close(); }
+  });
+
+  it('uses standard defaults for omitted fields, without merging the client policy', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
+    try {
+      const c = new WasmClient({ retries: { maxRetries: 0, retryOn: [409], retryNonIdempotent: true } });
+      // Both the retry count and statuses come from the standard defaults.
+      assert.equal((await rejection(c.get(s.url(), { retries: { initialDelayMs: 0 } }))).status, 503);
+      assert.equal(s.requests.length, 4);
+      assert.equal((await rejection(c.post(s.url(), { body: 'x', retries: { initialDelayMs: 0 } }))).status, 503);
+      assert.equal(s.requests.length, 5, 'non-idempotent retries also reset to the standard default');
+      assert.equal((await rejection(c.post(s.url(), { body: 'x', retries: { maxRetries: 1, initialDelayMs: 0, retryNonIdempotent: true } }))).status, 503);
+      assert.equal(s.requests.length, 7);
+    } finally { await s.close(); }
+  });
+
+  it('applies overrides to streamed responses and progress requests, within the shared retry budget', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
+    try {
+      const c = new WasmClient({ retries: 0, retryBudget: { ratio: 0, minPerSecond: 0.1 } });
+      const retries = { maxRetries: 1, initialDelayMs: 0 };
+      const first = await rejection(c.get(s.url(), { responseType: 'stream', retries }));
+      assert.equal(first.retryBudgetExhausted, undefined);
+      assert.equal(s.requests.length, 2);
+      const second = await rejection(c.get(s.url(), { onDownloadProgress() {}, retries }));
+      assert.equal(second.retryBudgetExhausted, true);
+      assert.equal(c.retriesRefused, 1);
+      assert.equal(s.requests.length, 3);
+    } finally { await s.close(); }
+  });
+
+  it('validates per-request retry options before sending', async () => {
+    const s = await startServer((req, res) => res.end());
+    try {
+      for (const [retries, parameter] of [[-1, 'retries'], ['yes', 'retries'], [{ maxRetries: 1.5 }, 'retries.maxRetries'], [{ retryOn: [99] }, 'retries.retryOn'], [{ retryNonIdempotent: 1 }, 'retries.retryNonIdempotent']]) {
+        const error = await rejection(new WasmClient().get(s.url(), { retries }));
+        assert.equal(error.kind, 'InvalidInputError');
+        assert.equal(error.parameter, parameter);
+      }
+      assert.equal(s.requests.length, 0);
+    } finally { await s.close(); }
+  });
+
   const flaky = async (failures, status = 503, extraHeaders = {}) =>
     startServer((req, res, ctx) => {
       if (ctx.count < failures) {
