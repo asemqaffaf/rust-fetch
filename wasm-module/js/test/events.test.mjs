@@ -262,14 +262,23 @@ describe('events', () => {
   it('an iterator that reads slowly holds the server back instead of buffering every event', async () => {
     const stream = new WasmClient().events(server.url('/v1/flood'));
     let read = 0;
+    let paused, later;
     for await (const event of stream) {
       assert.equal(event.data.length, 1016);
-      if (++read === 1) await sleep(1000);
+      if (++read === 1) {
+        await sleep(500);
+        paused = flood.written;
+        await sleep(500);
+        later = flood.written;
+      }
       if (read === 2) break;
     }
-    // Without backpressure, all 20 MB arrives (and is queued) within that second; with it,
-    // the server stops once the socket and stream buffers are full (about 830 events on macOS)
-    assert.ok(flood.written < 5000, `the server wrote ${flood.written} of ${FLOOD_EVENTS} events`);
+    // Without backpressure, the server keeps writing while the loop is paused and the events are
+    // queued; with it, the server stops once the socket and stream buffers are full. How much fits
+    // depends on the OS (about 830 events on macOS, over 5,000 on Linux, which autotunes loopback
+    // buffers), so this checks that writing stopped, not where
+    assert.ok(paused < FLOOD_EVENTS, `the server wrote all ${FLOOD_EVENTS} events`);
+    assert.ok(later - paused < 100, `the server wrote ${later - paused} more events while the loop was paused (${later} of ${FLOOD_EVENTS})`);
     for (let i = 0; i < 100 && !flood.closed; i++) await sleep(10);
     assert.ok(flood.closed, 'break closed the connection');
   });
