@@ -16,9 +16,11 @@ Dates aren't promised; the order is.
 | [2.3.0](#230-streaming-apis) | Streaming APIs: SSE, NDJSON | Released |
 | [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
-| [2.6.0](#260-webrtc-signaling-performance-and-the-native-transport-on-npm) | WebRTC signaling (WHIP/WHEP), the open performance work, and the native transport on npm (needs a one-time npm setup) | Next |
-| [2.7.0](#270-resilience-and-observability) | Resilience and observability | Planned |
+| [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
+| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Next |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
+| [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
+| [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
 
 ## 2.2.0: upload progress, WebSockets, typed responses
 
@@ -73,9 +75,36 @@ Dates aren't promised; the order is.
 | SSRF protection: `allowPrivateNetwork: false` checks resolved addresses at connect time | [#78](https://github.com/asemqaffaf/rust-fetch/issues/78) |
 | Security regression tests per vulnerability class, and `npm run security:compare` against `fetch()` and axios | [#103](https://github.com/asemqaffaf/rust-fetch/pull/103) |
 
-## 2.6.0: WebRTC signaling, performance, and the native transport on npm
+## 2.6.0: security and resource safety on every transport
 
-*Goal: set up WebRTC sessions with the standard HTTP signaling protocols, WHIP (RFC 9725) and WHEP, with the client's timeouts, retries and typed errors. Tracked in [#30](https://github.com/asemqaffaf/rust-fetch/issues/30).*
+*Released 2026-10-25* ([release notes](https://github.com/asemqaffaf/rust-fetch/releases/tag/v2.6.0)). Moved ahead of WebRTC signaling and the native transport on npm, which now have their own sections below.
+
+| | |
+| --- | --- |
+| Transport conformance suite: 52 behaviours on every transport | [#109](https://github.com/asemqaffaf/rust-fetch/issues/109) |
+| Credential-safe redirects: `sensitiveHeaders` and `allowInsecureRedirects` | [#115](https://github.com/asemqaffaf/rust-fetch/issues/115) |
+| SSRF protection for `websocket()` | [#116](https://github.com/asemqaffaf/rust-fetch/issues/116) |
+| Load shedding and a retry budget: `maxPendingRequests` and `retryBudget` | [#117](https://github.com/asemqaffaf/rust-fetch/issues/117) |
+| Native transport warns when TLS verification is turned off | [#118](https://github.com/asemqaffaf/rust-fetch/issues/118) |
+| Bounded queues: `maxLineBytes`, `maxEventBytes`, WebSocket send limits and SSE backpressure | [#121](https://github.com/asemqaffaf/rust-fetch/issues/121) |
+| Hardened configurations, documented and tested | [#122](https://github.com/asemqaffaf/rust-fetch/issues/122) |
+| The packed tarball checked and benchmarked before publishing; pinned CI inputs | [#123](https://github.com/asemqaffaf/rust-fetch/issues/123) |
+| Real-browser CI in Chromium, Firefox and WebKit | [#19](https://github.com/asemqaffaf/rust-fetch/issues/19) |
+| No more Node.js 20/22 aborts under bursts of cancelled requests | [#148](https://github.com/asemqaffaf/rust-fetch/issues/148) |
+
+Performance carried over from 2.4.0:
+
+| | |
+| --- | --- |
+| The intermittent p99 stall of the `node:http` transport at a steady 15,000 requests/s (no longer reproduces: 19.6 ms p99) | [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) |
+| Native transport memory under overload at or below `node:http`'s | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
+| Parse URLs with the runtime's `URL` on wasm32, dropping `url`, `idna` and ICU from the bundle (31% smaller) | [#93](https://github.com/asemqaffaf/rust-fetch/issues/93) |
+| Bounded streaming, with fewer copies for streamed bodies (about 30% faster) | [#110](https://github.com/asemqaffaf/rust-fetch/issues/110), [#111](https://github.com/asemqaffaf/rust-fetch/issues/111) |
+| 45% less WebAssembly memory per pending request | [#140](https://github.com/asemqaffaf/rust-fetch/issues/140) |
+
+## WebRTC signaling
+
+*Goal: set up WebRTC sessions with the standard HTTP signaling protocols, WHIP (RFC 9725) and WHEP, with the client's timeouts, retries and typed errors. Tracked in [#30](https://github.com/asemqaffaf/rust-fetch/issues/30) and the [WebRTC signaling](https://github.com/asemqaffaf/rust-fetch/milestone/10) milestone.*
 
 | | |
 | --- | --- |
@@ -84,15 +113,9 @@ Dates aren't promised; the order is.
 | Trickle ICE and ICE restarts | [#33](https://github.com/asemqaffaf/rust-fetch/issues/33) |
 | Local WHIP/WHEP test server and real-browser WebRTC tests | [#34](https://github.com/asemqaffaf/rust-fetch/issues/34) |
 
-Performance carried over from 2.4.0:
+## The native transport on npm
 
-| | |
-| --- | --- |
-| The intermittent p99 stall of the `node:http` transport at a steady 15,000 requests/s (now rarer and smaller) | [#16](https://github.com/asemqaffaf/rust-fetch/issues/16) |
-| Native transport memory under overload at or below `node:http`'s | [#18](https://github.com/asemqaffaf/rust-fetch/issues/18) |
-| Parse URLs with the runtime's `URL` on wasm32, dropping `url`, `idna` and ICU from the bundle | [#93](https://github.com/asemqaffaf/rust-fetch/issues/93) |
-
-The native transport on npm. *Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step.*
+*Goal: `npm install rust-fetch` gets the native transport, with its measured gains (up to 1.95× `fetch()`'s throughput under concurrency), on every supported platform, with no build step. Tracked in the [Native transport delivery](https://github.com/asemqaffaf/rust-fetch/milestone/9) milestone.*
 
 | | |
 | --- | --- |
@@ -116,6 +139,10 @@ The native transport on npm. *Goal: `npm install rust-fetch` gets the native tra
 | Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) |
 | Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) |
 | Separate connect, response and idle timeouts | [#79](https://github.com/asemqaffaf/rust-fetch/issues/79) |
+| Streaming request bodies (`ReadableStream` uploads) | [#112](https://github.com/asemqaffaf/rust-fetch/issues/112) |
+| Connection-pool and latency metrics | [#113](https://github.com/asemqaffaf/rust-fetch/issues/113) |
+| Security requirements audited and enforced on every adapter | [#119](https://github.com/asemqaffaf/rust-fetch/issues/119) |
+| Reliability: a fault-injection suite, a comparison with other clients, and the gaps it finds | [#157](https://github.com/asemqaffaf/rust-fetch/issues/157) |
 
 ## 2.8.0: data and developer experience
 
@@ -138,6 +165,7 @@ The native transport on npm. *Goal: `npm install rust-fetch` gets the native tra
 | Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) |
 | The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) |
 | `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) |
+| When to use `websocket()` and when to use Socket.IO | [#152](https://github.com/asemqaffaf/rust-fetch/issues/152) |
 
 ## Exploring
 
@@ -152,6 +180,10 @@ Ideas we're evaluating; each issue ends with a recommendation before any code.
 | HTTP/2 in the Node.js transports | [#25](https://github.com/asemqaffaf/rust-fetch/issues/25) |
 | Node.js cookie jar | [#50](https://github.com/asemqaffaf/rust-fetch/issues/50) |
 | Resumable downloads and uploads | [#51](https://github.com/asemqaffaf/rust-fetch/issues/51) |
+| WebSocket performance: benchmark `websocket()`, then speed up connect, reconnect and messages | [#156](https://github.com/asemqaffaf/rust-fetch/issues/156) |
+| WebSocket acknowledgements: request/response over `websocket()` | [#153](https://github.com/asemqaffaf/rust-fetch/issues/153) |
+| WebSocket channels: client-side rooms with re-subscribe on reconnect | [#154](https://github.com/asemqaffaf/rust-fetch/issues/154) |
+| A Socket.IO-compatible client and a long-polling fallback | [#155](https://github.com/asemqaffaf/rust-fetch/issues/155) |
 
 ## Suggesting changes
 
