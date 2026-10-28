@@ -28,6 +28,21 @@ new WasmClient({
 - `InvalidInputError`, `ParseError` and unlisted statuses are never retried.
 - When every attempt fails, the request rejects with the last attempt's error.
 
+Set `retries` per request to replace the client's policy for that call:
+
+```js
+const client = new WasmClient({ retries: 3 });
+await client.get('/search', { params: { q: 'rust' }, retries: 0 });
+await client.post('/sync', {
+  body: { cursor: 42 },
+  retries: { maxRetries: 5, retryNonIdempotent: true },
+});
+```
+
+`0` disables retries. Omitting `retries` (or passing `undefined` or `null`) uses the client's policy. An object replaces the whole policy: omitted fields take the standard defaults above, so `{ maxRetries: 1 }` does not inherit a client's custom `retryOn` or `retryNonIdempotent`. It applies to buffered responses, streamed responses, progress requests and `events()` connection attempts. For `events()`, `reconnect` separately controls opening another connection after a failed connection or an ended stream; `retries: 0` does not disable reconnection. Per-request retries still use the client's shared retry budget.
+
+In Rust, use `RequestBuilder::retry_config(RetryConfig { … })` to replace the policy, or `RequestBuilder::no_retries()` to disable retries for one request.
+
 **Retry budget.** When an upstream fails, every request in flight retries at once, which multiplies the load on a service that's already struggling (a retry storm). `retryBudget` limits retries across the client, the gRPC and Finagle way:
 
 ```js

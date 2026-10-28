@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Per-request retry policies** (`retries` in `RequestOptions` and `EventStreamOptions`): a retry count or `RetryOptions` object replaces the client's policy for one call, including streamed responses, progress requests and SSE connection attempts. `0` disables retries; omitted object fields use standard defaults, rather than merging client values. `null`/`undefined` inherit the client policy. The client's retry budget still applies, and SSE `reconnect` remains independent. Rust: `RequestBuilder::retry_config()` and `RequestBuilder::no_retries()`.
+
 ### Documentation
 - **Documentation by version.** The site has a version menu: the latest release, and 2.5 at [/v2.5/](https://asemqaffaf.github.io/rust-fetch/v2.5/). 2.5 had no documentation site, so its page is the README as published with 2.5.2, with a notice linking to the latest version. Search covers the latest version only.
 

@@ -48,6 +48,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   params?: QueryParams;
   /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
   timeoutMs?: number;
+  /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
+  retries?: number | RetryOptions;
   /**
    * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
    * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).
@@ -360,6 +362,9 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
     }
     if let Some(timeout) = prop(&options, "timeoutMs") {
         super::parse_timeout(&timeout)?;
+    }
+    if let Some(retries) = prop(&options, "retries") {
+        super::parse_retries(&retries)?;
     }
     if let Some(signal) = prop(&options, "signal") {
         if !js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) {

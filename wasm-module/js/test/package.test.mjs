@@ -151,11 +151,14 @@ describe('published package', () => {
        const socket = client.websocket('/live', { reconnect: true, messageType: 'json', onMessage: (m: unknown) => m });
        const state: 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed' = socket.state;
        await client.post('/upload', { body: new Blob(['x']), onUploadProgress: ({ loaded, total }) => loaded / total });
-       const requestOptions: RequestOptions = { params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),
+       const requestOptions: RequestOptions = { retries: 0, params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),
          onDownloadProgress: (p: DownloadProgress) => p.loaded };
-       const init2: FetchInit = { method: 'POST', body: new FormData() };
+       const init2: FetchInit = { retries: { maxRetries: 1, retryNonIdempotent: true }, method: 'POST', body: new FormData() };
        await client.fetch('/upload', init2);
        await client.get('/x', requestOptions);
+       client.events('/events', { retries: { maxRetries: 1 }, reconnect: false }).close();
+       // @ts-expect-error retries must be a count or RetryOptions
+       await client.get('/x', { retries: true });
        client.addRequestInterceptor((r: InterceptedRequest) => { r.headers.authorization = name; });
        client.addResponseInterceptor((r) => r, async (e: RustFetchError) => { throw e; });
        await fetch_json('https://example.com');`,
