@@ -127,6 +127,30 @@ function collector(count) {
 }
 
 describe('events', () => {
+  it('overrides connection retries independently of reconnection', async () => {
+    const c = new WasmClient({ baseUrl: server.url('/v1'), retries: { maxRetries: 2, initialDelayMs: 0 } });
+    const disabled = c.events('/status?code=503&id=retry-disabled', { retries: 0, reconnect: false });
+    assert.equal((await rejection(disabled.opened)).status, 503);
+    await disabled.closed;
+    assert.equal(connections.get('retry-disabled').length, 1);
+
+    const enabled = new WasmClient().events(server.url('/v1/status?code=503&id=retry-enabled'), {
+      retries: { maxRetries: 1, initialDelayMs: 0 }, reconnect: false,
+    });
+    assert.equal((await rejection(enabled.opened)).status, 503);
+    await enabled.closed;
+    assert.equal(connections.get('retry-enabled').length, 2);
+
+    const reconnected = c.events('/status?code=503&id=retry-reconnected', {
+      retries: 0, reconnect: { maxRetries: 1, initialDelayMs: 0 },
+    });
+    assert.equal((await rejection(reconnected.opened)).status, 503);
+    await reconnected.closed;
+    assert.equal(connections.get('retry-reconnected').length, 2, 'disabling connection retries still permits reconnection');
+
+    assert.throws(() => c.events('/feed', { retries: -1 }), (e) => e.kind === 'InvalidInputError' && e.parameter === 'retries');
+  });
+
   it('parses events and sends the event-stream headers, client headers and interceptors', async () => {
     const c = client({ headers: { 'x-client': '1' } });
     c.addRequestInterceptor((request) => {

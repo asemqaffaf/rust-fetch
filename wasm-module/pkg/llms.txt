@@ -57,7 +57,7 @@ Every failure rejects with an `Error` whose `kind` (and `name`) is one of:
 - `ParseError`: `responseType: 'json'` and the body isn't JSON
 - `JsInteropError`: unexpected JS/Wasm conversion failure
 
-Retries are off by default. When on, POST and PATCH aren't retried unless `retryNonIdempotent: true`; `Retry-After` (seconds) is honoured; only `retryOn` statuses (default 408, 429, 500, 502, 503, 504), network errors and timeouts are retried. A request that fails every attempt rejects with the last attempt's error.
+Retries are off by default. Per-request `retries` (also in `events()`) replaces the client policy: `0` disables; omitted fields in an object use standard defaults; `null`/`undefined` inherit. The client's shared retry budget still applies; SSE `reconnect` is separate. When on, POST and PATCH aren't retried unless `retryNonIdempotent: true`; `Retry-After` (seconds) is honoured; only `retryOn` statuses (default 408, 429, 500, 502, 503, 504), network errors and timeouts are retried. A request that fails every attempt rejects with the last attempt's error.
 
 ## Interceptors
 

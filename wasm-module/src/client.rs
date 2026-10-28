@@ -262,6 +262,7 @@ impl Client {
             url: url.as_ref().to_string(),
             query: Vec::new(),
             progress: None,
+            retry_config: None,
             redirect,
             max_redirects,
             allow_absolute_urls: self.config.allow_absolute_urls,
@@ -313,7 +314,7 @@ impl Client {
         Ok(self.inner.clone())
     }
 
-    /// Execute a request, retrying according to the client's retry configuration.
+    /// Execute a request with its retry policy, falling back to the client's.
     ///
     /// With `stream`, a successful response's body is left unread.
     async fn execute(
@@ -325,6 +326,7 @@ impl Client {
         progress: Option<&ProgressFn>,
         limit: Option<u64>,
         guards: RedirectGuards,
+        retry: Option<&RetryConfig>,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         // reqwest takes its own URL type; in WebAssembly the bindings' URLs are
@@ -332,7 +334,7 @@ impl Client {
         #[cfg(target_arch = "wasm32")]
         let url = reqwest::Url::parse(url.as_str())
             .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
-        self.execute_retrying(config.method, config.timeout, None, || async {
+        self.execute_retrying(config.method, config.timeout, retry, None, || async {
             let raw = self
                 .execute_once(&url, config, stream, progress, limit, guards)
                 .await?;
@@ -362,6 +364,7 @@ impl Client {
         &self,
         method: Method,
         timeout: Option<Duration>,
+        retry: Option<&RetryConfig>,
         refused: Option<&AtomicBool>,
         mut send: F,
     ) -> Result<T>
@@ -382,6 +385,7 @@ impl Client {
             }
             Err(error)
         };
+        let retry = retry.or(self.config.retry_config.as_ref());
         let mut attempt = 0;
 
         loop {
@@ -397,7 +401,7 @@ impl Client {
                 Err(error) => (error, None),
             };
 
-            match self.retry_delay(attempt, method, &error, retry_after) {
+            match Self::retry_delay(retry, attempt, method, &error, retry_after) {
                 Some(delay) => {
                     if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
                         return refuse(error);
@@ -436,13 +440,13 @@ impl Client {
 
     /// Decide whether a failed attempt should be retried, and after how long
     fn retry_delay(
-        &self,
+        retry: Option<&RetryConfig>,
         attempt: u32,
         method: Method,
         error: &Error,
         retry_after: Option<Duration>,
     ) -> Option<Duration> {
-        let retry = self.config.retry_config.as_ref()?;
+        let retry = retry?;
         if attempt >= retry.max_retries {
             return None;
         }
@@ -1099,6 +1103,8 @@ pub struct RequestBuilder {
     url: String,
     query: Vec<(String, String)>,
     progress: Option<ProgressFn>,
+    /// None inherits the client policy; a zero-retry config disables it.
+    retry_config: Option<RetryConfig>,
     redirect: Redirect,
     max_redirects: u32,
     allow_absolute_urls: bool,
@@ -1150,10 +1156,25 @@ impl RequestBuilder {
             .execute_retrying(
                 self.config.method,
                 timeout,
+                self.retry_config.as_ref(),
                 self.retry_refused.as_deref(),
                 || request.send(),
             )
             .await
+    }
+
+    /// Replace the client's retry policy for this request.
+    pub fn retry_config(mut self, config: RetryConfig) -> Self {
+        self.retry_config = Some(config);
+        self
+    }
+
+    /// Disable retries for this request, regardless of the client's policy.
+    pub fn no_retries(self) -> Self {
+        self.retry_config(RetryConfig {
+            max_retries: 0,
+            ..RetryConfig::default()
+        })
     }
 
     /// Set a request header, replacing any default value for that header
@@ -1337,6 +1358,7 @@ impl RequestBuilder {
                 self.progress.as_ref(),
                 self.max_response_bytes,
                 self.redirect_guards(),
+                self.retry_config.as_ref(),
             )
             .await?;
         let content_type = raw.headers.get_first("content-type").unwrap_or("");
@@ -1374,6 +1396,7 @@ impl RequestBuilder {
             .execute_retrying(
                 self.config.method,
                 self.config.timeout,
+                self.retry_config.as_ref(),
                 self.retry_refused.as_deref(),
                 || request.send(),
             )
@@ -1411,6 +1434,7 @@ impl RequestBuilder {
                 None,
                 self.max_response_bytes,
                 self.redirect_guards(),
+                self.retry_config.as_ref(),
             )
             .await?;
         Ok(StreamingResponse {
@@ -1476,7 +1500,7 @@ mod tests {
             ))
         };
         let error = client
-            .execute_retrying(Method::Get, None, Some(&refused), failed)
+            .execute_retrying(Method::Get, None, None, Some(&refused), failed)
             .await
             .unwrap_err();
         assert!(matches!(error, Error::Http { status: 503, .. }));
@@ -1630,10 +1654,6 @@ mod tests {
             message: String::new(),
             source: None,
         }
-    }
-
-    fn client_with_retries(config: RetryConfig) -> Client {
-        Client::builder().retry_config(config).build().unwrap()
     }
 
     fn no_jitter_config() -> RetryConfig {
@@ -1799,7 +1819,7 @@ mod tests {
 
     #[test]
     fn test_retry_delay_policy() {
-        let client = client_with_retries(no_jitter_config());
+        let retry = Some(&no_jitter_config());
         let get = Method::Get;
 
         // Retryable errors on idempotent methods
@@ -1809,65 +1829,66 @@ mod tests {
             http_error(503),
             http_error(429),
         ] {
-            let delay = client.retry_delay(0, get, &error, None).unwrap();
+            let delay = Client::retry_delay(retry, 0, get, &error, None).unwrap();
             assert!((50..=100).contains(&delay.as_millis()));
         }
 
         // Not retryable: other statuses, non-transport errors, POST, exhausted retries
-        assert!(client.retry_delay(0, get, &http_error(501), None).is_none());
-        assert!(client.retry_delay(0, get, &http_error(404), None).is_none());
-        assert!(client
-            .retry_delay(0, get, &Error::Cancelled, None)
-            .is_none());
-        assert!(client
-            .retry_delay(
-                0,
-                get,
-                &Error::InvalidInput {
-                    parameter: String::new(),
-                    reason: String::new()
-                },
-                None
-            )
-            .is_none());
-        assert!(client
-            .retry_delay(0, Method::Post, &http_error(503), None)
-            .is_none());
-        assert!(client
-            .retry_delay(0, Method::Patch, &network_error(), None)
-            .is_none());
-        assert!(client.retry_delay(3, get, &http_error(503), None).is_none());
+        assert!(Client::retry_delay(retry, 0, get, &http_error(501), None).is_none());
+        assert!(Client::retry_delay(retry, 0, get, &http_error(404), None).is_none());
+        assert!(Client::retry_delay(retry, 0, get, &Error::Cancelled, None).is_none());
+        assert!(Client::retry_delay(
+            retry,
+            0,
+            get,
+            &Error::InvalidInput {
+                parameter: String::new(),
+                reason: String::new()
+            },
+            None
+        )
+        .is_none());
+        assert!(Client::retry_delay(retry, 0, Method::Post, &http_error(503), None).is_none());
+        assert!(Client::retry_delay(retry, 0, Method::Patch, &network_error(), None).is_none());
+        assert!(Client::retry_delay(retry, 3, get, &http_error(503), None).is_none());
 
         // Retry-After wins over backoff, capped at max_delay
         assert_eq!(
-            client.retry_delay(0, get, &http_error(429), Some(Duration::from_millis(700))),
+            Client::retry_delay(
+                retry,
+                0,
+                get,
+                &http_error(429),
+                Some(Duration::from_millis(700))
+            ),
             Some(Duration::from_millis(700))
         );
         assert_eq!(
-            client.retry_delay(0, get, &http_error(429), Some(Duration::from_secs(60))),
+            Client::retry_delay(
+                retry,
+                0,
+                get,
+                &http_error(429),
+                Some(Duration::from_secs(60))
+            ),
             Some(Duration::from_secs(1))
         );
 
         // Flags turn individual causes off, and non-idempotent retries on
-        let client = client_with_retries(RetryConfig {
+        let retry = Some(&RetryConfig {
             retry_on_network_error: false,
             retry_on_timeout: false,
             retry_non_idempotent: true,
             ..no_jitter_config()
         });
-        assert!(client.retry_delay(0, get, &network_error(), None).is_none());
-        assert!(client
-            .retry_delay(0, get, &Error::Timeout { duration_ms: 1 }, None)
-            .is_none());
-        assert!(client
-            .retry_delay(0, Method::Post, &http_error(503), None)
-            .is_some());
+        assert!(Client::retry_delay(retry, 0, get, &network_error(), None).is_none());
+        assert!(
+            Client::retry_delay(retry, 0, get, &Error::Timeout { duration_ms: 1 }, None).is_none()
+        );
+        assert!(Client::retry_delay(retry, 0, Method::Post, &http_error(503), None).is_some());
 
         // No retry configuration at all
-        assert!(Client::new()
-            .unwrap()
-            .retry_delay(0, get, &http_error(503), None)
-            .is_none());
+        assert!(Client::retry_delay(None, 0, get, &http_error(503), None).is_none());
     }
 
     #[test]

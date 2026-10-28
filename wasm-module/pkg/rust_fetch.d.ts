@@ -207,6 +207,12 @@ export interface RequestOptions extends BrowserRequestOptions {
     params?: QueryParams;
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
     timeoutMs?: number;
+    /**
+     * Replaces the client's retry policy for this request (also for `events()` connection attempts).
+     * `0` disables retries. Omitted object fields use the standard defaults, not the client's values.
+     * The client's shared `retryBudget` still applies. Separate from `events()`'s `reconnect`.
+     */
+    retries?: number | RetryOptions;
     responseType?: ResponseBodyType;
     /** Overrides the client's `redirect` */
     redirect?: RedirectMode;
@@ -334,6 +340,8 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     params?: QueryParams;
     /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
     timeoutMs?: number;
+    /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
+    retries?: number | RetryOptions;
     /**
      * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
      * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).

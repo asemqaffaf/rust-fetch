@@ -25,6 +25,7 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `headers` | object, `Headers`, `Map` or `[name, value][]` | Override client headers with the same name. Numbers and booleans are converted to strings. |
 | `params` | object or `URLSearchParams` | Appended to the query string. Arrays repeat the key; `null`/`undefined` are skipped. |
 | `timeoutMs` | number | Overrides the client timeout; `0` disables it |
+| `retries` | number or `RetryOptions` | Replaces the client's retry policy; `0` disables retries. Omitted object fields use standard defaults. See [Retries](/guide/timeouts-and-retries#retries) |
 | `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` \| `'ndjson'` | See [Responses](#responses) |
 | `signal` | `AbortSignal` | See [Cancellation](/guide/timeouts-and-retries#cancellation) |
 | `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](/guide/streaming#download-progress) |

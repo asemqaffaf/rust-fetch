@@ -230,6 +230,12 @@ export interface RequestOptions extends BrowserRequestOptions {
   params?: QueryParams;
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
   timeoutMs?: number;
+  /**
+   * Replaces the client's retry policy for this request (also for `events()` connection attempts).
+   * `0` disables retries. Omitted object fields use the standard defaults, not the client's values.
+   * The client's shared `retryBudget` still applies. Separate from `events()`'s `reconnect`.
+   */
+  retries?: number | RetryOptions;
   responseType?: ResponseBodyType;
   /** Overrides the client's `redirect` */
   redirect?: RedirectMode;
@@ -1030,6 +1036,9 @@ pub(crate) fn request_builder(
             builder = builder.max_response_bytes(Some(parse_max_response_bytes(&value)?));
         }
         _ => {}
+    }
+    if let Some(retries) = options.get("retries") {
+        builder = builder.retry_config(parse_retries(&retries)?);
     }
     if let Some(timeout) = options.get("timeoutMs") {
         builder = match parse_timeout(&timeout)? {
