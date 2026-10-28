@@ -43,6 +43,28 @@ await client.post('/sync', {
 
 In Rust, use `RequestBuilder::retry_config(RetryConfig { … })` to replace the policy, or `RequestBuilder::no_retries()` to disable retries for one request.
 
+### Idempotency keys
+
+If an API supports deduplication using an idempotency key, you can retry POST and PATCH without `retryNonIdempotent`:
+
+```js
+const client = new WasmClient({ retries: 3 });
+await client.post('/payments', {
+  body: { amount: 1000 },
+  idempotencyKey: true, // crypto.randomUUID(), once per call, reused on every attempt
+});
+await client.post('/payments', { body: { amount: 1000 }, idempotencyKey: 'order-42' });
+```
+
+The default header is `Idempotency-Key`; set `idempotencyHeader: 'X-Request-Key'` when an API uses another name. These options may also be client defaults. Prefer a client default of `idempotencyKey: true`; an explicit client string reuses the same key across calls and can cause a server to treat different operations as duplicates. Pass `idempotencyKey: false` to opt out for a call. `null`/`undefined` inherit the default.
+
+- **The server must honor the key.** The client alone cannot prevent duplicate effects. Follow the API's rules about key format, retention time and reuse with identical payloads. Reuse an explicit key when retrying the same operation across separate calls or application restarts.
+- Keys are non-empty strings of visible ASCII characters without whitespace. The option sets/replaces the chosen header after request interceptors. A raw header alone does not change the existing retry rules.
+- Keys allow POST/PATCH replay under the configured retry policy; they do not enable retries, override `retries: 0`, change retryable statuses, or bypass the shared retry budget. CONNECT remains non-idempotent.
+- Automatic generation requires `crypto.randomUUID()` (a secure browser context or a runtime providing Web Crypto); otherwise an `InvalidInputError` is returned before sending. Explicit keys work without it.
+- Applies to progress requests, streamed responses and SSE. `events()` keeps a generated key across connection retries and reconnections, without changing the caller's options.
+- **Rust:** `.idempotency_key("order-42")?`, or `.idempotency_key_header("X-Request-Key", "order-42")?` with a custom header, on a `RequestBuilder`. Generate keys in the application when using the Rust API.
+
 **Retry budget.** When an upstream fails, every request in flight retries at once, which multiplies the load on a service that's already struggling (a retry storm). `retryBudget` limits retries across the client, the gRPC and Finagle way:
 
 ```js

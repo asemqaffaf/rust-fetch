@@ -26,6 +26,7 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `params` | object or `URLSearchParams` | Appended to the query string. Arrays repeat the key; `null`/`undefined` are skipped. |
 | `timeoutMs` | number | Overrides the client timeout; `0` disables it |
 | `retries` | number or `RetryOptions` | Replaces the client's retry policy; `0` disables retries. Omitted object fields use standard defaults. See [Retries](/guide/timeouts-and-retries#retries) |
+| `idempotencyKey`, `idempotencyHeader` | boolean or string, string | Opt in to keyed POST/PATCH retries with server deduplication; see [Idempotency keys](/guide/timeouts-and-retries#idempotency-keys) |
 | `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` \| `'ndjson'` | See [Responses](#responses) |
 | `signal` | `AbortSignal` | See [Cancellation](/guide/timeouts-and-retries#cancellation) |
 | `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](/guide/streaming#download-progress) |

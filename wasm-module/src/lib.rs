@@ -48,6 +48,7 @@ pub mod types;
 pub mod http;
 
 mod budget;
+mod idempotency;
 mod lines;
 mod runtime;
 mod sse;

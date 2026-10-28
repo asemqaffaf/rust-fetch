@@ -439,6 +439,42 @@ async fn does_not_retry_post_unless_enabled() {
 }
 
 #[tokio::test]
+async fn idempotency_keys_allow_post_and_patch_retries_with_stable_headers() {
+    let server = TestServer::start(|_, _| Reply::new(503, "already applied"));
+    let client = Client::builder()
+        .retry_config(fast_retries(1))
+        .build()
+        .unwrap();
+    client
+        .post(server.url("/"))
+        .idempotency_key("order-42")
+        .unwrap()
+        .send()
+        .await
+        .unwrap_err();
+    client
+        .patch(server.url("/"))
+        .idempotency_key_header("X-Key", "order-43")
+        .unwrap()
+        .send_streaming()
+        .await
+        .unwrap_err();
+    let requests = server.requests();
+    assert_eq!(requests.len(), 4);
+    for request in &requests[..2] {
+        assert_eq!(request.header_values("idempotency-key"), vec!["order-42"]);
+    }
+    for request in &requests[2..] {
+        assert_eq!(request.header_values("x-key"), vec!["order-43"]);
+    }
+    assert!(client.post(server.url("/")).idempotency_key("").is_err());
+    assert!(client
+        .post(server.url("/"))
+        .idempotency_key_header("invalid header", "key")
+        .is_err());
+}
+
+#[tokio::test]
 async fn retry_after_is_honored_but_capped() {
     let server = TestServer::start(|_, i| {
         if i == 0 {
