@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitepress';
 import { slug } from 'github-slugger';
 
 // GitHub's anchors (e.g. #upgrading-to-20), so links written for the README
 // and its headings keep working on the site
 const slugify = (text: string) => slug(text);
+
+// The latest release: the workspace version only changes in release pull requests
+const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 
 export default defineConfig({
   title: 'rust-fetch',
@@ -30,6 +34,15 @@ export default defineConfig({
           { text: 'Stability and releases', link: '/stability' },
           { text: 'Development', link: '/development' },
           { text: 'FAQ', link: '/faq' },
+          { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
+        ],
+      },
+      {
+        text: `v${version}`,
+        items: [
+          { text: `${version} (latest)`, link: '/' },
+          // Archived: 2.5 and earlier had no site, so this is the README of 2.5.2
+          { text: '2.5', link: '/v2.5/' },
           { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
         ],
       },
@@ -99,7 +112,7 @@ export default defineConfig({
       { icon: 'github', link: 'https://github.com/asemqaffaf/rust-fetch' },
       { icon: 'npm', link: 'https://www.npmjs.com/package/rust-fetch' },
     ],
-    search: { provider: 'local' },
+    search: { provider: 'local' }, // archived versions set `search: false`, so results are the latest's
     outline: { level: [2, 3] },
     editLink: {
       pattern: 'https://github.com/asemqaffaf/rust-fetch/edit/main/docs/:path',
