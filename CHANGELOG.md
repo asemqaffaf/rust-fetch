@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Documentation by version.** The site has a version menu: the latest release, and 2.5 at [/v2.5/](https://asemqaffaf.github.io/rust-fetch/v2.5/). 2.5 had no documentation site, so its page is the README as published with 2.5.2, with a notice linking to the latest version. Search covers the latest version only.
+
 ## [2.6.1] - 2026-10-29
 
 A maintenance release with no changes to the client's code. The package now includes its contribution guide, code of conduct and security policy, and `llms.txt` links to the documentation site instead of README sections that moved there. The documentation site was reviewed against the code. The native transport, which isn't in the npm package yet, gets a zstd update that fixes three advisories.
