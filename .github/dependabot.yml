@@ -23,6 +23,10 @@ updates:
     ignore:
       # This alias tests our minimum supported TypeScript version, not latest.
       - dependency-name: typescript-5.2
+      # The tests hand undici's ProxyAgent and global dispatcher to Node's built-in WebSocket, so
+      # undici stays on the major Node bundles; undici 8 also needs Node 22.19, and CI tests Node 20.
+      - dependency-name: undici
+        update-types: ["version-update:semver-major"]
     groups:
       npm-dependencies:
         patterns: ["*"]
