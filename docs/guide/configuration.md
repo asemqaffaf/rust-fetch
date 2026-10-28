@@ -29,6 +29,7 @@ Every client option:
 | `headers` | none | Sent with every request; a request header with the same name wins |
 | `timeoutMs` | `30000` | Per attempt, until the last byte of the body; `0` disables it. See [Timeouts](/guide/timeouts-and-retries#timeouts) |
 | `retries` | no retries | A count or `RetryOptions`; see [Retries](/guide/timeouts-and-retries#retries) |
+| `idempotencyKey`, `idempotencyHeader` | off, `Idempotency-Key` | Key generation/header defaults; requires server deduplication. See [Idempotency keys](/guide/timeouts-and-retries#idempotency-keys) |
 | `retryBudget` | no budget | `true` or `{ ratio, minPerSecond, windowMs }`: limits retries across the client; see [Retries](/guide/timeouts-and-retries#retries) |
 | `redirect`, `maxRedirects` | `'follow'`, `20` | See [Redirects](/guide/requests#redirects) |
 | `sensitiveHeaders` | none | Your own credential headers (e.g. `X-Api-Key`), dropped on cross-origin redirects like `Authorization` (Node.js); see [Security](/security#security) |

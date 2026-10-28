@@ -10,6 +10,8 @@ mod alloc;
 mod events;
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
+pub(crate) mod idempotency;
+#[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod url;
@@ -159,6 +161,14 @@ export interface ClientOptions extends BrowserRequestOptions {
    * `retryBudgetExhausted: true`; `client.retriesRefused` counts refusals. Default: no budget
    */
   retryBudget?: boolean | RetryBudgetOptions;
+  /**
+   * `true` generates a UUID per call; a string supplies a key. The key is reused on retries and enables
+   * POST/PATCH retries under the retry policy. Requires server support for deduplication. Default: off.
+   * An explicit client string is reused for every call; prefer `true` or per-request strings.
+   */
+  idempotencyKey?: boolean | string;
+  /** Header carrying the key. Default: `Idempotency-Key` */
+  idempotencyHeader?: string;
   /** What to do when the server redirects. Default: `follow` */
   redirect?: RedirectMode;
   /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
@@ -236,6 +246,10 @@ export interface RequestOptions extends BrowserRequestOptions {
    * The client's shared `retryBudget` still applies. Separate from `events()`'s `reconnect`.
    */
   retries?: number | RetryOptions;
+  /** Overrides the client's key policy. `true` generates a key for this call; `false` disables it. Requires server deduplication. */
+  idempotencyKey?: boolean | string;
+  /** Overrides the client's idempotency header name */
+  idempotencyHeader?: string;
   responseType?: ResponseBodyType;
   /** Overrides the client's `redirect` */
   redirect?: RedirectMode;
@@ -401,6 +415,12 @@ impl WasmClient {
     #[wasm_bindgen(constructor)]
     pub fn new(options: Option<ClientOptions>) -> Result<WasmClient> {
         let mut builder = Client::builder();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(options) = &options {
+            builder = builder.idempotency(idempotency::Defaults::parse(&Options::new(
+                options.as_ref(),
+            ))?);
+        }
 
         if let Some(options) = options {
             let options: &JsValue = options.as_ref();
@@ -1048,6 +1068,7 @@ pub(crate) fn request_builder(
     }
     #[cfg(target_arch = "wasm32")]
     {
+        builder = idempotency::apply(builder, options, &client.config.idempotency)?;
         builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
         if let Some(allow) = options.get("allowPrivateNetwork") {
             builder.allow_private_network = parse_bool(&allow, "allowPrivateNetwork")?;

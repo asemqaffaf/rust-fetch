@@ -753,6 +753,97 @@ describe('retries', () => {
   });
 });
 
+describe('idempotency keys', () => {
+  const retries = { maxRetries: 1, initialDelayMs: 0 };
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it('generates a different UUID per call and reuses it and the body on every POST/PATCH attempt', async () => {
+    const seen = new Set();
+    const s = await startServer((req, res) => {
+      const key = req.headers['idempotency-key'];
+      if (!seen.has(key)) { seen.add(key); res.writeHead(503); return res.end('already applied'); }
+      json(res, { key });
+    });
+    try {
+      const c = new WasmClient({ retries });
+      for (const method of ['post', 'post', 'patch']) {
+        const key = (await c[method](s.url(), { body: { amount: 42 }, idempotencyKey: true })).body.key;
+        assert.match(key, uuid);
+      }
+      assert.equal(seen.size, 3);
+      assert.equal(s.requests.length, 6);
+      for (let i = 0; i < 6; i += 2) {
+        assert.equal(s.requests[i].headers['idempotency-key'], s.requests[i + 1].headers['idempotency-key']);
+        assert.equal(s.requests[i].body.toString(), s.requests[i + 1].body.toString());
+      }
+    } finally { await s.close(); }
+  });
+
+  it('supports client defaults, explicit keys, custom headers and per-request opt-out', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
+    try {
+      const c = new WasmClient({ retries, idempotencyKey: true, idempotencyHeader: 'X-Request-Key' });
+      assert.equal((await rejection(c.post(s.url(), { idempotencyKey: false }))).status, 503);
+      assert.equal(s.requests.length, 1);
+      assert.equal(s.requests[0].headers['x-request-key'], undefined);
+      await rejection(c.post(s.url()));
+      assert.equal(s.requests.length, 3);
+      assert.match(s.requests[1].headers['x-request-key'], uuid);
+      assert.equal(s.requests[1].headers['x-request-key'], s.requests[2].headers['x-request-key']);
+      await rejection(c.post(s.url(), { idempotencyKey: 'order-42', idempotencyHeader: 'X-Order-Key', headers: { 'x-order-key': 'replaced' } }));
+      assert.equal(s.requests.length, 5);
+      assert.equal(s.requests[3].headers['x-order-key'], 'order-42');
+      assert.equal(s.requests[4].headers['x-order-key'], 'order-42');
+      await rejection(new WasmClient({ retries, idempotencyKey: 'fixed' }).post(s.url()));
+      assert.equal(s.requests.length, 7);
+      assert.equal(s.requests[5].headers['idempotency-key'], 'fixed');
+      await rejection(c.post(s.url(), { retries: 0 }));
+      assert.equal(s.requests.length, 8, 'a key never overrides the retry count');
+      await rejection(new WasmClient({ retries }).post(s.url(), { headers: { 'idempotency-key': 'raw' } }));
+      assert.equal(s.requests.length, 9, 'raw headers alone do not change existing retry behavior');
+      await rejection(new WasmClient().post(s.url(), { idempotencyKey: true }));
+      assert.equal(s.requests.length, 10, 'a key does not turn retries on');
+    } finally { await s.close(); }
+  });
+
+  it('retains keys for streamed responses and progress uploads', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
+    try {
+      const c = new WasmClient({ retries });
+      for (const extra of [{ responseType: 'stream' }, { onUploadProgress() {} }, { onDownloadProgress() {} }]) {
+        await rejection(c.post(s.url(), { body: 'x', idempotencyKey: true, ...extra }));
+      }
+      assert.equal(s.requests.length, 6);
+      for (let i = 0; i < 6; i += 2) assert.equal(s.requests[i].headers['idempotency-key'], s.requests[i + 1].headers['idempotency-key']);
+    } finally { await s.close(); }
+  });
+
+  it('rejects invalid keys and header names before sending', async () => {
+    const s = await startServer((req, res) => res.end());
+    try {
+      for (const options of [{ idempotencyKey: '' }, { idempotencyKey: 'a b' }, { idempotencyKey: '\r\n' }, { idempotencyKey: 'é' }, { idempotencyKey: 1 }, { idempotencyHeader: '' }, { idempotencyHeader: 'a b' }, { idempotencyHeader: 1 }]) {
+        assert.throws(() => new WasmClient(options), (e) => e.kind === 'InvalidInputError');
+        assert.equal((await rejection(new WasmClient().post(s.url(), options))).kind, 'InvalidInputError');
+      }
+      assert.equal(s.requests.length, 0);
+    } finally { await s.close(); }
+  });
+
+  it('fails with a typed error when secure UUID generation is unavailable; explicit keys still work', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID');
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true, value() { throw new Error('unavailable'); } });
+    try {
+      const error = await rejection(new WasmClient().post(server.url('/echo'), { idempotencyKey: true }));
+      assert.equal(error.kind, 'InvalidInputError');
+      assert.equal(error.parameter, 'idempotencyKey');
+      assert.equal((await new WasmClient().post(server.url('/echo'), { idempotencyKey: 'explicit' })).body.headers['idempotency-key'], 'explicit');
+    } finally {
+      if (descriptor) Object.defineProperty(crypto, 'randomUUID', descriptor);
+      else delete crypto.randomUUID;
+    }
+  });
+});
+
 describe('retryBudget', () => {
   // Always 503, except paths starting with /once, which fail once each and then succeed
   const upstream = async () => {
