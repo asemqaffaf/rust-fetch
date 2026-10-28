@@ -127,6 +127,21 @@ function collector(count) {
 }
 
 describe('events', () => {
+  it('reuses generated idempotency keys across SSE reconnections without changing caller options', async () => {
+    const c = new WasmClient({ baseUrl: server.url('/v1'), idempotencyKey: true });
+    const { all, onEvent } = collector(2);
+    const options = Object.freeze({ method: 'POST', body: 'x', reconnect: { maxRetries: 1, initialDelayMs: 0 }, onEvent, idempotencyKey: true });
+    const stream = c.events('/resume?id=key-resume', options);
+    await all;
+    stream.close();
+    await stream.closed;
+    const requests = connections.get('key-resume');
+    assert.equal(requests.length, 2);
+    assert.ok(requests[0].headers['idempotency-key']);
+    assert.equal(requests[0].headers['idempotency-key'], requests[1].headers['idempotency-key']);
+    assert.equal(options.idempotencyKey, true);
+  });
+
   it('overrides connection retries independently of reconnection', async () => {
     const c = new WasmClient({ baseUrl: server.url('/v1'), retries: { maxRetries: 2, initialDelayMs: 0 } });
     const disabled = c.events('/status?code=503&id=retry-disabled', { retries: 0, reconnect: false });

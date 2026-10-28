@@ -65,6 +65,8 @@ pub(crate) struct ClientConfig {
     /// Node.js: `allowPrivateNetwork`
     #[cfg(target_arch = "wasm32")]
     pub(crate) allow_private_network: bool,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) idempotency: crate::wasm::idempotency::Defaults,
 }
 
 /// A download progress callback. Must be `Send + Sync` on native targets so
@@ -82,6 +84,13 @@ pub trait ProgressCallback: Fn(Progress) {}
 impl<T: Fn(Progress)> ProgressCallback for T {}
 
 type ProgressFn = Arc<dyn ProgressCallback>;
+
+/// The request's retry settings and whether its method/key allow replay.
+#[derive(Clone, Copy)]
+struct RetryPolicy<'a> {
+    config: Option<&'a RetryConfig>,
+    replay_safe: bool,
+}
 
 /// A response from one attempt: either fully read, or (for successful
 /// streaming requests) with the body left unread in `stream`
@@ -263,6 +272,7 @@ impl Client {
             query: Vec::new(),
             progress: None,
             retry_config: None,
+            idempotency_header: None,
             redirect,
             max_redirects,
             allow_absolute_urls: self.config.allow_absolute_urls,
@@ -326,7 +336,7 @@ impl Client {
         progress: Option<&ProgressFn>,
         limit: Option<u64>,
         guards: RedirectGuards,
-        retry: Option<&RetryConfig>,
+        retry: RetryPolicy<'_>,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         // reqwest takes its own URL type; in WebAssembly the bindings' URLs are
@@ -334,7 +344,7 @@ impl Client {
         #[cfg(target_arch = "wasm32")]
         let url = reqwest::Url::parse(url.as_str())
             .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
-        self.execute_retrying(config.method, config.timeout, retry, None, || async {
+        self.execute_retrying(config.timeout, retry, None, || async {
             let raw = self
                 .execute_once(&url, config, stream, progress, limit, guards)
                 .await?;
@@ -362,9 +372,8 @@ impl Client {
     /// `refused` is set when the retry budget refused a retry.
     async fn execute_retrying<T, F, Fut>(
         &self,
-        method: Method,
         timeout: Option<Duration>,
-        retry: Option<&RetryConfig>,
+        retry: RetryPolicy<'_>,
         refused: Option<&AtomicBool>,
         mut send: F,
     ) -> Result<T>
@@ -385,7 +394,6 @@ impl Client {
             }
             Err(error)
         };
-        let retry = retry.or(self.config.retry_config.as_ref());
         let mut attempt = 0;
 
         loop {
@@ -401,7 +409,13 @@ impl Client {
                 Err(error) => (error, None),
             };
 
-            match Self::retry_delay(retry, attempt, method, &error, retry_after) {
+            match Self::retry_delay(
+                retry.config,
+                attempt,
+                retry.replay_safe,
+                &error,
+                retry_after,
+            ) {
                 Some(delay) => {
                     if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
                         return refuse(error);
@@ -442,7 +456,7 @@ impl Client {
     fn retry_delay(
         retry: Option<&RetryConfig>,
         attempt: u32,
-        method: Method,
+        replay_safe: bool,
         error: &Error,
         retry_after: Option<Duration>,
     ) -> Option<Duration> {
@@ -451,7 +465,7 @@ impl Client {
             return None;
         }
         // The server may have acted on a non-idempotent request before failing.
-        if !method.is_idempotent() && !retry.retry_non_idempotent {
+        if !replay_safe && !retry.retry_non_idempotent {
             return None;
         }
         let retryable = match error {
@@ -848,6 +862,8 @@ pub struct ClientBuilder {
     proxy: Option<String>,
     #[cfg(target_arch = "wasm32")]
     allow_private_network: bool,
+    #[cfg(target_arch = "wasm32")]
+    idempotency: crate::wasm::idempotency::Defaults,
 }
 
 impl ClientBuilder {
@@ -874,7 +890,15 @@ impl ClientBuilder {
             proxy: None,
             #[cfg(target_arch = "wasm32")]
             allow_private_network: true,
+            #[cfg(target_arch = "wasm32")]
+            idempotency: crate::wasm::idempotency::Defaults::default(),
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn idempotency(mut self, defaults: crate::wasm::idempotency::Defaults) -> Self {
+        self.idempotency = defaults;
+        self
     }
 
     /// Node.js: whether requests may reach private and reserved addresses
@@ -1082,6 +1106,8 @@ impl ClientBuilder {
                 proxy: self.proxy,
                 #[cfg(target_arch = "wasm32")]
                 allow_private_network: self.allow_private_network,
+                #[cfg(target_arch = "wasm32")]
+                idempotency: self.idempotency,
             }),
             pending: Arc::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1105,6 +1131,7 @@ pub struct RequestBuilder {
     progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
+    idempotency_header: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
     allow_absolute_urls: bool,
@@ -1154,13 +1181,49 @@ impl RequestBuilder {
         };
         self.client
             .execute_retrying(
-                self.config.method,
                 timeout,
-                self.retry_config.as_ref(),
+                self.retry_policy(),
                 self.retry_refused.as_deref(),
                 || request.send(),
             )
             .await
+    }
+
+    /// Send an idempotency key, allowing POST/PATCH retries when configured.
+    /// The server must support deduplication using `Idempotency-Key`.
+    pub fn idempotency_key(self, key: impl Into<String>) -> Result<Self> {
+        self.idempotency_key_header("Idempotency-Key", key)
+    }
+
+    /// Use an API's own header name for its idempotency key.
+    pub fn idempotency_key_header(
+        mut self,
+        name: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<Self> {
+        let (name, key) = (name.into(), key.into());
+        crate::idempotency::validate_header(&name)?;
+        crate::idempotency::validate_key(&key)?;
+        self.config.headers.set(&name, key);
+        self.idempotency_header = Some(name);
+        Ok(self)
+    }
+
+    fn retry_policy(&self) -> RetryPolicy<'_> {
+        let keyed = self.idempotency_header.as_ref().is_some_and(|name| {
+            self.config
+                .headers
+                .get_first(name)
+                .is_some_and(|key| !key.trim().is_empty())
+        });
+        RetryPolicy {
+            config: self
+                .retry_config
+                .as_ref()
+                .or(self.client.config.retry_config.as_ref()),
+            replay_safe: self.config.method.is_idempotent()
+                || keyed && matches!(self.config.method, Method::Post | Method::Patch),
+        }
     }
 
     /// Replace the client's retry policy for this request.
@@ -1358,7 +1421,7 @@ impl RequestBuilder {
                 self.progress.as_ref(),
                 self.max_response_bytes,
                 self.redirect_guards(),
-                self.retry_config.as_ref(),
+                self.retry_policy(),
             )
             .await?;
         let content_type = raw.headers.get_first("content-type").unwrap_or("");
@@ -1394,9 +1457,8 @@ impl RequestBuilder {
         let response = self
             .client
             .execute_retrying(
-                self.config.method,
                 self.config.timeout,
-                self.retry_config.as_ref(),
+                self.retry_policy(),
                 self.retry_refused.as_deref(),
                 || request.send(),
             )
@@ -1434,7 +1496,7 @@ impl RequestBuilder {
                 None,
                 self.max_response_bytes,
                 self.redirect_guards(),
-                self.retry_config.as_ref(),
+                self.retry_policy(),
             )
             .await?;
         Ok(StreamingResponse {
@@ -1500,7 +1562,12 @@ mod tests {
             ))
         };
         let error = client
-            .execute_retrying(Method::Get, None, None, Some(&refused), failed)
+            .execute_retrying(
+                None,
+                client.request(Method::Get, "").retry_policy(),
+                Some(&refused),
+                failed,
+            )
             .await
             .unwrap_err();
         assert!(matches!(error, Error::Http { status: 503, .. }));
@@ -1820,7 +1887,7 @@ mod tests {
     #[test]
     fn test_retry_delay_policy() {
         let retry = Some(&no_jitter_config());
-        let get = Method::Get;
+        let get = true;
 
         // Retryable errors on idempotent methods
         for error in [
@@ -1848,8 +1915,8 @@ mod tests {
             None
         )
         .is_none());
-        assert!(Client::retry_delay(retry, 0, Method::Post, &http_error(503), None).is_none());
-        assert!(Client::retry_delay(retry, 0, Method::Patch, &network_error(), None).is_none());
+        assert!(Client::retry_delay(retry, 0, false, &http_error(503), None).is_none());
+        assert!(Client::retry_delay(retry, 0, false, &network_error(), None).is_none());
         assert!(Client::retry_delay(retry, 3, get, &http_error(503), None).is_none());
 
         // Retry-After wins over backoff, capped at max_delay
@@ -1885,7 +1952,7 @@ mod tests {
         assert!(
             Client::retry_delay(retry, 0, get, &Error::Timeout { duration_ms: 1 }, None).is_none()
         );
-        assert!(Client::retry_delay(retry, 0, Method::Post, &http_error(503), None).is_some());
+        assert!(Client::retry_delay(retry, 0, false, &http_error(503), None).is_some());
 
         // No retry configuration at all
         assert!(Client::retry_delay(None, 0, get, &http_error(503), None).is_none());

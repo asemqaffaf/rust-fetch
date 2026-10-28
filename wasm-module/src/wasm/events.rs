@@ -50,6 +50,10 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   timeoutMs?: number;
   /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
   retries?: number | RetryOptions;
+  /** Overrides the client's key policy; generated keys are reused across retries and reconnections. Requires server deduplication. */
+  idempotencyKey?: boolean | string;
+  /** Overrides the client's idempotency header name */
+  idempotencyHeader?: string;
   /**
    * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
    * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).
@@ -326,6 +330,7 @@ impl WasmClient {
 
 /// Parse and validate the options up front, so mistakes throw from `events()`
 fn settings(client: &crate::client::Client, target: String, options: JsValue) -> Result<Settings> {
+    let options = super::idempotency::freeze(options, &client.config.idempotency)?;
     let method = match prop(&options, "method") {
         Some(method) => parse_method(
             &method

@@ -15,6 +15,7 @@ const pkg = new URL('../../pkg/', import.meta.url);
 
 const preflights = [];
 const attempts = new Map();
+const idempotencyKeys = new Map();
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -92,12 +93,15 @@ function handler(cors) {
         const id = url.searchParams.get('id');
         const n = (attempts.get(id) ?? 0) + 1;
         attempts.set(id, n);
+        const keys = idempotencyKeys.get(id) ?? [];
+        keys.push(req.headers[url.searchParams.get('keyHeader') ?? 'idempotency-key'] ?? null);
+        idempotencyKeys.set(id, keys);
         if (n <= Number(url.searchParams.get('failures') ?? 1)) {
           res.writeHead(Number(url.searchParams.get('status') ?? 429), { ...headers, 'retry-after': '0', 'content-type': 'text/plain' });
           return res.end('slow down');
         }
         res.writeHead(200, { ...headers, 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ attempts: n }));
+        return res.end(JSON.stringify({ attempts: n, ...(url.searchParams.has('keys') ? { keys } : {}) }));
       }
       case '/slow':
         await new Promise((r) => setTimeout(r, 3000));
@@ -413,6 +417,29 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         disabled: 'HttpError', afterDisabled: 2, inherited: 2, enabled: 2, defaults: 4,
         post: 'HttpError', upload: 2, streamed: 2, sse: 'HttpError', invalid: ['InvalidInputError', 'retries'],
       });
+    });
+
+    it('reuses generated and explicit idempotency keys on POST/PATCH retries', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const c = new WasmClient({ baseUrl: origin, retries: { maxRetries: 1, initialDelayMs: 0 }, idempotencyKey: true });
+        const path = () => `/flaky?keys&id=${crypto.randomUUID()}`;
+        const post = (await c.post(path(), { body: 'x' })).body.keys;
+        const patch = (await c.patch(path(), { body: 'y' })).body.keys;
+        const custom = (await c.post(`${path()}&keyHeader=x-key`, { idempotencyKey: 'order-42', idempotencyHeader: 'X-Key' })).body.keys;
+        const upload = (await c.post(path(), { body: 'z', onUploadProgress() {} })).body.keys;
+        const streamed = await c.post(path(), { body: 's', responseType: 'stream' });
+        const stream = (await new Response(streamed.body).json()).keys;
+        const disabled = await c.post(path(), { idempotencyKey: false }).catch((e) => e.kind);
+        return { post, patch, custom, upload, stream, disabled };
+      });
+      for (const keys of [result.post, result.patch, result.upload, result.stream]) {
+        assert.equal(keys.length, 2);
+        assert.match(keys[0], /^[0-9a-f-]{36}$/);
+        assert.equal(keys[0], keys[1]);
+      }
+      assert.notEqual(result.post[0], result.patch[0]);
+      assert.deepEqual(result.custom, ['order-42', 'order-42']);
+      assert.equal(result.disabled, 'HttpError');
     });
 
     it('streams responses and reports download progress', async () => {

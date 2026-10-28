@@ -136,6 +136,14 @@ export interface ClientOptions extends BrowserRequestOptions {
      * `retryBudgetExhausted: true`; `client.retriesRefused` counts refusals. Default: no budget
      */
     retryBudget?: boolean | RetryBudgetOptions;
+    /**
+     * `true` generates a UUID per call; a string supplies a key. The key is reused on retries and enables
+     * POST/PATCH retries under the retry policy. Requires server support for deduplication. Default: off.
+     * An explicit client string is reused for every call; prefer `true` or per-request strings.
+     */
+    idempotencyKey?: boolean | string;
+    /** Header carrying the key. Default: `Idempotency-Key` */
+    idempotencyHeader?: string;
     /** What to do when the server redirects. Default: `follow` */
     redirect?: RedirectMode;
     /** Maximum number of redirects to follow. Browsers apply their own limit (20) instead. Default: 20 */
@@ -213,6 +221,10 @@ export interface RequestOptions extends BrowserRequestOptions {
      * The client's shared `retryBudget` still applies. Separate from `events()`'s `reconnect`.
      */
     retries?: number | RetryOptions;
+    /** Overrides the client's key policy. `true` generates a key for this call; `false` disables it. Requires server deduplication. */
+    idempotencyKey?: boolean | string;
+    /** Overrides the client's idempotency header name */
+    idempotencyHeader?: string;
     responseType?: ResponseBodyType;
     /** Overrides the client's `redirect` */
     redirect?: RedirectMode;
@@ -342,6 +354,10 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     timeoutMs?: number;
     /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
     retries?: number | RetryOptions;
+    /** Overrides the client's key policy; generated keys are reused across retries and reconnections. Requires server deduplication. */
+    idempotencyKey?: boolean | string;
+    /** Overrides the client's idempotency header name */
+    idempotencyHeader?: string;
     /**
      * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
      * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).

@@ -143,7 +143,7 @@ describe('published package', () => {
        const id: number = typed.body.id;
        // @ts-expect-error the body is a User, not a string
        const wrong: string = typed.body;
-       const created = await client.post<User>('/users', { body: { name } });
+       const created = await client.post<User>('/users', { body: { name }, idempotencyKey: true });
        const createdName: string = created.body.name;
        const viaFetch: HttpResponse<User[]> = await client.fetch<User[]>('/users');
        const untyped = await client.get('/anything');
@@ -156,7 +156,7 @@ describe('published package', () => {
        const init2: FetchInit = { retries: { maxRetries: 1, retryNonIdempotent: true }, method: 'POST', body: new FormData() };
        await client.fetch('/upload', init2);
        await client.get('/x', requestOptions);
-       client.events('/events', { retries: { maxRetries: 1 }, reconnect: false }).close();
+       client.events('/events', { retries: { maxRetries: 1 }, reconnect: false, idempotencyKey: 'order-42', idempotencyHeader: 'X-Key' }).close();
        // @ts-expect-error retries must be a count or RetryOptions
        await client.get('/x', { retries: true });
        client.addRequestInterceptor((r: InterceptedRequest) => { r.headers.authorization = name; });
