@@ -46,6 +46,8 @@ const client = new WasmClient({
 
 Resolves (2xx only) to `{ status, statusText, ok, url, headers, body }`. With `responseType: 'auto'`, `body` is parsed JSON for `application/json` and `*+json`, a string for text types, a `Uint8Array` otherwise, `null` when empty.
 
+Client load limits: `maxConcurrent` bounds attempts in flight (streams/SSE hold slots until EOF/cancel); `rateLimit: { requests, perMs }` is a token bucket including retries. Both off by default; FIFO admission in Rust; queued signals cancel without spending tokens, timeout starts on admission. `429 Retry-After` pauses the bucket. `limitsPerOrigin: true` isolates origins; use `maxPendingRequests` to bound the queue.
+
 ## Errors
 
 Every failure rejects with an `Error` whose `kind` (and `name`) is one of:
