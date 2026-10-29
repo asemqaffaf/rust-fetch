@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Long and fractional JS timers no longer fire early.** Long waits chain timers at the runtime's maximum delay; fractional milliseconds round up. Interval timing uses a monotonic clock where available.
 
 ### Changed
+- **Ordinary JavaScript clients skip full diagnostics configuration and request instrumentation until needed.** Explicit diagnostic options retain their validation, `DEBUG=rust-fetch` is captured at construction, and a later `stats()` call still enables collection.
 - **Observability size budgets:** with CI's Rust 1.99.1, the Wasm module is about 496/199/160 kB (raw/gzip/brotli), the shared JavaScript glue 97/19/16 kB, and Node glue 50/16/14 kB. Budgets rise deliberately to 500/200/162, 98/19.5/17 and 51/16.5/14.5 kB respectively. Collection remains opt-in; the instrumentation code ships in the existing bundle.
 - **Upload size budgets:** streaming byte plumbing adds roughly 2 kB brotli to the shared JavaScript glue and 0.6 kB to the Node adapter, plus about 2 kB to Wasm. Budgets rise to 80/14.5/12.5 kB (raw/gzip/brotli) for the glue and 46/15/13 kB for Node; the Wasm budget stays unchanged.
 - **Pending JS requests hold their Rust future once.** The promise adapter avoids retaining a second copy, keeping default requests below the existing 4.5 KiB memory budget with the new timeout policies.

@@ -2025,6 +2025,14 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     return result;
   }
   const metrics = () => ({ started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
+  const diagnosticOptions = ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext', 'timings', 'metrics', 'propagateTrace', 'debug', 'traceOrigins'];
+  function stateFor(options) {
+    const debug = typeof process !== 'undefined' && /(?:^|,)(?:rust-fetch\*?|\*)(?:,|$)/.test(process.env?.DEBUG ?? '');
+    if (!debug && !diagnosticOptions.some((name) => options != null && Object.hasOwn(Object(options), name))) {
+      return { config: { enabled: false, debug: false }, options: {} };
+    }
+    return configure(options);
+  }
   function configure(options = {}) {
     const c = {};
     for (const key of ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext']) {
@@ -2086,7 +2094,6 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   }
   function request(state, name, raw, client, args) {
     const c = state.config;
-    if (!c.enabled && !c.redactUrl && args.length === 1 && !['request', 'post', 'put', 'patch'].includes(name)) return raw.apply(client, args);
     const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
     let method = name === 'request' ? args[0] : name === 'fetch' ? own(args[1], 'method') ?? 'GET' : name.replace('_json', '').toUpperCase();
     const inputUrl = args[name === 'request' ? 1 : 0], input = args[index];
@@ -2181,7 +2188,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   }
   class ObservableClient extends Original {
     constructor(options) {
-      const state = configure(options);
+      const state = stateFor(options);
       super(options);
       // Match the core's configuration snapshot without retaining unknown
       // client options (which may contain large application objects).
@@ -2193,7 +2200,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       states.set(this, state);
     }
     stats() {
-      let state = states.get(this); if (!state) { state = configure(); states.set(this, state); }
+      let state = states.get(this); if (!state) { state = stateFor(); states.set(this, state); }
       state.metrics ??= metrics(); state.config.enabled = true;
       const m = state.metrics, samples = [...m.samples].sort((a, b) => a - b);
       const p = (n) => samples.length ? samples[Math.min(samples.length - 1, Math.ceil(n * samples.length) - 1)] : null;
@@ -2207,12 +2214,20 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   Object.defineProperty(ObservableClient, 'name', { value: 'WasmClient' });
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
     const raw = Original.prototype[name];
-    ObservableClient.prototype[name] = function (...args) { let state = states.get(this); if (!state) { state = configure(); states.set(this, state); } return request(state, name, raw, this, args); };
+    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    ObservableClient.prototype[name] = function (...args) {
+      let state = states.get(this);
+      if (!state) { state = stateFor(); states.set(this, state); }
+      // Keep no-options calls outside the large instrumentation function, so
+      // the runtime needn't compile it for the first unobserved request.
+      if (!state.config.enabled && !state.config.redactUrl && args.length <= index) return raw.apply(this, args);
+      return request(state, name, raw, this, args);
+    };
   }
   for (const name of ['events', 'websocket']) {
     const raw = Original.prototype[name];
     ObservableClient.prototype[name] = function (url, options) {
-      const state = states.get(this) ?? configure(), c = state.config;
+      const state = states.get(this) ?? stateFor(), c = state.config;
       let target = resolve(state.options, url, own(options, 'params'));
       if (name === 'websocket') target = target.replace(/^http(s?):/, 'ws$1:');
       const method = name === 'websocket' ? 'GET' : own(options, 'method') ?? 'GET';

@@ -228,6 +228,33 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
     if (!browser) for (const pool of [...(stats.pools.native ?? []), ...stats.pools.http]) assert.equal(pool.opened, pool.idle + pool.busy + pool.closed);
     assert.equal(new WasmClient().stats().latency.count, 0);
   });
+  it('enables metrics lazily on an ordinary client', async () => {
+    const client = new WasmClient();
+    await client.get(server.url());
+    assert.equal(client.stats().requests.started, 0);
+    await client.get(server.url());
+    assert.deepEqual(client.stats().requests, { started: 1, completed: 1, failed: 0, active: 0 });
+    assert.equal(client.stats().latency.count, 1);
+  });
+  it('honors DEBUG at construction and lets explicit debug false override it', { skip: browser }, async () => {
+    const previous = process.env.DEBUG, debug = console.debug, entries = [];
+    try {
+      process.env.DEBUG = 'rust-fetch';
+      console.debug = (...entry) => entries.push(entry);
+      const client = new WasmClient();
+      delete process.env.DEBUG;
+      await client.get(server.url());
+      assert.ok(entries.some((entry) => entry[1]?.type === 'requestEnd'));
+      const count = entries.length;
+      process.env.DEBUG = 'rust-fetch';
+      await new WasmClient({ debug: false }).get(server.url());
+      assert.equal(entries.length, count);
+    } finally {
+      console.debug = debug;
+      if (previous === undefined) delete process.env.DEBUG;
+      else process.env.DEBUG = previous;
+    }
+  });
   it('adds connection context to SSE and WebSocket failures', async () => {
     const client = new WasmClient({ retries: 1 });
     const events = client.events(server.url('/sse-error'), { reconnect: false });

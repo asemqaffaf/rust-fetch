@@ -16,26 +16,26 @@
     "got": "15.1.0",
     "undici": "7.30.1"
   },
-  "bundleSha256": "2522c1d55a7ef5ff207f66725b8d3d9e9c08e2041e20b6900da14902da153c72",
+  "bundleSha256": "a22b4dfe2dfc942bc1bd4b3bf9784e4f903ff0b69b5368c234a4461e6093232b",
   "observations": {
     "rust-fetch/native": {
       "success": [
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.9307909999999993,
+          "elapsedMs": 1.1718329999999924,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.549207999999993,
+          "elapsedMs": 0.780208000000016,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.46162499999999795,
+          "elapsedMs": 0.5677919999999972,
           "watchdog": false
         }
       ],
@@ -43,19 +43,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.3312500000000114,
+          "elapsedMs": 1.8040000000000305,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.6802920000000086,
+          "elapsedMs": 1.0356250000000387,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.5462080000000071,
+          "elapsedMs": 0.7922919999999749,
           "watchdog": false
         }
       ],
@@ -63,19 +63,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.835708000000011,
+          "elapsedMs": 1.1732079999999883,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.255375000000015,
+          "elapsedMs": 1.8068340000000376,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.8493750000000091,
+          "elapsedMs": 1.1695839999999862,
           "watchdog": false
         }
       ],
@@ -83,19 +83,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.3786249999999995,
+          "elapsedMs": 3.9438329999999837,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.9550829999999735,
+          "elapsedMs": 4.8755840000000035,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.2298749999999927,
+          "elapsedMs": 4.506957999999997,
           "watchdog": false
         }
       ],
@@ -103,19 +103,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.460583,
+          "elapsedMs": 152.662459,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.297167,
+          "elapsedMs": 153.034584,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.24316699999997,
+          "elapsedMs": 151.24479200000007,
           "watchdog": false
         }
       ],
@@ -123,19 +123,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.15716699999996,
+          "elapsedMs": 151.71387500000003,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.24337500000001,
+          "elapsedMs": 151.27608399999986,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.7046670000001,
+          "elapsedMs": 152.96716700000002,
           "watchdog": false
         }
       ],
@@ -143,19 +143,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.33954199999994,
+          "elapsedMs": 152.46758299999988,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 156.91729199999986,
+          "elapsedMs": 151.83375,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.1462079999999,
+          "elapsedMs": 153.24575000000004,
           "watchdog": false
         }
       ],
@@ -163,19 +163,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 10.34758399999987,
+          "elapsedMs": 10.794374999999945,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 5.633207999999968,
+          "elapsedMs": 6.2996669999999995,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 5.600500000000011,
+          "elapsedMs": 5.304458000000068,
           "watchdog": false
         }
       ],
@@ -183,19 +183,19 @@
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 1.2012500000000728,
+          "elapsedMs": 0.800707999999986,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 0.5882500000000164,
+          "elapsedMs": 0.6575830000001588,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 0.868291999999883,
+          "elapsedMs": 0.43412499999999454,
           "watchdog": false
         }
       ],
@@ -203,19 +203,19 @@
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.8842090000000553,
+          "elapsedMs": 0.657207999999855,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.66537500000004,
+          "elapsedMs": 0.6826250000001437,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.6274160000000393,
+          "elapsedMs": 0.3660409999999956,
           "watchdog": false
         }
       ]
@@ -225,19 +225,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.1404159999999877,
+          "elapsedMs": 1.2328329999999994,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.6548750000000041,
+          "elapsedMs": 0.6802500000000009,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.5651659999999765,
+          "elapsedMs": 0.5815409999999872,
           "watchdog": false
         }
       ],
@@ -245,19 +245,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.0417919999999867,
+          "elapsedMs": 1.1277500000000202,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.7142499999999927,
+          "elapsedMs": 0.8229159999999922,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.6652919999999938,
+          "elapsedMs": 0.8026249999999777,
           "watchdog": false
         }
       ],
@@ -265,19 +265,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.2652909999999906,
+          "elapsedMs": 1.3756659999999954,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.176290999999992,
+          "elapsedMs": 1.4159999999999968,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.7930000000000064,
+          "elapsedMs": 0.8715830000000153,
           "watchdog": false
         }
       ],
@@ -285,19 +285,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.351167000000004,
+          "elapsedMs": 2.7307500000000005,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.2662909999999954,
+          "elapsedMs": 2.8102910000000065,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.9344159999999988,
+          "elapsedMs": 2.7787079999999946,
           "watchdog": false
         }
       ],
@@ -305,19 +305,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.14425,
+          "elapsedMs": 151.67091699999997,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.12066600000003,
+          "elapsedMs": 151.70300000000003,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.047708,
+          "elapsedMs": 150.756083,
           "watchdog": false
         }
       ],
@@ -325,19 +325,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.71516699999995,
+          "elapsedMs": 151.59125000000006,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.4078750000001,
+          "elapsedMs": 152.42479200000002,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.47849999999994,
+          "elapsedMs": 149.95462500000008,
           "watchdog": false
         }
       ],
@@ -345,19 +345,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 151.22083300000008,
+          "elapsedMs": 150.40170899999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.25583399999982,
+          "elapsedMs": 152.1488750000001,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.7538750000001,
+          "elapsedMs": 151.78204199999982,
           "watchdog": false
         }
       ],
@@ -365,19 +365,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 14.981457999999975,
+          "elapsedMs": 11.170542000000069,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 8.122000000000071,
+          "elapsedMs": 8.440290999999888,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 8.528249999999844,
+          "elapsedMs": 25.030500000000075,
           "watchdog": false
         }
       ],
@@ -385,19 +385,19 @@
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 1.290416999999934,
+          "elapsedMs": 1.0826250000000073,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 0.5171669999999722,
+          "elapsedMs": 0.5407090000001062,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "error": "HttpError",
-          "elapsedMs": 0.7030420000000959,
+          "elapsedMs": 0.4656249999998181,
           "watchdog": false
         }
       ],
@@ -405,19 +405,19 @@
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.7996669999999995,
+          "elapsedMs": 1.161958999999797,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.6482919999998558,
+          "elapsedMs": 0.6814170000000104,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "error": "HttpError",
-          "elapsedMs": 0.4701669999999467,
+          "elapsedMs": 0.45354200000019773,
           "watchdog": false
         }
       ]
@@ -427,19 +427,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 8.826790999999986,
+          "elapsedMs": 53.188625,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.6559170000000165,
+          "elapsedMs": 3.3902499999999804,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.039541999999983,
+          "elapsedMs": 4.174041999999986,
           "watchdog": false
         }
       ],
@@ -447,19 +447,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.9050000000000011,
+          "elapsedMs": 36.91354100000001,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 0.6939589999999782,
+          "elapsedMs": 4.9624580000000265,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 0.8544169999999838,
+          "elapsedMs": 3.0027919999999995,
           "watchdog": false
         }
       ],
@@ -467,19 +467,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.3698750000000075,
+          "elapsedMs": 6.716709000000037,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.2480840000000057,
+          "elapsedMs": 4.229084,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.7199999999999989,
+          "elapsedMs": 3.4575419999999895,
           "watchdog": false
         }
       ],
@@ -487,19 +487,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.945166999999998,
+          "elapsedMs": 3.4686659999999847,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.7377089999999953,
+          "elapsedMs": 4.270791999999972,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.75679199999999,
+          "elapsedMs": 5.424874999999986,
           "watchdog": false
         }
       ],
@@ -508,21 +508,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 151.16249999999997,
+          "elapsedMs": 151.83425,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.32716700000003,
+          "elapsedMs": 151.61066599999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 156.65158300000002,
+          "elapsedMs": 154.43370900000002,
           "watchdog": false
         }
       ],
@@ -531,21 +531,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 154.42704200000003,
+          "elapsedMs": 151.69875000000002,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.49762500000008,
+          "elapsedMs": 154.33337499999993,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 152.16062499999987,
+          "elapsedMs": 151.93008400000008,
           "watchdog": false
         }
       ],
@@ -554,21 +554,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 154.17287499999998,
+          "elapsedMs": 152.23937499999988,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 151.89591700000005,
+          "elapsedMs": 149.91174999999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 154.19724999999994,
+          "elapsedMs": 152.6321250000001,
           "watchdog": false
         }
       ],
@@ -576,19 +576,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 16.58445800000004,
+          "elapsedMs": 37.42645799999991,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 10.272750000000087,
+          "elapsedMs": 21.903666000000158,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 7.456834000000072,
+          "elapsedMs": 14.456291999999848,
           "watchdog": false
         }
       ],
@@ -596,19 +596,19 @@
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.9471249999999145,
+          "elapsedMs": 1.2505839999998898,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.5172919999999976,
+          "elapsedMs": 0.6292080000000624,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.5997919999999795,
+          "elapsedMs": 0.5526250000000346,
           "watchdog": false
         }
       ],
@@ -616,19 +616,19 @@
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.5419580000000224,
+          "elapsedMs": 0.5078749999997854,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 1.5172500000001037,
+          "elapsedMs": 0.4893329999999878,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.8184579999999642,
+          "elapsedMs": 1.6066659999999047,
           "watchdog": false
         }
       ]
@@ -638,19 +638,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 8.855917000000005,
+          "elapsedMs": 14.220875000000035,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.7982079999999883,
+          "elapsedMs": 2.814624999999978,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.1741250000000036,
+          "elapsedMs": 2.0692919999999617,
           "watchdog": false
         }
       ],
@@ -658,19 +658,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.203000000000003,
+          "elapsedMs": 2.781499999999994,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 0.7818750000000136,
+          "elapsedMs": 1.840750000000014,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.0776249999999834,
+          "elapsedMs": 3.6533750000000396,
           "watchdog": false
         }
       ],
@@ -678,19 +678,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.5847500000000139,
+          "elapsedMs": 12.146000000000015,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 1.4602909999999838,
+          "elapsedMs": 2.124375000000043,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.069625000000002,
+          "elapsedMs": 2.8070000000000164,
           "watchdog": false
         }
       ],
@@ -698,19 +698,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 3.3202909999999974,
+          "elapsedMs": 3.9022090000000276,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.876082999999994,
+          "elapsedMs": 34.85899999999998,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 2.801417000000015,
+          "elapsedMs": 45.42350000000005,
           "watchdog": false
         }
       ],
@@ -719,21 +719,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 151.13720800000002,
+          "elapsedMs": 158.211458,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 152.36887499999995,
+          "elapsedMs": 151.38754199999994,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.4402090000001,
+          "elapsedMs": 151.39304200000004,
           "watchdog": false
         }
       ],
@@ -742,21 +742,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.551875,
+          "elapsedMs": 151.42512499999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.19975,
+          "elapsedMs": 150.63841700000012,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.89795800000002,
+          "elapsedMs": 150.941458,
           "watchdog": false
         }
       ],
@@ -765,21 +765,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 152.88804100000016,
+          "elapsedMs": 151.66487499999994,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 153.17679199999998,
+          "elapsedMs": 150.47720800000002,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": 23,
-          "elapsedMs": 151.008417,
+          "elapsedMs": 151.13445899999988,
           "watchdog": false
         }
       ],
@@ -787,19 +787,19 @@
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 8.615958999999975,
+          "elapsedMs": 9.266542000000072,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 6.65383299999985,
+          "elapsedMs": 7.847291999999925,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "TypeError",
-          "elapsedMs": 5.236291000000165,
+          "elapsedMs": 6.320083999999952,
           "watchdog": false
         }
       ],
@@ -807,19 +807,19 @@
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.5220419999998285,
+          "elapsedMs": 0.4415839999999207,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.5110409999999774,
+          "elapsedMs": 0.6956249999998363,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.4230840000000171,
+          "elapsedMs": 0.4470420000000104,
           "watchdog": false
         }
       ],
@@ -827,19 +827,19 @@
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.3858749999999418,
+          "elapsedMs": 0.5529579999999896,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.3406250000000455,
+          "elapsedMs": 0.3287089999998898,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.5084580000000187,
+          "elapsedMs": 0.4046249999998963,
           "watchdog": false
         }
       ]
@@ -849,19 +849,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 7.664082999999977,
+          "elapsedMs": 15.424874999999986,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.3213750000000175,
+          "elapsedMs": 4.63233299999996,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 0.9672079999999994,
+          "elapsedMs": 3.4167090000000258,
           "watchdog": false
         }
       ],
@@ -870,21 +870,21 @@
           "outcome": "network",
           "error": "Error",
           "code": "ECONNRESET",
-          "elapsedMs": 1.1934170000000108,
+          "elapsedMs": 1.524332999999956,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error",
           "code": "ECONNRESET",
-          "elapsedMs": 1.0806659999999795,
+          "elapsedMs": 1.1326670000000263,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error",
           "code": "ECONNRESET",
-          "elapsedMs": 0.9792500000000075,
+          "elapsedMs": 1.4257500000000505,
           "watchdog": false
         }
       ],
@@ -893,21 +893,21 @@
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 1.568583999999987,
+          "elapsedMs": 1.615583000000015,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 1.3852080000000058,
+          "elapsedMs": 1.5668750000000387,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 2.34699999999998,
+          "elapsedMs": 4.967707999999959,
           "watchdog": false
         }
       ],
@@ -916,21 +916,21 @@
           "outcome": "network",
           "error": "Error",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 3.3643749999999955,
+          "elapsedMs": 2.954207999999994,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 2.326708999999994,
+          "elapsedMs": 2.3430000000000177,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 2.216083000000026,
+          "elapsedMs": 5.012207999999987,
           "watchdog": false
         }
       ],
@@ -939,21 +939,21 @@
           "outcome": "timeout",
           "error": "AxiosError",
           "code": "ECONNABORTED",
-          "elapsedMs": 152.60670799999997,
+          "elapsedMs": 150.871583,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "AxiosError",
           "code": "ECONNABORTED",
-          "elapsedMs": 152.92533299999997,
+          "elapsedMs": 150.55845799999997,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "AxiosError",
           "code": "ECONNABORTED",
-          "elapsedMs": 155.60037499999999,
+          "elapsedMs": 151.16916700000002,
           "watchdog": false
         }
       ],
@@ -962,21 +962,21 @@
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 159.41862500000002,
+          "elapsedMs": 151.7165,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 154.6217499999999,
+          "elapsedMs": 152.2962910000001,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "AxiosError",
           "code": "ERR_BAD_RESPONSE",
-          "elapsedMs": 155.009416,
+          "elapsedMs": 152.3800000000001,
           "watchdog": false
         }
       ],
@@ -985,21 +985,21 @@
           "outcome": "watchdog",
           "error": "CanceledError",
           "code": "ERR_CANCELED",
-          "elapsedMs": 1004.177709,
+          "elapsedMs": 1001.4150829999999,
           "watchdog": true
         },
         {
           "outcome": "watchdog",
           "error": "CanceledError",
           "code": "ERR_CANCELED",
-          "elapsedMs": 1002.7659159999998,
+          "elapsedMs": 1000.4769579999997,
           "watchdog": true
         },
         {
           "outcome": "watchdog",
           "error": "CanceledError",
           "code": "ERR_CANCELED",
-          "elapsedMs": 1003.8725,
+          "elapsedMs": 1001.5936250000004,
           "watchdog": true
         }
       ],
@@ -1008,21 +1008,21 @@
           "outcome": "network",
           "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
           "code": "ERR_FR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 22.60633400000006,
+          "elapsedMs": 20.27941699999974,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
           "code": "ERR_FR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 12.102458000000297,
+          "elapsedMs": 11.821042000000489,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
           "code": "ERR_FR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 9.203667000000678,
+          "elapsedMs": 8.951250000000073,
           "watchdog": false
         }
       ],
@@ -1030,19 +1030,19 @@
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.8858749999999418,
+          "elapsedMs": 0.8394170000001395,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.7509159999999611,
+          "elapsedMs": 0.5969160000004194,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.6218330000001515,
+          "elapsedMs": 0.48325000000022555,
           "watchdog": false
         }
       ],
@@ -1050,19 +1050,19 @@
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.6585419999992155,
+          "elapsedMs": 0.5511249999999563,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.5227079999995112,
+          "elapsedMs": 0.4913749999996071,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.6069580000003043,
+          "elapsedMs": 0.6049160000002303,
           "watchdog": false
         }
       ]
@@ -1072,19 +1072,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 9.401916999999997,
+          "elapsedMs": 9.194666000000012,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 2.0176250000000095,
+          "elapsedMs": 1.9137090000000114,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.5261250000000075,
+          "elapsedMs": 1.1217499999999916,
           "watchdog": false
         }
       ],
@@ -1092,19 +1092,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.7427909999999827,
+          "elapsedMs": 2.528375000000011,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.1898750000000007,
+          "elapsedMs": 1.100875000000002,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 0.9595410000000015,
+          "elapsedMs": 0.9803330000000017,
           "watchdog": false
         }
       ],
@@ -1112,19 +1112,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.6695410000000095,
+          "elapsedMs": 1.803042000000005,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.4587080000000014,
+          "elapsedMs": 1.425457999999992,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 1.859708000000012,
+          "elapsedMs": 1.9845000000000255,
           "watchdog": false
         }
       ],
@@ -1132,19 +1132,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 3.5261669999999867,
+          "elapsedMs": 2.8977920000000097,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.922333000000009,
+          "elapsedMs": 2.5777909999999906,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 2.938874999999996,
+          "elapsedMs": 3.1529580000000124,
           "watchdog": false
         }
       ],
@@ -1152,19 +1152,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 152.71575,
+          "elapsedMs": 152.89066599999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 154.36325,
+          "elapsedMs": 154.496667,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.68070800000004,
+          "elapsedMs": 155.63758399999995,
           "watchdog": false
         }
       ],
@@ -1172,19 +1172,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 156.229959,
+          "elapsedMs": 154.33054199999992,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 155.022375,
+          "elapsedMs": 153.8827500000001,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 159.2461659999999,
+          "elapsedMs": 155.94854199999997,
           "watchdog": false
         }
       ],
@@ -1192,19 +1192,19 @@
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 157.14249999999993,
+          "elapsedMs": 156.50579100000004,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 153.89183300000013,
+          "elapsedMs": 151.467083,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
-          "elapsedMs": 155.33695899999998,
+          "elapsedMs": 151.26720899999987,
           "watchdog": false
         }
       ],
@@ -1212,19 +1212,19 @@
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 16.630374999999958,
+          "elapsedMs": 11.922458000000006,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 8.569124999999985,
+          "elapsedMs": 7.436958000000004,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "NetworkError",
-          "elapsedMs": 7.454958000000033,
+          "elapsedMs": 6.700417000000016,
           "watchdog": false
         }
       ],
@@ -1232,19 +1232,19 @@
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 1.1201669999998103,
+          "elapsedMs": 0.9003750000001673,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.757457999999815,
+          "elapsedMs": 0.6928749999999582,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.598459000000048,
+          "elapsedMs": 0.5137500000000728,
           "watchdog": false
         }
       ],
@@ -1252,19 +1252,19 @@
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.7203749999998763,
+          "elapsedMs": 0.5109579999998459,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.7015410000001339,
+          "elapsedMs": 0.49320799999986775,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.718708000000106,
+          "elapsedMs": 0.5788330000000315,
           "watchdog": false
         }
       ]
@@ -1274,19 +1274,19 @@
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 7.86820800000001,
+          "elapsedMs": 8.585167000000013,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.2112500000000068,
+          "elapsedMs": 1.2472499999999798,
           "watchdog": false
         },
         {
           "outcome": "ok",
           "status": 200,
-          "elapsedMs": 1.0003749999999911,
+          "elapsedMs": 1.0953750000000184,
           "watchdog": false
         }
       ],
@@ -1295,21 +1295,21 @@
           "outcome": "network",
           "error": "RequestError",
           "code": "ECONNRESET",
-          "elapsedMs": 1.4518750000000011,
+          "elapsedMs": 1.6057919999999797,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "RequestError",
           "code": "ECONNRESET",
-          "elapsedMs": 1.1318339999999978,
+          "elapsedMs": 1.2121670000000222,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "RequestError",
           "code": "ECONNRESET",
-          "elapsedMs": 1.310292000000004,
+          "elapsedMs": 1.2834160000000168,
           "watchdog": false
         }
       ],
@@ -1318,21 +1318,21 @@
           "outcome": "network",
           "error": "ReadError",
           "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-          "elapsedMs": 1.455083000000002,
+          "elapsedMs": 1.3697500000000105,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "ReadError",
           "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-          "elapsedMs": 1.4432500000000061,
+          "elapsedMs": 1.319375000000008,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "ReadError",
           "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
-          "elapsedMs": 2.262207999999987,
+          "elapsedMs": 2.2303750000000093,
           "watchdog": false
         }
       ],
@@ -1341,21 +1341,21 @@
           "outcome": "network",
           "error": "RequestError",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 2.544125000000008,
+          "elapsedMs": 2.6152919999999824,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "RequestError",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 2.3270829999999876,
+          "elapsedMs": 2.1231249999999875,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "RequestError",
           "code": "HPE_HEADER_OVERFLOW",
-          "elapsedMs": 2.2907909999999845,
+          "elapsedMs": 2.1391669999999863,
           "watchdog": false
         }
       ],
@@ -1364,21 +1364,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 153.77145799999997,
+          "elapsedMs": 153.16891700000002,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 155.680791,
+          "elapsedMs": 156.85399999999998,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 156.63291600000002,
+          "elapsedMs": 154.88816699999995,
           "watchdog": false
         }
       ],
@@ -1387,21 +1387,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 156.58062499999994,
+          "elapsedMs": 155.85575000000006,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 155.58504199999993,
+          "elapsedMs": 155.6450000000001,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 156.1276660000001,
+          "elapsedMs": 155.08449999999993,
           "watchdog": false
         }
       ],
@@ -1410,21 +1410,21 @@
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 158.43537500000002,
+          "elapsedMs": 155.1070830000001,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 155.73087499999997,
+          "elapsedMs": 154.7555829999999,
           "watchdog": false
         },
         {
           "outcome": "timeout",
           "error": "TimeoutError",
           "code": "ETIMEDOUT",
-          "elapsedMs": 155.14037499999995,
+          "elapsedMs": 153.33441599999992,
           "watchdog": false
         }
       ],
@@ -1433,21 +1433,21 @@
           "outcome": "network",
           "error": "MaxRedirectsError",
           "code": "ERR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 22.33466700000008,
+          "elapsedMs": 15.551834000000099,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "MaxRedirectsError",
           "code": "ERR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 10.756167000000005,
+          "elapsedMs": 8.267042000000174,
           "watchdog": false
         },
         {
           "outcome": "network",
           "error": "MaxRedirectsError",
           "code": "ERR_TOO_MANY_REDIRECTS",
-          "elapsedMs": 8.997208,
+          "elapsedMs": 7.772792000000209,
           "watchdog": false
         }
       ],
@@ -1455,19 +1455,19 @@
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.8478750000001583,
+          "elapsedMs": 0.8760409999999865,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.7312079999999241,
+          "elapsedMs": 0.780666999999994,
           "watchdog": false
         },
         {
           "outcome": "http:429",
           "status": 429,
-          "elapsedMs": 0.596458999999868,
+          "elapsedMs": 0.5785830000002079,
           "watchdog": false
         }
       ],
@@ -1475,19 +1475,19 @@
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.5853750000001128,
+          "elapsedMs": 0.5219999999999345,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.5346660000000156,
+          "elapsedMs": 0.49416699999983393,
           "watchdog": false
         },
         {
           "outcome": "http:503",
           "status": 503,
-          "elapsedMs": 0.7675419999998212,
+          "elapsedMs": 0.7400000000000091,
           "watchdog": false
         }
       ]
