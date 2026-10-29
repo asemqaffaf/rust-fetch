@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __bindNodeTransport: (a: any, b: any) => [number, number];
 export const __wbg_eventstream_free: (a: number, b: number) => void;
 export const __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
 export const __wbg_intounderlyingsink_free: (a: number, b: number) => void;

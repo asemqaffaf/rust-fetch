@@ -23,6 +23,7 @@ use crate::{
     },
 };
 use futures_util::StreamExt;
+use std::cell::OnceCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -47,30 +48,45 @@ extern "C" {
     fn decode(this: &NativeTextDecoder, bytes: &JsValue) -> std::result::Result<JsValue, JsValue>;
 }
 
+struct NodeBindings {
+    transport: js_sys::Function,
+    websocket_guard: js_sys::Function,
+}
+
 thread_local! {
     static TEXT_DECODER: NativeTextDecoder = NativeTextDecoder::new();
-    /// The Node.js transport, registered by the Node entry point before any
-    /// request is made. See `nodeTransport` in `js/node.js` for its contract.
-    static NODE_TRANSPORT: Option<js_sys::Function> = js_sys::Reflect::get(
-        &js_sys::global(),
-        &js_sys::Symbol::for_("rust-fetch.transport"),
-    )
-    .ok()
-    .and_then(|transport| transport.dyn_into().ok());
-    /// The Node.js entry's check for `websocket()` with `allowPrivateNetwork: false`;
-    /// see `websocketGuard` in `js/node.js`
-    static WEBSOCKET_GUARD: Option<js_sys::Function> = js_sys::Reflect::get(
-        &js_sys::global(),
-        &js_sys::Symbol::for_("rust-fetch.websocketGuard"),
-    )
-    .ok()
-    .and_then(|guard| guard.dyn_into().ok());
+    /// Owned by this Wasm instance, never discovered through another copy's globals.
+    static NODE_BINDINGS: OnceCell<NodeBindings> = const { OnceCell::new() };
+}
+
+/// Private adapter handshake, called synchronously by the Node entry point.
+#[wasm_bindgen(js_name = __bindNodeTransport, skip_typescript)]
+pub fn bind_node_transport(
+    transport: js_sys::Function,
+    websocket_guard: js_sys::Function,
+) -> std::result::Result<(), JsValue> {
+    NODE_BINDINGS
+        .with(|bindings| {
+            bindings.set(NodeBindings {
+                transport,
+                websocket_guard,
+            })
+        })
+        .map_err(|_| JsValue::from_str("The Node.js transport is already bound"))
+}
+
+fn node_transport() -> Option<js_sys::Function> {
+    NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.transport.clone()))
+}
+
+fn node_websocket_guard() -> Option<js_sys::Function> {
+    NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.websocket_guard.clone()))
 }
 
 /// Node.js: why the last WebSocket connection to `url`'s host was blocked,
 /// if it was (undici reports only a generic error)
 pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
-    let guard = WEBSOCKET_GUARD.with(Clone::clone)?;
+    let guard = node_websocket_guard()?;
     let blocked: js_sys::Function = js_sys::Reflect::get(&guard, &"blocked".into())
         .ok()?
         .dyn_into()
@@ -84,7 +100,7 @@ pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
 /// Node.js: check a WebSocket URL for `allowPrivateNetwork: false` and return
 /// the dispatcher that checks where it connects
 pub(crate) fn websocket_guard(url: &str) -> Result<JsValue> {
-    let guard = WEBSOCKET_GUARD.with(Clone::clone).ok_or_else(|| {
+    let guard = node_websocket_guard().ok_or_else(|| {
         super::invalid(
             "allowPrivateNetwork",
             "needs the package's Node.js entry point to check WebSocket connections",
@@ -203,7 +219,7 @@ impl PreparedRequest {
         let method = config.method.to_reqwest();
         let redirect = redirect_mode(config);
 
-        if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
+        if let Some(transport) = node_transport() {
             let request = node_request(
                 url,
                 method.as_str(),
@@ -410,7 +426,7 @@ impl StreamingRequest {
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let redirect = redirect_mode(config);
         let method = config.method.to_reqwest();
-        if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
+        if let Some(transport) = node_transport() {
             let request = node_request(
                 url,
                 method.as_str(),
@@ -1307,9 +1323,9 @@ fn report_progress(callback: &js_sys::Function, loaded: f64, total: Option<f64>)
     let _ = callback.call1(&JsValue::UNDEFINED, &event);
 }
 
-/// Whether this is the Node.js entry, which registers its own transport
+/// Whether this Wasm instance has been bound to its Node.js entry's transport.
 pub(crate) fn is_node() -> bool {
-    NODE_TRANSPORT.with(Option::is_some)
+    NODE_BINDINGS.with(|bindings| bindings.get().is_some())
 }
 
 /// Whether `globalThis[name]` exists
