@@ -28,9 +28,15 @@ export type QueryParams =
  * - `Blob` / `File` is sent as bytes with the blob's type
  * - `FormData` is sent as `multipart/form-data`, including files
  * - `URLSearchParams` is sent form-encoded (`application/x-www-form-urlencoded`)
+ * - `ReadableStream` / async iterable byte sources stream with backpressure; a factory permits replay
  * - anything else is sent as JSON (`application/json`), like `JSON.stringify`
  */
-export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | FormData | URLSearchParams | object | number | boolean | null;
+export type UploadChunk = string | ArrayBuffer | ArrayBufferView;
+/** A one-shot byte source. Node Readable implements AsyncIterable. */
+export type UploadBody = ReadableStream<UploadChunk> | AsyncIterable<UploadChunk>;
+/** Called for every attempt; return a fresh source to allow retries. */
+export type UploadBodyFactory = () => UploadBody | Promise<UploadBody>;
+export type RequestBody = UploadBody | UploadBodyFactory | string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | FormData | URLSearchParams | object | number | boolean | null;
 
 /**
  * How to decode the response body:
@@ -82,7 +88,7 @@ export interface DownloadProgress {
     total: number | null;
 }
 
-/** Upload progress: bytes of the request body sent so far, and the body's size. */
+/** Upload progress: bytes handed to the transport, and body size (0 when unknown). */
 export interface UploadProgress {
     loaded: number;
     total: number;

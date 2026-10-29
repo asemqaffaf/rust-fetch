@@ -13,6 +13,7 @@
 
 mod pool;
 mod timeouts;
+mod upload;
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -21,7 +22,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::future::{AbortHandle, Abortable};
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_ENCODING, HOST, LOCATION};
 use hyper::Method;
@@ -34,7 +35,7 @@ use pool::{lock, Connection, Pool};
 const MAX_REDIRECTS: u32 = 20;
 /// Private wire protocol understood by the JavaScript adapter.
 #[napi]
-pub const TRANSPORT_VERSION: u32 = 2;
+pub const TRANSPORT_VERSION: u32 = 3;
 
 /// How errors for bodies over `max_response_bytes` start; `send` reports them
 /// with the code `RUST_FETCH_TOO_LARGE`
@@ -98,7 +99,7 @@ pub fn configure(options: Options) -> napi::Result<()> {
     Ok(())
 }
 
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 pub struct Request {
     /// Identifies the request for `cancel`
     pub id: u32,
@@ -107,6 +108,10 @@ pub struct Request {
     /// Header names and values, alternating; repeated names are sent once each
     pub headers: Vec<String>,
     pub body: Option<Uint8Array>,
+    /// Optional pull callbacks, used only by streaming uploads.
+    pub upload_next: Option<upload::Next>,
+    pub upload_cancel: Option<upload::Control>,
+    pub upload_restart: Option<upload::Control>,
     /// Timeout for the whole attempt, in ms
     pub timeout: Option<f64>,
     /// Time to acquire/establish a connection, including TLS, in ms.
@@ -196,7 +201,12 @@ async fn send_attempt(
             }
             let code = message
                 .starts_with(TOO_LARGE)
-                .then_some("RUST_FETCH_TOO_LARGE");
+                .then_some("RUST_FETCH_TOO_LARGE")
+                .or_else(|| {
+                    message
+                        .contains(upload::INVALID)
+                        .then_some("RUST_FETCH_UPLOAD_INPUT")
+                });
             Response::failed(message, code)
         }
         Ok(Err(_aborted)) => {
@@ -217,6 +227,23 @@ pub fn cancel(id: u32) {
 }
 
 impl Response {
+    fn received(response: &hyper::Response<Incoming>, url: Url) -> Self {
+        let mut headers = Vec::with_capacity(response.headers().len() * 2);
+        for (name, value) in response.headers() {
+            headers.push(name.as_str().to_owned());
+            headers.push(String::from_utf8_lossy(value.as_bytes()).into_owned());
+        }
+        Self {
+            status: u32::from(response.status().as_u16()),
+            url: url.into(),
+            headers,
+            body: None,
+            error: None,
+            code: None,
+            phase: None,
+            timeout_ms: None,
+        }
+    }
     fn timed_out(phase: &str, ms: f64) -> Self {
         let label = if phase == "total" {
             String::new()
@@ -246,8 +273,17 @@ impl Response {
     }
 }
 
+impl Request {
+    fn take_upload(&mut self) -> Option<upload::Upload> {
+        self.upload_next
+            .take()
+            .zip(self.upload_cancel.take())
+            .map(|(next, cancel)| upload::Upload::new(next, cancel, self.upload_restart.take()))
+    }
+}
+
 impl Transport {
-    async fn send(&self, request: Request) -> Result<Response, String> {
+    async fn send(&self, mut request: Request) -> Result<Response, String> {
         let connect_timeout = timeouts::duration(request.connect_timeout);
         let mut first_connect_timeout = timeouts::duration(request.connect_timeout_remaining);
         let response_timeout = timeouts::duration(request.response_timeout);
@@ -258,6 +294,7 @@ impl Transport {
         let mut method =
             Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
         let mut headers = header_map(&request.headers)?;
+        let mut upload = request.take_upload();
         let mut body = request.body.map(|body| Bytes::copy_from_slice(&body));
         let mut redirects = 0;
         let manual = request.manual.unwrap_or(false);
@@ -273,27 +310,30 @@ impl Transport {
                 response_timeout,
                 self.exchange(
                     &url,
-                    http_request(&method, &url, &headers, body.as_ref())?,
+                    http_request(
+                        &method,
+                        &url,
+                        &headers,
+                        upload::Outgoing::new(body.as_ref(), upload.as_mut()),
+                    )?,
                     first_connect_timeout.take().or(connect_timeout),
                 ),
             )
             .await?;
             let status = response.status().as_u16();
 
-            let location = response
-                .headers()
-                .get(LOCATION)
-                .map(|l| String::from_utf8_lossy(l.as_bytes()).into_owned());
             if let (true, Some(location)) = (
                 !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
-                location,
+                response.headers().get(LOCATION),
             ) {
+                let location = String::from_utf8_lossy(location.as_bytes()).into_owned();
                 let drained = http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
-                if timeouts::until(response_deadline, response_timeout, async {
-                    drained.collect().await.map_err(|error| error.to_string())
-                })
-                .await
-                .is_ok()
+                if upload.is_none()
+                    && timeouts::until(response_deadline, response_timeout, async {
+                        drained.collect().await.map_err(|error| error.to_string())
+                    })
+                    .await
+                    .is_ok()
                 {
                     connection.release();
                 }
@@ -306,6 +346,11 @@ impl Transport {
                     status,
                 )?;
                 rewrite_redirect(status, &mut method, &mut body, &mut headers);
+                if method == Method::GET || method == Method::HEAD {
+                    upload = None;
+                } else if let Some(upload) = &mut upload {
+                    upload.replay().await?;
+                }
                 if next.origin() != url.origin() {
                     drop_credentials(&mut headers, &sensitive);
                 }
@@ -314,34 +359,29 @@ impl Transport {
                 continue;
             }
 
-            let mut response_headers = Vec::with_capacity(response.headers().len() * 2);
-            for (name, value) in response.headers() {
-                response_headers.push(name.as_str().to_owned());
-                response_headers.push(String::from_utf8_lossy(value.as_bytes()).into_owned());
-            }
+            let mut finished = Response::received(&response, url);
             let encoding = response
                 .headers()
                 .get(CONTENT_ENCODING)
                 .map(|e| String::from_utf8_lossy(e.as_bytes()).to_ascii_lowercase());
             let raw =
                 read_body(response, encoding.as_deref(), limit, &method, idle_timeout).await?;
-            connection.release();
+            if (200..300).contains(&status) {
+                if let Some(upload) = &upload {
+                    upload.finished().await?;
+                }
+                connection.release();
+            } else if upload.is_none() {
+                connection.release();
+            }
             let body = match encoding {
                 Some(encoding) if method != Method::HEAD => {
                     decode(raw, encoding, self.zstd, limit).await?
                 }
                 _ => Vec::from(raw),
             };
-            return Ok(Response {
-                status: u32::from(status),
-                url: url.into(),
-                headers: response_headers,
-                body: Some(body.into()),
-                error: None,
-                code: None,
-                phase: None,
-                timeout_ms: None,
-            });
+            finished.body = Some(body.into());
+            return Ok(finished);
         }
     }
 
@@ -351,7 +391,7 @@ impl Transport {
     async fn exchange(
         &self,
         url: &Url,
-        request: hyper::Request<Full<Bytes>>,
+        request: hyper::Request<upload::Outgoing>,
         connect_timeout: Option<Duration>,
     ) -> Result<(Connection, hyper::Response<Incoming>), String> {
         let mut connection =
@@ -526,9 +566,9 @@ fn http_request(
     method: &Method,
     url: &Url,
     headers: &HeaderMap,
-    body: Option<&Bytes>,
-) -> Result<hyper::Request<Full<Bytes>>, String> {
-    let mut request = hyper::Request::new(Full::new(body.cloned().unwrap_or_default()));
+    body: upload::Outgoing,
+) -> Result<hyper::Request<upload::Outgoing>, String> {
+    let mut request = hyper::Request::new(body);
     *request.method_mut() = method.clone();
     *request.uri_mut() = url[Position::BeforePath..Position::AfterQuery]
         .parse()

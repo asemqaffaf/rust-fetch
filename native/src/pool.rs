@@ -11,8 +11,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use http_body_util::Full;
 use hyper::client::conn::http1::{self, SendRequest};
 use hyper_util::rt::TokioIo;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -35,7 +33,7 @@ const MAX_CONNECTIONS_PER_ORIGIN: usize = 256;
 // isn't reused just as the server closes it
 const IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 
-pub(crate) type Sender = SendRequest<Full<Bytes>>;
+pub(crate) type Sender = SendRequest<crate::upload::Outgoing>;
 
 pub(crate) struct Pool {
     origins: Mutex<HashMap<String, Arc<Origin>>>,

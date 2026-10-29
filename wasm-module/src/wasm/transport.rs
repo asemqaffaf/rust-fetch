@@ -132,10 +132,12 @@ pub(crate) struct TransportOptions<'a> {
     /// Node.js: `allowInsecureRedirects`
     pub(crate) allow_insecure_redirects: bool,
     pub(crate) phases: &'a crate::PhaseTimeouts,
+    pub(crate) upload: Option<&'a super::upload::Upload>,
 }
 
 pub(crate) enum PreparedRequest {
     Fetch {
+        upload: Option<super::upload::Upload>,
         phases: Option<Box<crate::PhaseTimeouts>>,
         url: String,
         init: web_sys::RequestInit,
@@ -236,7 +238,8 @@ impl PreparedRequest {
         // XMLHttpRequest always follows redirects and has no equivalent for
         // most fetch() options; fetch() reports upload progress only once
         // XMLHttpRequest can't stop reading at a limit either
-        let xhr = progress.upload.is_some()
+        let xhr = options.upload.is_none()
+            && progress.upload.is_some()
             && redirect == Redirect::Follow
             && limit.is_none()
             && options.phases.response.is_none()
@@ -262,6 +265,12 @@ impl PreparedRequest {
             }
         }
 
+        if options.upload.is_some() && !super::upload::Upload::supported() {
+            return Err(super::invalid(
+                "body",
+                "Streaming uploads are unavailable in this runtime",
+            ));
+        }
         let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
         let init = fetch_init(
             method.as_str(),
@@ -272,6 +281,7 @@ impl PreparedRequest {
             fetch_options,
         )?;
         Ok(Self::Fetch {
+            upload: options.upload.cloned(),
             phases: (options.phases.response.is_some() || options.phases.idle.is_some())
                 .then(|| Box::new(*options.phases)),
             url: url.to_string(),
@@ -292,6 +302,7 @@ impl PreparedRequest {
     pub(crate) async fn send(&self) -> Result<Attempt<JsValue>> {
         match self {
             Self::Fetch {
+                upload,
                 phases,
                 url,
                 init,
@@ -310,6 +321,7 @@ impl PreparedRequest {
                     *redirect,
                     *limit,
                     phases.as_deref(),
+                    upload.as_ref(),
                 )
                 .await
             }
@@ -348,6 +360,7 @@ impl PreparedRequest {
 /// transport in Node.js, and with `fetch()` everywhere else
 pub(crate) enum StreamingRequest {
     Fetch {
+        upload: Option<super::upload::Upload>,
         phases: Option<Box<crate::PhaseTimeouts>>,
         url: String,
         init: web_sys::RequestInit,
@@ -422,7 +435,14 @@ impl StreamingRequest {
             redirect,
             fetch_options,
         )?;
+        if options.upload.is_some() && !super::upload::Upload::supported() {
+            return Err(super::invalid(
+                "body",
+                "Streaming uploads are unavailable in this runtime",
+            ));
+        }
         Ok(Self::Fetch {
+            upload: options.upload.cloned(),
             phases: (options.phases.response.is_some() || options.phases.idle.is_some())
                 .then(|| Box::new(*options.phases)),
             url: url.to_string(),
@@ -437,12 +457,23 @@ impl StreamingRequest {
     pub(crate) async fn send(&self) -> Result<Attempt<StreamedResponse>> {
         match self {
             Self::Fetch {
+                upload,
                 phases,
                 url,
                 init,
                 redirect,
                 limit,
-            } => send_fetch_streaming(url, init, *redirect, *limit, phases.as_deref()).await,
+            } => {
+                send_fetch_streaming(
+                    url,
+                    init,
+                    *redirect,
+                    *limit,
+                    phases.as_deref(),
+                    upload.as_ref(),
+                )
+                .await
+            }
             Self::Node {
                 transport,
                 request,
@@ -458,16 +489,20 @@ async fn send_fetch_streaming(
     redirect: Redirect,
     limit: Option<u64>,
     phases: Option<&crate::PhaseTimeouts>,
+    upload: Option<&super::upload::Upload>,
 ) -> Result<Attempt<StreamedResponse>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
     let cancel = controller.clone();
     let guard = CancelGuard::new(move || cancel.abort());
+    let session = start_upload(init, upload, None)?;
+    let source = session.clone();
+    let _upload_guard = CancelGuard::new(move || cancel_upload(source.as_ref()));
     let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
     let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(network_error)
+            .map_err(|error| upload_error(session.as_ref(), error))
     };
     let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
         Some(duration) => {
@@ -657,6 +692,9 @@ fn node_request(
         #[allow(clippy::cast_precision_loss)]
         set(&request, "maxResponseBytes", &(limit as f64).into())?;
     }
+    if let Some(upload) = options.upload {
+        set(&request, "upload", upload.value())?;
+    }
     Ok(request)
 }
 
@@ -801,6 +839,56 @@ fn body_blob(body: &js_sys::Uint8Array) -> JsValue {
             js_sys::Reflect::construct(&blob, &js_sys::Array::of1(&js_sys::Array::of1(body))).ok()
         })
         .unwrap_or_else(|| body.into())
+}
+
+fn start_upload(
+    init: &web_sys::RequestInit,
+    upload: Option<&super::upload::Upload>,
+    progress: Option<&js_sys::Function>,
+) -> Result<Option<JsValue>> {
+    let Some(upload) = upload else {
+        return Ok(None);
+    };
+    let session = upload.open(progress)?;
+    let readable: js_sys::Function = js_sys::Reflect::get(&session, &"readable".into())
+        .map_err(Error::from)?
+        .unchecked_into();
+    init.set_body(&readable.call0(&session).map_err(Error::from)?);
+    set(init, "duplex", &"half".into())?;
+    Ok(Some(session))
+}
+fn upload_error(session: Option<&JsValue>, error: JsValue) -> Error {
+    if let Some(session) = session {
+        let failure = js_sys::Reflect::get(session, &"failure".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+            .and_then(|f| f.call0(session).ok());
+        if let Some(failure) = failure.filter(|f| !f.is_undefined()) {
+            let message = js_sys::Reflect::get(&failure, &"error".into())
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or_default();
+            if js_sys::Reflect::get(&failure, &"invalidInput".into())
+                .ok()
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
+                return super::invalid("body", &message);
+            }
+            return network_error(js_sys::Reflect::get(&failure, &"cause".into()).unwrap_or(error));
+        }
+    }
+    network_error(error)
+}
+
+fn cancel_upload(session: Option<&JsValue>) {
+    if let Some(session) = session {
+        if let Ok(cancel) = js_sys::Reflect::get(session, &"cancel".into()) {
+            if let Some(cancel) = cancel.dyn_ref::<js_sys::Function>() {
+                let _ = cancel.call0(session);
+            }
+        }
+    }
 }
 
 fn fetch_init(
@@ -959,15 +1047,19 @@ async fn send_fetch(
     redirect: Redirect,
     limit: Option<u64>,
     phases: Option<&crate::PhaseTimeouts>,
+    upload: Option<&super::upload::Upload>,
 ) -> Result<Attempt<JsValue>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
     let guard = CancelGuard::new(move || controller.abort());
+    let session = start_upload(init, upload, progress.upload.as_ref())?;
+    let source = session.clone();
+    let _upload_guard = CancelGuard::new(move || cancel_upload(source.as_ref()));
     let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
     let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(network_error)
+            .map_err(|error| upload_error(session.as_ref(), error))
     };
     let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
         Some(duration) => {
@@ -1291,6 +1383,7 @@ fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
                 .and_then(|limit| limit.as_f64())
                 .unwrap_or(0.0) as u64,
         ),
+        Some("RUST_FETCH_UPLOAD_INPUT") => super::invalid("body", &js_error_message(error)),
         Some("RUST_FETCH_PARSE") => Error::Parse {
             message: format!("Failed to parse JSON response: {}", js_error_message(error)),
             source: None,

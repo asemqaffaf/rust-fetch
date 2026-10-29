@@ -45,7 +45,7 @@ function loadNative() {
   try {
     const addon = createRequire(import.meta.url)(path);
     // An older local binary would silently ignore new phase options.
-    if (addon.TRANSPORT_VERSION !== 2) return undefined;
+    if (addon.TRANSPORT_VERSION !== 3) return undefined;
     const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
     addon.configure({
       zstd: typeof zlib.zstdDecompressSync === 'function',
@@ -575,6 +575,7 @@ function phaseTimers(options, fail) {
     connected() { clear('connect'); },
     headers(redirecting, streamed) { clear('connect'); if (!redirecting) { clear('response'); if (!streamed) arm('idle'); } },
     data() { arm('idle'); },
+    bodyEnd() { clear('idle'); },
     clear() { for (const handle of handles.values()) clearTimeout(handle); handles.clear(); },
   };
 }
@@ -640,6 +641,25 @@ function writeBody(request, body, onProgress) {
   next();
 }
 
+function uploadError(step) {
+  const error = coded(new Error(step.error), step.invalidInput ? 'RUST_FETCH_UPLOAD_INPUT' : 'RUST_FETCH_UPLOAD_ERROR');
+  error.cause = step.cause;
+  return error;
+}
+
+async function writeUpload(request, upload) {
+  let loaded = 0;
+  while (!request.destroyed) {
+    const step = await upload.next();
+    if (request.destroyed) return;
+    if (step.error !== undefined) throw uploadError(step);
+    if (step.done) return new Promise((resolve, reject) => request.end((error) => error ? reject(error) : resolve()));
+    await new Promise((resolve, reject) => request.write(step.data, (error) => error ? reject(error) : resolve()));
+    loaded += step.data.byteLength;
+    upload.report(loaded);
+  }
+}
+
 function withoutHeaders(headers, names) {
   const copy = { ...headers };
   for (const name of names) delete copy[name];
@@ -661,6 +681,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     return reject(error);
   }
   const [transport, target, options] = args;
+  const upload = state.upload;
+  let uploading;
   state.phases?.connect();
   const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
@@ -703,12 +725,25 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       if (next.origin !== url.origin) {
         nextHeaders = withoutHeaders(nextHeaders, state.credentials);
       }
+      if (upload) {
+        try {
+          if (nextMethod === 'GET' || nextMethod === 'HEAD') { upload.cancel(); state.upload = undefined; }
+          else {
+            if (!upload.restart) throw coded(new Error('A streaming body cannot be replayed for a redirect; provide a body factory'), 'RUST_FETCH_UPLOAD_INPUT');
+            upload.restart();
+          }
+        } catch (error) { upload.cancel(); request.destroy(); return reject(error); }
+        // The unfinished upload cannot be reused with the redirect's connection.
+        request.destroy();
+      }
       return send(state, nextMethod, next, nextHeaders, nextBody, redirects + 1, resolve, reject);
     }
 
     // Streamed: resolve with the body as it arrives (error statuses are read in full)
     if (state.stream && success) {
-      return resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) });
+      const value = { status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) };
+      if (uploading) { uploading.then(() => resolve(value), reject); return; }
+      return resolve(value);
     }
 
     // With a Content-Length, fill one preallocated buffer (a single copy);
@@ -747,6 +782,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       if (!response.complete) reject(new TypeError('The connection closed before the response body was complete'));
     });
     response.on('end', () => {
+      state.phases?.bodyEnd();
       if (!response.complete) return reject(new TypeError('The connection closed before the response body was complete'));
       try {
         let body;
@@ -757,7 +793,9 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
           body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding'], limit));
           if (body.length > (limit ?? Infinity)) throw tooLarge(limit);
         }
-        resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body });
+        const value = { status, url: url.href, headers: flattenHeaders(response.headers), body };
+        if (uploading && success) uploading.then(() => resolve(value), reject);
+        else { if (upload) { upload.cancel(); if (!request.writableFinished) request.destroy(); } resolve(value); }
       } catch (error) {
         reject(error);
       }
@@ -767,8 +805,14 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     if (!socket.connecting && (!socket.encrypted || socket.getProtocol())) state.phases.connected();
     else socket.once(socket.encrypted ? 'secureConnect' : 'connect', () => state.phases.connected());
   });
-  request.on('error', reject);
-  writeBody(request, body, state.onUploadProgress);
+  request.on('error', upload ? (error) => { if (state.request === request) reject(error); } : reject);
+  if (upload) {
+    uploading = writeUpload(request, upload);
+    uploading.catch((error) => {
+      if (state.request !== request) return;
+      upload.cancel(); request.destroy(error); reject(error);
+    });
+  } else writeBody(request, body, state.onUploadProgress);
   state.request = request;
 }
 
@@ -793,11 +837,20 @@ function nodeTransport(request) {
   // Progress callbacks run on this thread, so those requests stay here.
   // Proxied requests, and those checked for private addresses, stay on node:http as well.
   const { onUploadProgress, onDownloadProgress } = request;
+  let upload, contentLength;
+  if (request.upload) {
+    try {
+      if (Object.hasOwn(request.headers, 'transfer-encoding')) throw uploadError({ error: 'Streaming body transfer encoding is set by the transport', invalidInput: true });
+      contentLength = Object.hasOwn(request.headers, 'content-length') ? request.headers['content-length'] : undefined;
+      upload = request.upload.open(onUploadProgress, contentLength);
+    }
+    catch (error) { const failed = Promise.reject(error); failed.cancel = () => {}; return failed; }
+  }
   const proxy = request.proxy ?? (process.env.NODE_USE_ENV_PROXY === '1' ? 'env' : undefined);
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
   const publicOnly = request.blockPrivateNetwork === true;
-  if (native && transport && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && !publicOnly && agentFor(transport) === pools.get(transport)) {
-    return nativeTransport(request);
+  if (native && transport && (!upload || contentLength !== '0') && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && !publicOnly && agentFor(transport) === pools.get(transport)) {
+    return nativeTransport(request, upload);
   }
 
   const state = {
@@ -815,6 +868,7 @@ function nodeTransport(request) {
     credentials: request.sensitiveHeaders ? [...CREDENTIAL_HEADERS, ...request.sensitiveHeaders] : CREDENTIAL_HEADERS,
     allowInsecureRedirects: request.allowInsecureRedirects !== false,
   };
+  if (upload) state.upload = upload;
   let timer;
   const promise = new Promise((resolve, reject) => {
     if (request.connectTimeout > 0 || request.responseTimeout > 0 || request.idleTimeout > 0) {
@@ -840,6 +894,10 @@ function nodeTransport(request) {
     const settle = (fn) => (value) => {
       clearTimeout(timer);
       state.phases?.clear();
+      if (state.upload) {
+        state.upload.cancel();
+        if (!state.request?.writableFinished) state.request?.destroy();
+      }
       if (!released) {
         released = true;
         release();
@@ -853,6 +911,7 @@ function nodeTransport(request) {
     state.phases?.clear();
     state.cancelled = true;
     if (state.waiting) state.waiting.cancelled = true;
+    state.upload?.cancel();
     if (state.proxy) pendingTunnels.get(state.request)?.abort();
     state.request?.destroy();
   };
@@ -871,7 +930,7 @@ function nodeTransport(request) {
 
 /** The request's headers plus fetch()-like defaults */
 function withDefaultHeaders(request) {
-  const headers = { ...request.headers };
+  const headers = { __proto__: null, ...request.headers };
   headers['accept'] ??= '*/*';
   headers['accept-encoding'] ??= ACCEPT_ENCODING;
   headers['user-agent'] ??= 'rust-fetch';
@@ -882,7 +941,7 @@ function withDefaultHeaders(request) {
 let nextNativeId = 0;
 
 /** `nodeTransport` through the native addon: same contract, same rules */
-function nativeTransport(request) {
+function nativeTransport(request, upload) {
   // prettier-ignore
   if (nativeTlsWarning && request.url.startsWith('https:')) { nativeTlsWarning = false; process.emitWarning(TLS_WARNING); }
   const id = (nextNativeId = (nextNativeId + 1) >>> 0);
@@ -912,6 +971,11 @@ function nativeTransport(request) {
   if (request.connectTimeout > 0) options.connectTimeout = request.connectTimeout;
   if (request.responseTimeout > 0) options.responseTimeout = request.responseTimeout;
   if (request.idleTimeout > 0) options.idleTimeout = request.idleTimeout;
+  if (upload) {
+    options.uploadNext = upload.nativeNext;
+    options.uploadCancel = upload.cancel;
+    options.uploadRestart = upload.restart;
+  }
   let dispatched = false;
   let giveUp;
   const sent = new Promise((resolve) => {
@@ -958,6 +1022,7 @@ function nativeTransport(request) {
   const finished = sent.then((response) => {
     if (response.code === 'RUST_FETCH_TOO_LARGE') throw tooLarge(options.maxResponseBytes);
     if (response.error != null) {
+      upload?.cancel();
       if (response.code === 'RUST_FETCH_TIMEOUT') {
         const phase = response.phase ?? 'total';
         throw timeoutError(phase, phase === 'total' ? request.timeout : request[`${phase}Timeout`]);
@@ -973,6 +1038,7 @@ function nativeTransport(request) {
     return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
   });
   finished.cancel = () => {
+    upload?.cancel();
     if (dispatched) native.cancel(id);
     else giveUp({ error: 'The request was cancelled', code: 'ABORT_ERR' });
   };
