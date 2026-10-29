@@ -81,10 +81,8 @@ export const reliabilityCases = [
     },
     "differs": {
       "webkit": {
-        "expect": {
-          "status": 200
-        },
-        "why": "WebKit accepts a 1 MiB response header. Header-buffer limits are controlled by the browser network stack, outside the JavaScript adapter; this is recorded rather than claimed as a uniform rejection."
+        "anyOf": [{ "status": 200 }, { "error": "NetworkError" }],
+        "why": "WebKit's network stack controls header-buffer limits: macOS accepts the tested 1 MiB header, while Linux rejects it as a NetworkError. Neither limit is configurable by the JavaScript adapter."
       }
     }
   },

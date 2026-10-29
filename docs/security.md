@@ -211,7 +211,7 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Native idle-origin caches retain at most 256 idle entries during admission/cleanup, while active origin handles keep their semaphore and pool. The Rust client's alternative transport cache remains capped at 32.
 - Optional logs and lifecycle hooks redact URL user info, query strings, credential headers and sensitiveHeaders, and never export bodies/error messages. Trace context requires an explicit destination allowlist and is stripped on cross-origin redirects. Browser automatic tracing refuses redirects.
 - Scheduled parser and JavaScript/Wasm boundary fuzzing runs offline against the actual validation paths. Crashes retain reproducers; a separate scheduled-report job can open an issue without giving pull-request test jobs write permissions.
-- Fault-injection rows run on every adapter in the conformance matrix. Header-buffer limits remain controlled by each runtime: WebKit accepts the tested 1 MiB header, so the matrix explicitly records that difference rather than claiming a uniform limit.
+- Fault-injection rows run on every adapter in the conformance matrix. Header-buffer limits remain controlled by each runtime: macOS WebKit accepts the tested 1 MiB header, while Linux WebKit rejects it as a `NetworkError`. The matrix records both platform outcomes.
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
