@@ -16,6 +16,7 @@ const pkg = new URL('../../pkg/', import.meta.url);
 const preflights = [];
 const attempts = new Map();
 const idempotencyKeys = new Map();
+const deadlineClosed = new Set();
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -107,6 +108,14 @@ function handler(cors) {
         await new Promise((r) => setTimeout(r, 3000));
         res.writeHead(200, { ...headers, 'content-type': 'application/json' });
         return res.end('{}');
+      case '/deadline-hold':
+        res.writeHead(200, { ...headers, 'content-type': 'text/plain' });
+        res.write('first');
+        res.once('close', () => deadlineClosed.add(url.searchParams.get('id')));
+        return;
+      case '/deadline-check':
+        res.writeHead(200, { ...headers, 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ closed: deadlineClosed.has(url.searchParams.get('id')) }));
       case '/stream':
         res.writeHead(200, { ...headers, 'content-type': 'text/plain' });
         res.write('first,');
@@ -388,6 +397,44 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.deepEqual(result.timeout, { kind: 'TimeoutError', timeoutMs: 200 });
       assert.deepEqual(result.retried, { attempts: 2 }); // Retry-After: 0 overrode the 5 s backoff
       assert.equal(result.cancelled, 'CancelledError');
+    });
+
+    it('enforces header, idle and body deadlines while ignoring unobservable connect timing', async () => {
+      const out = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const c = new WasmClient({ baseUrl: origin });
+        const failure = async (promise) => { try { await promise; return null; } catch (e) { return [e.kind ?? String(e), e.phase, e.timeoutMs]; } };
+        const response = await failure(c.get('/slow', { responseTimeoutMs: 25 }));
+        const idle = await failure(c.get('/stream', { idleTimeoutMs: 25 }));
+        const id = `${Date.now()}-${Math.random()}`;
+        const streamed = await c.get(`/deadline-hold?id=${id}`, { responseType: 'stream', deadlineMs: 40 });
+        await new Promise((r) => setTimeout(r, 80));
+        let cancelled = false;
+        for (let i = 0; i < 100 && !cancelled; i++) {
+          cancelled = (await c.get(`/deadline-check?id=${id}`)).body.closed;
+          if (!cancelled) await new Promise((r) => setTimeout(r, 10));
+        }
+        const deadline = await failure((async () => { const reader = streamed.body.getReader(); while (!(await reader.read()).done) {} })());
+        const ignored = (await c.get('/echo', { connectTimeoutMs: 0.001 })).status;
+        let xhrCount = 0;
+        const Original = globalThis.XMLHttpRequest;
+        globalThis.XMLHttpRequest = class extends Original { constructor() { super(); xhrCount++; } };
+        const uploads = [];
+        try { await c.put('/echo', { body: new Uint8Array(32), responseTimeoutMs: 1000, idleTimeoutMs: 1000, onUploadProgress: (p) => uploads.push(p.loaded) }); }
+        finally { globalThis.XMLHttpRequest = Original; }
+        return { response, idle, deadline, cancelled, ignored, xhrCount, uploads };
+      });
+      assert.deepEqual(out, { response: ['TimeoutError', 'response', 25], idle: ['TimeoutError', 'idle', 25], deadline: ['TimeoutError', 'total', 40], cancelled: true, ignored: 200, xhrCount: 0, uploads: [32] });
+    });
+
+    it('ends the SSE reconnect delay at the original logical deadline', async () => {
+      const out = await inPage(page, async ({ WasmClient }, { origin }) => {
+        const errors = [];
+        const stream = new WasmClient({ baseUrl: origin }).events('/sse', { deadlineMs: 60, reconnect: { initialDelayMs: 1000, jitter: false }, onError: (e) => errors.push([e.kind, e.phase, e.timeoutMs]) });
+        await stream.opened;
+        await stream.closed;
+        return errors.at(-1);
+      });
+      assert.deepEqual(out, ['TimeoutError', 'total', 60]);
     });
 
     it('replaces retry policies per request, including streaming, uploads and SSE', async () => {

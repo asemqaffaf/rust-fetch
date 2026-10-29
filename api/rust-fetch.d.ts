@@ -146,6 +146,15 @@ export interface ClientOptions extends BrowserRequestOptions {
     headers?: HeadersLike;
     /** Timeout for each attempt (sending + reading the body), in ms. `0` disables it. Default: 30000 */
     timeoutMs?: number;
+    /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+    connectTimeoutMs?: number;
+    /** Time until final response headers arrive. `0` disables. */
+    responseTimeoutMs?: number;
+    /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+    idleTimeoutMs?: number;
+    /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+    deadlineMs?: number;
+
     /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
     retries?: number | RetryOptions;
     /**
@@ -244,6 +253,15 @@ export interface RequestOptions extends BrowserRequestOptions {
     params?: QueryParams;
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
     timeoutMs?: number;
+    /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+    connectTimeoutMs?: number;
+    /** Time until final response headers arrive. `0` disables. */
+    responseTimeoutMs?: number;
+    /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+    idleTimeoutMs?: number;
+    /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+    deadlineMs?: number;
+
     /**
      * Replaces the client's retry policy for this request (also for `events()` connection attempts).
      * `0` disables retries. Omitted object fields use the standard defaults, not the client's values.
@@ -357,6 +375,8 @@ export interface RustFetchError extends Error {
     origin?: string;
     /** CircuitOpenError: milliseconds until recovery may be probed */
     retryAfterMs?: number;
+    /** TimeoutError: which timer expired (deadlineMs uses total) */
+    phase?: 'connect' | 'response' | 'idle' | 'total';
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
     maxQueuedMessages?: number;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -386,6 +406,15 @@ export interface EventStreamOptions extends BrowserRequestOptions {
     params?: QueryParams;
     /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
     timeoutMs?: number;
+    /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+    connectTimeoutMs?: number;
+    /** Time until final response headers arrive. `0` disables. */
+    responseTimeoutMs?: number;
+    /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+    idleTimeoutMs?: number;
+    /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+    deadlineMs?: number;
+
     /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
     retries?: number | RetryOptions;
     /** Overrides the client's key policy; generated keys are reused across retries and reconnections. Requires server deduplication. */

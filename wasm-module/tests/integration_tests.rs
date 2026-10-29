@@ -1704,3 +1704,102 @@ async fn sensitive_headers_refuse_cross_origin_redirects_in_the_rust_client() {
         .await;
     assert_eq!(response.unwrap().status, 200);
 }
+
+#[tokio::test]
+async fn phase_timeouts_bound_connection_headers_and_body_and_can_be_replaced() {
+    use rust_fetch::{PhaseTimeouts, TimeoutPhase};
+    let server = TestServer::start(|_, _| Reply::new(200, "late").delay(Duration::from_millis(80)));
+    let client = Client::builder()
+        .phase_timeouts(PhaseTimeouts::new().response(Duration::from_millis(15)))
+        .build()
+        .unwrap();
+    let error = client
+        .request(Method::Get, &server.base)
+        .send()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.timeout_details().unwrap().phase,
+        TimeoutPhase::Response
+    );
+    assert_eq!(
+        client
+            .request(Method::Get, &server.base)
+            .phase_timeouts(PhaseTimeouts::new())
+            .send()
+            .await
+            .unwrap()
+            .status,
+        200
+    );
+    let immediate = TestServer::start(|_, _| Reply::new(200, "ok"));
+    let prepared = client
+        .request(Method::Get, &immediate.base)
+        .phase_timeouts(PhaseTimeouts::new().deadline(Duration::from_millis(20)));
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(
+        prepared.send().await.unwrap().status,
+        200,
+        "Rust deadlines begin when sending, not when preparing a builder"
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (_socket, _) = listener.accept().unwrap();
+        thread::sleep(Duration::from_millis(200));
+    });
+    let error = client
+        .request(Method::Get, &format!("https://{address}/"))
+        .phase_timeouts(PhaseTimeouts::new().connect(Duration::from_millis(15)))
+        .send()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.timeout_details().unwrap().phase,
+        TimeoutPhase::Connect
+    );
+    let body = TestServer::start(|_, _| {
+        Reply::raw(vec![
+            (
+                Duration::ZERO,
+                "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nfirst",
+            ),
+            (Duration::from_millis(100), "final"),
+        ])
+    });
+    let error = client
+        .request(Method::Get, &body.base)
+        .phase_timeouts(PhaseTimeouts::new().idle(Duration::from_millis(15)))
+        .send()
+        .await
+        .unwrap_err();
+    assert_eq!(error.timeout_details().unwrap().phase, TimeoutPhase::Idle);
+    let response = client
+        .request(Method::Get, &body.base)
+        .phase_timeouts(PhaseTimeouts::new().deadline(Duration::from_millis(20)))
+        .send_streaming()
+        .await
+        .unwrap();
+    assert_eq!(response.content_length(), Some(10));
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let mut stream = Box::pin(response.into_stream());
+    assert_eq!(
+        stream
+            .next()
+            .await
+            .unwrap()
+            .unwrap_err()
+            .timeout_details()
+            .unwrap()
+            .phase,
+        TimeoutPhase::Total
+    );
+    assert!(stream.next().await.is_none());
+    let error = client
+        .request(Method::Get, &body.base)
+        .phase_timeouts(PhaseTimeouts::new().deadline(Duration::from_millis(15)))
+        .send()
+        .await
+        .unwrap_err();
+    assert_eq!(error.timeout_details().unwrap().phase, TimeoutPhase::Total);
+}

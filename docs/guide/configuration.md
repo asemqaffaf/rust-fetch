@@ -28,6 +28,7 @@ Every client option:
 | `baseUrl` | none | Relative request URLs resolve under it; see [Making requests](/guide/requests#making-requests) |
 | `headers` | none | Sent with every request; a request header with the same name wins |
 | `timeoutMs` | `30000` | Per attempt, until the last byte of the body; `0` disables it. See [Timeouts](/guide/timeouts-and-retries#timeouts) |
+| `connectTimeoutMs`, `responseTimeoutMs`, `idleTimeoutMs`, `deadlineMs` | off | Optional phase timers and a deadline including queues, retries and body lifetime. `0` disables each independently. See [Timeouts](/guide/timeouts-and-retries#timeouts) |
 | `retries` | no retries | A count or `RetryOptions`; see [Retries](/guide/timeouts-and-retries#retries) |
 | `idempotencyKey`, `idempotencyHeader` | off, `Idempotency-Key` | Key generation/header defaults; requires server deduplication. See [Idempotency keys](/guide/timeouts-and-retries#idempotency-keys) |
 | `retryBudget` | no budget | `true` or `{ ratio, minPerSecond, windowMs }`: limits retries across the client; see [Retries](/guide/timeouts-and-retries#retries) |

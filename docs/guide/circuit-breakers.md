@@ -11,7 +11,7 @@ const client = new WasmClient({
 
 The feature is off by default. `circuitBreaker: {}` uses the values above. State is independent per origin (scheme, hostname and port), shared across a client and its Rust clones.
 
-1. **Closed:** attempts proceed. Network errors, timeouts and HTTP 5xx increment the consecutive-failure count. Other responses, including 4xx, reset it. Cancelled attempts do not change it.
+1. **Closed:** attempts proceed. Network errors, timeouts and HTTP 5xx increment the consecutive-failure count. Other responses, including 4xx, reset it. Cancelled attempts, including a logical `deadlineMs` expiring, do not change it; attempt/phase timeout failures count.
 2. **Open:** after `failureThreshold` failures, new attempts reject immediately with `kind: 'CircuitOpenError'`, `origin` and `retryAfterMs`. No transport is called. Retries count as attempts and can open the circuit; an open circuit stops further retries.
 3. **Half-open:** after `resetAfterMs`, exactly one admitted attempt probes recovery. Other callers fail fast while it runs. Success closes the circuit; another availability failure reopens it for the full interval. Cancelling the probe allows another probe immediately. Results from older in-flight attempts cannot close a newer open circuit.
 

@@ -39,6 +39,7 @@ pub struct Client {
 pub(crate) struct ClientConfig {
     pub(crate) default_headers: Headers,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) phases: crate::PhaseTimeouts,
     retry_config: Option<RetryConfig>,
     pub(crate) base_url: Option<String>,
     redirect: Redirect,
@@ -124,7 +125,10 @@ pub struct StreamingResponse {
     pub headers: Headers,
     /// Request URL (after redirects)
     pub url: String,
-    inner: StreamBody,
+    inner: Option<StreamBody>,
+    guarded: Option<GuardedBody>,
+    length: Option<u64>,
+    idle: Option<Duration>,
     progress: Option<ProgressFn>,
     limit: Option<u64>,
     permit: Option<crate::limiter::Ticket>,
@@ -151,22 +155,59 @@ fn body_chunks(body: StreamBody) -> impl Stream<Item = Result<Vec<u8>>> {
     body.chunks()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type GuardedBody = std::pin::Pin<Box<dyn Stream<Item = Result<Vec<u8>>> + Send + Sync>>;
+#[cfg(target_arch = "wasm32")]
+type GuardedBody = std::pin::Pin<Box<dyn Stream<Item = Result<Vec<u8>>>>>;
+
 impl StreamingResponse {
+    fn with_deadline(self, deadline: Option<crate::timeouts::Deadline>) -> Self {
+        let Some(deadline) = deadline else {
+            return self;
+        };
+        let (status, status_text, headers, url, length) = (
+            self.status,
+            self.status_text.clone(),
+            self.headers.clone(),
+            self.url.clone(),
+            self.length,
+        );
+        let guarded = crate::timeouts::DeadlineStream::new(self.into_stream(), deadline);
+        Self {
+            status,
+            status_text,
+            headers,
+            url,
+            length,
+            inner: None,
+            guarded: Some(Box::pin(guarded)),
+            idle: None,
+            progress: None,
+            limit: None,
+            permit: None,
+        }
+    }
     /// The expected body size from `Content-Length`, if known
     pub fn content_length(&self) -> Option<u64> {
-        self.inner.content_length()
+        self.length
     }
 
     /// Stream the body chunk by chunk, reporting progress if a callback was set
     pub fn into_stream(self) -> impl Stream<Item = Result<Vec<u8>>> {
-        let total = self.inner.content_length();
+        let total = self.length;
         let progress = self.progress;
         let limit = self.limit;
         let mut loaded = 0u64;
         // A Content-Length over the limit fails on the first read
         let declared_too_large =
             matches!((limit, total), (Some(limit), Some(total)) if total > limit);
-        let chunks = body_chunks(self.inner).map(move |chunk| {
+        let body = match self.guarded {
+            Some(body) => futures_util::future::Either::Left(body),
+            None => futures_util::future::Either::Right(body_chunks(
+                self.inner.expect("raw or guarded body"),
+            )),
+        };
+        let chunks = crate::timeouts::idle(body, self.idle).map(move |chunk| {
             if let (true, Some(limit)) = (declared_too_large, limit) {
                 return Err(Error::too_large(limit));
             }
@@ -187,11 +228,24 @@ impl StreamingResponse {
     /// on their way (no download progress, no size limit); otherwise the
     /// response back, to read through [`StreamingResponse::into_stream`]
     #[cfg(target_arch = "wasm32")]
-    pub(crate) fn into_raw(self) -> std::result::Result<Option<web_sys::ReadableStream>, Self> {
-        if self.progress.is_some() || self.limit.is_some() || self.permit.is_some() {
+    pub(crate) fn into_raw(
+        self,
+    ) -> std::result::Result<
+        (
+            Option<web_sys::ReadableStream>,
+            Option<web_sys::AbortController>,
+        ),
+        Self,
+    > {
+        if self.progress.is_some()
+            || self.limit.is_some()
+            || self.permit.is_some()
+            || self.idle.is_some()
+            || self.guarded.is_some()
+        {
             return Err(self);
         }
-        Ok(self.inner.into_raw())
+        Ok(self.inner.expect("raw body").into_raw())
     }
 
     /// Read the remaining body into memory
@@ -277,6 +331,8 @@ impl Client {
             query: Vec::new(),
             progress: None,
             retry_config: None,
+            phase_overrides: None,
+            deadline: None,
             idempotency_header: None,
             redirect,
             max_redirects,
@@ -299,10 +355,23 @@ impl Client {
         &self,
         config: &RequestConfig,
         guards: RedirectGuards,
+        connect: Option<Duration>,
     ) -> Result<reqwest::Client> {
-        let key = (config.follow_redirects, config.max_redirects, guards);
+        let key = (
+            config.follow_redirects,
+            config.max_redirects,
+            guards,
+            connect,
+        );
         let (follow, max) = self.config.redirect.config(self.config.max_redirects);
-        if key == (follow, max, RedirectGuards::default()) {
+        if key
+            == (
+                follow,
+                max,
+                RedirectGuards::default(),
+                self.config.phases.connect,
+            )
+        {
             return Ok(self.inner.clone());
         }
         let mut clients = self
@@ -325,6 +394,7 @@ impl Client {
         &self,
         _config: &RequestConfig,
         _guards: RedirectGuards,
+        _connect: Option<Duration>,
     ) -> Result<reqwest::Client> {
         Ok(self.inner.clone())
     }
@@ -342,6 +412,7 @@ impl Client {
         limit: Option<u64>,
         guards: RedirectGuards,
         retry: RetryPolicy<'_>,
+        phases: &crate::PhaseTimeouts,
     ) -> Result<RawResponse> {
         let url = resolve_url(self.config.base_url.as_deref(), page_url(), url, query)?;
         // reqwest takes its own URL type; in WebAssembly the bindings' URLs are
@@ -351,7 +422,7 @@ impl Client {
             .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
         self.execute_retrying(url.as_str(), config.timeout, retry, None, || async {
             let raw = self
-                .execute_once(&url, config, stream, progress, limit, guards)
+                .execute_once(&url, config, stream, progress, limit, guards, phases)
                 .await?;
             if is_success(raw.status, config) {
                 Ok(Attempt::Success(raw))
@@ -525,11 +596,14 @@ impl Client {
         if !replay_safe && !retry.retry_non_idempotent {
             return None;
         }
-        let retryable = match error {
-            Error::Network { .. } => retry.retry_on_network_error,
-            Error::Timeout { .. } => retry.retry_on_timeout,
-            Error::Http { status, .. } => retry.retry_on_status.contains(status),
-            _ => false,
+        let retryable = if error.timeout_details().is_some() {
+            retry.retry_on_timeout
+        } else {
+            match error {
+                Error::Network { .. } => retry.retry_on_network_error,
+                Error::Http { status, .. } => retry.retry_on_status.contains(status),
+                _ => false,
+            }
         };
         if !retryable {
             return None;
@@ -550,9 +624,10 @@ impl Client {
         progress: Option<&ProgressFn>,
         limit: Option<u64>,
         guards: RedirectGuards,
+        phases: &crate::PhaseTimeouts,
     ) -> Result<RawResponse> {
         let mut request = self
-            .http_client(config, guards)?
+            .http_client(config, guards, phases.connect)?
             .request(config.method.to_reqwest(), url.clone());
 
         // Set headers
@@ -570,7 +645,22 @@ impl Client {
             request = request.body(body.to_bytes()?);
         }
 
-        let response = request.send().await?;
+        let receive = async {
+            request.send().await.map_err(|error| {
+                if error.is_timeout() && phases.connect.is_some() {
+                    Error::phase_timeout(crate::TimeoutPhase::Connect, phases.connect.unwrap())
+                } else {
+                    Error::from(error)
+                }
+            })
+        };
+        let response = match phases.response {
+            Some(duration) => {
+                runtime::timeout_phase(duration, crate::TimeoutPhase::Response, duration, receive)
+                    .await?
+            }
+            None => receive.await?,
+        };
 
         let status = response.status();
         let url = response.url().to_string();
@@ -585,7 +675,10 @@ impl Client {
         } else {
             // Only report progress for the body the caller asked for
             let progress = progress.filter(|_| success);
-            (read_body(response, progress, limit).await?, None)
+            (
+                read_body(response, progress, limit, phases.idle).await?,
+                None,
+            )
         };
 
         Ok(RawResponse {
@@ -614,14 +707,19 @@ pub(crate) const INSECURE_REDIRECT: &str =
 const CROSS_ORIGIN_REDIRECT: &str = "Redirect to another origin refused: the request has a header listed in sensitiveHeaders, which this transport can't drop";
 
 /// The settings a reqwest client's redirect policy is built from
-type RedirectKey = (bool, u32, RedirectGuards);
+type RedirectKey = (bool, u32, RedirectGuards, Option<Duration>);
 
-fn http_client((follow, max_redirects, guards): RedirectKey) -> Result<reqwest::Client> {
+fn http_client((follow, max_redirects, guards, connect): RedirectKey) -> Result<reqwest::Client> {
     let builder = reqwest::Client::builder();
     #[cfg(not(target_arch = "wasm32"))]
     let builder = builder.redirect(redirect_policy(follow, max_redirects, guards));
     #[cfg(target_arch = "wasm32")]
-    let _ = (follow, max_redirects, guards);
+    let _ = (follow, max_redirects, guards, connect);
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = match connect {
+        Some(timeout) => builder.connect_timeout(timeout),
+        None => builder,
+    };
     builder.build().map_err(client_init_error)
 }
 
@@ -724,6 +822,7 @@ async fn read_body(
     response: reqwest::Response,
     progress: Option<&ProgressFn>,
     limit: Option<u64>,
+    idle: Option<Duration>,
 ) -> Result<Vec<u8>> {
     const MAX_PREALLOCATION: u64 = 64 * 1024 * 1024;
     let total = response.content_length();
@@ -736,9 +835,12 @@ async fn read_body(
     let capacity = usize::try_from(total.unwrap_or(0).min(MAX_PREALLOCATION)).unwrap_or(0);
     let mut body = Vec::with_capacity(capacity);
 
-    let mut chunks = response.bytes_stream();
+    let chunks = response
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(|e| Error::network("Failed to read response body", e)));
+    let mut chunks = std::pin::pin!(crate::timeouts::idle(chunks, idle));
     while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.map_err(|e| Error::network("Failed to read response body", e))?;
+        let chunk = chunk?;
         body.extend_from_slice(&chunk);
         if let Some(limit) = limit.filter(|limit| body.len() as u64 > *limit) {
             return Err(Error::too_large(limit));
@@ -902,6 +1004,7 @@ impl Drop for Pending {
 pub struct ClientBuilder {
     headers: Headers,
     timeout: Option<Duration>,
+    phases: crate::PhaseTimeouts,
     retry_config: Option<RetryConfig>,
     base_url: Option<String>,
     redirect: Redirect,
@@ -935,6 +1038,7 @@ impl ClientBuilder {
         Self {
             headers: Headers::new(),
             timeout: Some(Duration::from_secs(30)),
+            phases: crate::PhaseTimeouts::default(),
             retry_config: None,
             base_url: None,
             redirect: Redirect::Follow,
@@ -1144,6 +1248,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set optional phase timeouts and a logical-request deadline.
+    pub fn phase_timeouts(mut self, phases: crate::PhaseTimeouts) -> Self {
+        self.phases = phases;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<Client> {
         self.limits.validate()?;
@@ -1183,7 +1293,7 @@ impl ClientBuilder {
         }
 
         let (follow, max) = self.redirect.config(self.max_redirects);
-        let inner = http_client((follow, max, RedirectGuards::default()))?;
+        let inner = http_client((follow, max, RedirectGuards::default(), self.phases.connect))?;
 
         Ok(Client {
             inner,
@@ -1191,6 +1301,7 @@ impl ClientBuilder {
                 breaker,
                 default_headers: self.headers,
                 timeout: self.timeout,
+                phases: self.phases,
                 retry_config: self.retry_config,
                 base_url: self.base_url,
                 redirect: self.redirect,
@@ -1240,6 +1351,8 @@ pub struct RequestBuilder {
     progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
+    phase_overrides: Option<Box<crate::PhaseTimeouts>>,
+    pub(crate) deadline: Option<Box<crate::timeouts::Deadline>>,
     idempotency_header: Option<String>,
     redirect: Redirect,
     max_redirects: u32,
@@ -1288,16 +1401,39 @@ impl RequestBuilder {
         } else {
             self.config.timeout
         };
-        self.client
-            .execute_retrying(
+        crate::timeouts::with_deadline(
+            self.effective_deadline(),
+            self.client.execute_retrying(
                 url.as_str(),
                 timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref(),
                 || request.send(),
-            )
-            .await
-            .map(|(response, _permit)| response)
+            ),
+        )
+        .await
+        .map(|(response, _permit)| response)
+    }
+
+    /// Replace the client's phase timeout settings for this request.
+    pub fn phase_timeouts(mut self, phases: crate::PhaseTimeouts) -> Self {
+        self.deadline = None;
+        self.phase_overrides = Some(Box::new(phases));
+        self
+    }
+
+    pub(crate) fn effective_deadline(&self) -> Option<crate::timeouts::Deadline> {
+        self.deadline.as_deref().copied().or_else(|| {
+            self.phase_options()
+                .deadline
+                .map(crate::timeouts::Deadline::new)
+        })
+    }
+
+    fn phase_options(&self) -> &crate::PhaseTimeouts {
+        self.phase_overrides
+            .as_deref()
+            .unwrap_or(&self.client.config.phases)
     }
 
     /// Send an idempotency key, allowing POST/PATCH retries when configured.
@@ -1502,6 +1638,7 @@ impl RequestBuilder {
             block_private_network: !self.allow_private_network,
             sensitive_headers: &self.sensitive_headers,
             allow_insecure_redirects: self.allow_insecure_redirects,
+            phases: self.phase_options(),
         }
     }
 
@@ -1522,9 +1659,9 @@ impl RequestBuilder {
     /// Execute the request and read the whole response
     pub async fn send(self) -> Result<Response> {
         self.check_absolute_url()?;
-        let raw = self
-            .client
-            .execute(
+        let raw = crate::timeouts::with_deadline(
+            self.effective_deadline(),
+            self.client.execute(
                 &self.url,
                 &self.query,
                 &self.config,
@@ -1533,8 +1670,10 @@ impl RequestBuilder {
                 self.max_response_bytes,
                 self.redirect_guards(),
                 self.retry_policy(),
-            )
-            .await?;
+                self.phase_options(),
+            ),
+        )
+        .await?;
         let content_type = raw.headers.get_first("content-type").unwrap_or("");
         let body = decode_body(raw.body, content_type, self.config.response_format)?;
         Ok(Response {
@@ -1565,30 +1704,37 @@ impl RequestBuilder {
             &self.config,
             &self.transport_options(),
         )?;
-        let (response, permit) = self
-            .client
-            .execute_retrying(
+        let deadline = self.effective_deadline();
+        let (response, permit) = crate::timeouts::with_deadline(
+            deadline,
+            self.client.execute_retrying(
                 url.as_str(),
                 self.config.timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref(),
                 || request.send(),
-            )
-            .await?;
+            ),
+        )
+        .await?;
+        let length = response.body.content_length();
         Ok(StreamingResponse {
             status: response.status,
             status_text: reqwest::StatusCode::from_u16(response.status)
                 .ok()
-                .and_then(|status| status.canonical_reason())
+                .and_then(|s| s.canonical_reason())
                 .unwrap_or("")
                 .to_string(),
             headers: response.headers,
             url: response.url,
-            inner: response.body,
+            inner: Some(response.body),
+            guarded: None,
+            length,
+            idle: self.phase_options().idle,
             progress: self.progress,
             limit: self.max_response_bytes,
             permit,
-        })
+        }
+        .with_deadline(deadline))
     }
 
     /// Execute the request and return as soon as a successful response's
@@ -1599,9 +1745,10 @@ impl RequestBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn send_streaming(self) -> Result<StreamingResponse> {
         self.check_absolute_url()?;
-        let raw = self
-            .client
-            .execute(
+        let deadline = self.effective_deadline();
+        let raw = crate::timeouts::with_deadline(
+            deadline,
+            self.client.execute(
                 &self.url,
                 &self.query,
                 &self.config,
@@ -1610,20 +1757,28 @@ impl RequestBuilder {
                 self.max_response_bytes,
                 self.redirect_guards(),
                 self.retry_policy(),
-            )
-            .await?;
+                self.phase_options(),
+            ),
+        )
+        .await?;
+        let inner = raw
+            .stream
+            .expect("successful streaming attempts keep their body unread");
+        let length = inner.content_length();
         Ok(StreamingResponse {
             status: raw.status,
             status_text: raw.status_text,
             headers: raw.headers,
             url: raw.url,
-            inner: raw
-                .stream
-                .expect("successful streaming attempts keep their body unread"),
+            inner: Some(inner),
+            guarded: None,
+            length,
+            idle: self.phase_options().idle,
             progress: self.progress,
             limit: self.max_response_bytes,
             permit: raw.permit,
-        })
+        }
+        .with_deadline(deadline))
     }
 }
 

@@ -5,13 +5,15 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import dns from 'node:dns';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { WasmClient } from '../../pkg/node.js';
@@ -171,6 +173,17 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     // node:http adds `connection: keep-alive`; the native transport doesn't need to
     const { headers } = (await client().get(server.url('/echo'))).body;
     assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
+  });
+
+  it('falls back when a locally built addon has an older wire protocol', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-old-native-'));
+    const old = join(directory, 'old.cjs');
+    writeFileSync(old, "exports.configure = () => { throw new Error('must not configure the old binary'); }; ");
+    try {
+      const source = `import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)}; console.log((await new WasmClient().get(${JSON.stringify(server.url('/echo'))})).body.headers.connection);`;
+      const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], { env: { ...process.env, RUST_FETCH_NATIVE: old } });
+      assert.equal(stdout.trim(), 'keep-alive');
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
   it('is used instead of fetch() in Node.js, with fetch-like default headers', async () => {
@@ -511,6 +524,23 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     });
   });
 
+  it('registers native cancellation before scheduling an async attempt', {
+    skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
+  }, async () => {
+    const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
+    assert.equal(addon.TRANSPORT_VERSION, 2);
+    const s = await startServer((req, res) => res.end('ok'));
+    try {
+      const attempts = [];
+      for (let i = 0; i < 512; i++) {
+        const id = 0xffff0000 + i;
+        attempts.push(addon.send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }));
+        addon.cancel(id);
+      }
+      for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
+    } finally { await s.close(); }
+  });
+
   describe('request queue', () => {
     // Beyond 1,024 requests in flight, the rest wait in order in node.js
     it('completes every request when far more are sent than run at once', async () => {
@@ -528,10 +558,15 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         const c = new WasmClient({ timeoutMs: 0 });
         const running = Array.from({ length: 1024 }, () => c.get(s.url('/hold')));
         const timedOut = rejection(c.get(s.url('/late'), { timeoutMs: 50 }));
+        const phaseErrors = Promise.all(['connect', 'response'].map(async (phase) => {
+          const error = await rejection(c.get(s.url('/phase-timeout'), { [`${phase}TimeoutMs`]: 25 }));
+          assert.equal(error.kind, 'TimeoutError'); assert.equal(error.phase, phase); assert.equal(error.timeoutMs, 25);
+        }));
         const controller = new AbortController();
         const cancelled = rejection(c.get(s.url('/never'), { signal: controller.signal }));
         controller.abort();
         assert.equal((await timedOut).kind, 'TimeoutError');
+        await phaseErrors;
         assert.equal((await cancelled).kind, 'CancelledError');
         holding = false;
         for (const res of held.splice(0)) res.end('{}');

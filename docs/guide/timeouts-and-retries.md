@@ -2,9 +2,39 @@
 
 ## Timeouts
 
-[Concurrency and rate limits](/guide/load-limits) can queue attempts before they start. The queue wait does not use the attempt timeout; use a signal for a total deadline.
+[Concurrency and rate limits](/guide/load-limits) can queue attempts before they start. The queue wait does not use the attempt timeout; use `deadlineMs` for a total deadline, or cancel with a signal.
 
 `timeoutMs` limits each attempt, from sending the request to receiving the last byte of the body. When retries are on, each attempt gets the full timeout. For `responseType: 'stream'`, the timeout covers only the wait for the headers; after that, reading the stream is up to you.
+
+Additional timers are opt-in, on the client or per request:
+
+| Option | What it bounds |
+| --- | --- |
+| `connectTimeoutMs` | Acquiring/establishing a connection, including DNS/TLS, on Node.js and native Rust. Browsers cannot observe this phase and ignore it |
+| `responseTimeoutMs` | An admitted attempt until final response headers, including redirects; stops at headers |
+| `idleTimeoutMs` | Waiting for the next body chunk; resets on each chunk. Applies to buffered responses, streamed bodies, NDJSON and SSE |
+| `deadlineMs` | One logical call, including request interceptors, body preparation, queues, retries/backoff and the entire response body. It closes the underlying stream even when the caller never reads it |
+
+```js
+const client = new WasmClient({ connectTimeoutMs: 1000, responseTimeoutMs: 3000 });
+const response = await client.get('/export', {
+  responseType: 'stream',
+  idleTimeoutMs: 5000,
+  deadlineMs: 60_000,
+});
+const reader = response.body.getReader();
+try {
+  while (!(await reader.read()).done) { /* consume the chunk */ }
+} catch (error) {
+  console.log(error.phase, error.timeoutMs); // e.g. 'idle', 5000
+}
+```
+
+All four default to off. Omitted, `null` and `undefined` inherit the client value; `0` disables only that timer. The first timer to expire rejects with `TimeoutError`, the configured `timeoutMs`, and `phase: 'connect' | 'response' | 'idle' | 'total'`. Existing attempt timeouts also report `phase: 'total'`. Phase errors use `retryOnTimeout`; a logical deadline ends retries. Body errors after successful headers error the stream instead of replaying it. Idle timing runs while the library awaits a body chunk, so an application pausing consumption does not itself trigger an idle error. A deadline continues during that pause.
+
+`events()` uses these settings too. Idle errors can reconnect under its reconnection policy; `deadlineMs` spans all connections and backoff and closes the event stream permanently. WebSockets keep their separate handshake timeout. Browser upload progress uses fetch when response/idle timers are enabled, reporting once when the response arrives. Stream readers expose typed errors; browsers may replace them with a generic `TypeError` when consuming through `new Response(body).text()`.
+
+In Rust, pass `PhaseTimeouts::new().connect(Duration::from_secs(1)).response(Duration::from_secs(3)).idle(Duration::from_secs(5)).deadline(Duration::from_secs(60))` to `ClientBuilder::phase_timeouts` or `RequestBuilder::phase_timeouts`. A per-request Rust value replaces the phase settings. Zero disables a phase; deadlines start when sending. Inspect `Error::timeout_details()` for a `TimeoutDetails { phase, duration_ms }`; the existing exhaustive `Error` enum remains compatible.
 
 ## Retries
 

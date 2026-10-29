@@ -30,7 +30,6 @@ use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::future_to_promise;
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &'static str = r#"
@@ -171,6 +170,15 @@ export interface ClientOptions extends BrowserRequestOptions {
   headers?: HeadersLike;
   /** Timeout for each attempt (sending + reading the body), in ms. `0` disables it. Default: 30000 */
   timeoutMs?: number;
+  /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+  connectTimeoutMs?: number;
+  /** Time until final response headers arrive. `0` disables. */
+  responseTimeoutMs?: number;
+  /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+  idleTimeoutMs?: number;
+  /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+  deadlineMs?: number;
+
   /** Retry failed requests: a maximum retry count, or detailed options. Default: no retries */
   retries?: number | RetryOptions;
   /**
@@ -269,6 +277,15 @@ export interface RequestOptions extends BrowserRequestOptions {
   params?: QueryParams;
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
   timeoutMs?: number;
+  /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+  connectTimeoutMs?: number;
+  /** Time until final response headers arrive. `0` disables. */
+  responseTimeoutMs?: number;
+  /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+  idleTimeoutMs?: number;
+  /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+  deadlineMs?: number;
+
   /**
    * Replaces the client's retry policy for this request (also for `events()` connection attempts).
    * `0` disables retries. Omitted object fields use the standard defaults, not the client's values.
@@ -382,6 +399,8 @@ export interface RustFetchError extends Error {
   origin?: string;
   /** CircuitOpenError: milliseconds until recovery may be probed */
   retryAfterMs?: number;
+  /** TimeoutError: which timer expired (deadlineMs uses total) */
+  phase?: 'connect' | 'response' | 'idle' | 'total';
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
   maxQueuedMessages?: number;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -458,6 +477,11 @@ impl WasmClient {
 
         if let Some(options) = options {
             let options: &JsValue = options.as_ref();
+            if let Some(phases) =
+                parse_phase_options(&Options::new(options), &crate::PhaseTimeouts::default())?
+            {
+                builder = builder.phase_timeouts(phases);
+            }
             if let Some(base_url) = prop(options, "baseUrl") {
                 builder = builder.base_url(
                     base_url
@@ -780,22 +804,31 @@ impl WasmClient {
         options: JsValue,
     ) -> ResponsePromise {
         let client = self.inner.clone();
+        let deadline = match request_deadline(&options, client.config.phases.deadline) {
+            Ok(deadline) => deadline.map(Box::new),
+            Err(error) => return rejected(error),
+        };
         // Snapshot, so interceptors added while a request is in flight don't affect it
         let (request_interceptors, response_interceptors) = {
             let interceptors = self.interceptors.borrow();
             (interceptors.request.clone(), interceptors.response.clone())
         };
-        future_to_promise(async move {
+        futures::promise(async move {
+            let absolute = deadline.as_deref().copied();
             let result = async {
                 let mut request = JsRequest::new(method, url, &headers, body, &options)?;
                 for (_, interceptor) in &request_interceptors {
                     request = request.intercept(interceptor).await?;
                 }
+                request.deadline = deadline;
                 send(&client, request, &options)
                     .await
                     .map_err(JsValue::from)
-            }
-            .await;
+            };
+            use futures_util::FutureExt;
+            let result = crate::timeouts::with_deadline(absolute, result.map(Ok::<_, Error>))
+                .await
+                .unwrap_or_else(|error| Err(JsValue::from(error)));
 
             let mut result = result;
             for (_, on_fulfilled, on_rejected) in &response_interceptors {
@@ -827,6 +860,7 @@ pub(crate) struct JsRequest {
     /// Per-request headers (the `headers` argument, then `options.headers`)
     headers: Headers,
     body: BodyMode,
+    deadline: Option<Box<crate::timeouts::Deadline>>,
 }
 
 impl JsRequest {
@@ -851,6 +885,7 @@ impl JsRequest {
             url,
             headers: merged,
             body,
+            deadline: None,
         })
     }
 
@@ -896,6 +931,7 @@ impl JsRequest {
         let headers = parse_headers(&prop(&info, "headers").unwrap_or(JsValue::UNDEFINED))?;
         let body = js_sys::Reflect::get(&info, &"body".into())?;
         Ok(Self {
+            deadline: self.deadline,
             method: parse_method(&method)?,
             url,
             headers,
@@ -999,35 +1035,52 @@ impl<'a> Options<'a> {
 
 /// Build, send and convert a request coming from JavaScript; an error says
 /// whether the retry budget refused to retry it (`retryBudgetExhausted`)
-pub(crate) async fn send(
-    client: &Client,
+pub(crate) fn send<'a>(
+    client: &'a Client,
     request: JsRequest,
-    options: &JsValue,
-) -> std::result::Result<JsValue, JsValue> {
+    options: &'a JsValue,
+) -> impl std::future::Future<Output = std::result::Result<JsValue, JsValue>> + 'a {
+    use futures_util::TryFutureExt;
     let refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    send_request(client, request, options, &refused)
-        .await
-        .map_err(|error| {
-            let error = JsValue::from(error);
-            if refused.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
-            }
-            error
-        })
+    send_request(client, request, options, &refused).map_err(move |error| {
+        let error = JsValue::from(error);
+        if refused.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
+        }
+        error
+    })
 }
 
-pub(crate) async fn send_request(
-    client: &Client,
+pub(crate) fn send_request<'a>(
+    client: &'a Client,
     request: JsRequest,
-    options: &JsValue,
+    options: &'a JsValue,
     #[allow(unused_variables)] refused: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-) -> Result<JsValue> {
-    let options = &Options::new(options);
-    let (mut builder, body) = request_builder(client, request, options)?;
+) -> impl std::future::Future<Output = Result<JsValue>> + 'a {
+    use futures_util::future::Either;
+    let options = Options::new(options);
+    let (mut builder, body) = match request_builder(client, request, &options) {
+        Ok(prepared) => prepared,
+        Err(error) => return Either::Left(std::future::ready(Err(error))),
+    };
     #[cfg(target_arch = "wasm32")]
     {
         builder.retry_refused = Some(std::sync::Arc::clone(refused));
     }
+    let deadline = builder.effective_deadline();
+    builder.deadline = deadline.map(Box::new);
+    Either::Right(crate::timeouts::with_deadline(
+        deadline,
+        send_prepared(client, builder, body, options),
+    ))
+}
+
+async fn send_prepared(
+    client: &Client,
+    mut builder: RequestBuilder,
+    body: BodyMode,
+    options: Options<'_>,
+) -> Result<JsValue> {
     let body_type = match options.get("responseType") {
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
@@ -1064,7 +1117,9 @@ pub(crate) async fn send_request(
             client.config.max_line_bytes,
             "maxLineBytes",
         )?;
-        let response = abortable(signal.clone(), builder.send_streaming()).await?;
+        // This path is opt-in. Keep its larger header/body state out of
+        // every ordinary buffered request's inline future.
+        let response = Box::pin(abortable(signal.clone(), builder.send_streaming())).await?;
         if let BodyType::Ndjson = body_type {
             return ndjson_response_to_js(response, signal, max_line_bytes);
         }
@@ -1084,6 +1139,66 @@ pub(crate) async fn send_request(
         let response = abortable(signal, builder.send()).await?;
         response_to_js(response, body_type)
     }
+}
+
+/// Merge set phase fields; an omitted/null value inherits and zero disables.
+pub(crate) fn parse_phase_options(
+    options: &Options,
+    base: &crate::PhaseTimeouts,
+) -> Result<Option<crate::PhaseTimeouts>> {
+    let names = [
+        "connectTimeoutMs",
+        "responseTimeoutMs",
+        "idleTimeoutMs",
+        "deadlineMs",
+    ];
+    if !names.iter().any(|name| options.has(name)) {
+        return Ok(None);
+    }
+    let mut phases = *base;
+    for (name, target) in [
+        ("connectTimeoutMs", &mut phases.connect),
+        ("responseTimeoutMs", &mut phases.response),
+        ("idleTimeoutMs", &mut phases.idle),
+        ("deadlineMs", &mut phases.deadline),
+    ] {
+        if let Some(value) = options.get(name) {
+            *target = parse_phase_duration(&value, name)?;
+        }
+    }
+    Ok(Some(phases))
+}
+
+fn parse_phase_duration(value: &JsValue, name: &str) -> Result<Option<Duration>> {
+    let duration = parse_delay(value, name)?;
+    Ok((!duration.is_zero()).then_some(duration))
+}
+
+pub(crate) fn request_deadline(
+    options: &JsValue,
+    base: Option<Duration>,
+) -> Result<Option<crate::timeouts::Deadline>> {
+    if !options.is_object() {
+        return Ok(base.map(crate::timeouts::Deadline::new));
+    }
+    // Match Options' inheritance rules without building another key cache:
+    // plain options ignore polluted Object.prototype defaults.
+    let prototype: JsValue = js_sys::Object::get_prototype_of(options).into();
+    let plain = prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype);
+    let value = if plain
+        && !js_sys::Object::has_own(
+            options.unchecked_ref::<js_sys::Object>(),
+            &"deadlineMs".into(),
+        ) {
+        None
+    } else {
+        prop(options, "deadlineMs")
+    };
+    let duration = match value {
+        Some(value) => parse_phase_duration(&value, "deadlineMs")?,
+        None => base,
+    };
+    Ok(duration.map(crate::timeouts::Deadline::new))
 }
 
 /// An optional callback option, which must be a function when set
@@ -1109,6 +1224,7 @@ pub(crate) fn request_builder(
         url,
         headers,
         body,
+        deadline,
     } = request;
     let mut builder = client
         .request(method, &url)
@@ -1116,6 +1232,12 @@ pub(crate) fn request_builder(
         .response_format(ResponseFormat::Binary)
         .headers(headers);
 
+    if let Some(phases) = parse_phase_options(options, &client.config.phases)? {
+        builder = builder.phase_timeouts(phases);
+    }
+    if let Some(deadline) = deadline {
+        builder.deadline = Some(deadline);
+    }
     if let Some(params) = options.get("params") {
         builder = builder.query(parse_params(&params)?);
     }
@@ -1466,7 +1588,7 @@ fn streaming_response_to_js(
     // backpressure (read only as the caller reads) work as on the copying path.
     #[cfg(target_arch = "wasm32")]
     let response = match response.into_raw() {
-        Ok(raw) => {
+        Ok((raw, controller)) => {
             let chunks = raw.map(|raw| {
                 wasm_streams::ReadableStream::from_raw(raw)
                     .into_stream()
@@ -1476,7 +1598,10 @@ fn streaming_response_to_js(
                             .map_err(|error| transport::body_error(&error))
                     })
             });
-            let chunks = futures_util::stream::iter(chunks).flatten();
+            let chunks = transport::body_with_abort(
+                futures_util::stream::iter(chunks).flatten(),
+                controller,
+            );
             let chunks =
                 AbortableStream::new(chunks, signal).map(|chunk| chunk.map_err(JsValue::from));
             let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
@@ -2034,6 +2159,15 @@ impl From<Error> for JsValue {
         obj.set_name(error.kind());
         let _ = js_sys::Reflect::set(&obj, &"kind".into(), &error.kind().into());
 
+        if let Some(timeout) = error.timeout_details() {
+            let _ = js_sys::Reflect::set(&obj, &"phase".into(), &timeout.phase.as_str().into());
+            #[allow(clippy::cast_precision_loss)]
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &"timeoutMs".into(),
+                &(timeout.duration_ms as f64).into(),
+            );
+        }
         if let Some(circuit) = error.circuit_open() {
             let _ = js_sys::Reflect::set(&obj, &"origin".into(), &circuit.origin.as_str().into());
             let _ = js_sys::Reflect::set(
