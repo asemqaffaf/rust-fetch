@@ -802,6 +802,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __bindNodeTransport: (a: any, b: any) => [number, number];
     readonly __wbg_eventstream_free: (a: number, b: number) => void;
     readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
     readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;

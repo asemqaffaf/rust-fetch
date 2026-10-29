@@ -23,7 +23,7 @@ import { pipeline, Readable, Transform } from 'node:stream';
 import tls from 'node:tls';
 import v8 from 'node:v8';
 import zlib from 'node:zlib';
-import { initSync } from './rust_fetch.js';
+import { __bindNodeTransport, initSync } from './rust_fetch.js';
 
 // V8 before 13 (Node.js 20 to 23) can abort with "unreachable code" when it
 // deoptimizes code that inlined a call into WebAssembly during that call, as
@@ -1058,6 +1058,10 @@ function finishResponse({ status, url, headers, body }, bodyType, manual) {
   return { status, statusText: '', ok, url, headers, body: decoded };
 }
 
+// Bind before consumers can construct a client: later package imports must not
+// select this Wasm instance's TLS policy or WebSocket guard through a global.
+__bindNodeTransport(nodeTransport, websocketGuard);
+// Retain the discovery hooks; this instance uses only its explicit binding.
 globalThis[Symbol.for('rust-fetch.transport')] = nodeTransport;
 globalThis[Symbol.for('rust-fetch.websocketGuard')] = websocketGuard;
 

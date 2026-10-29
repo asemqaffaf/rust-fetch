@@ -591,6 +591,18 @@ export class WebSocketConnection {
 if (Symbol.dispose) WebSocketConnection.prototype[Symbol.dispose] = WebSocketConnection.prototype.free;
 
 /**
+ * Private adapter handshake, called synchronously by the Node entry point.
+ * @param {Function} transport
+ * @param {Function} websocket_guard
+ */
+export function __bindNodeTransport(transport, websocket_guard) {
+    const ret = wasm.__bindNodeTransport(transport, websocket_guard);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+/**
  * Create a configured HTTP client (exported for advanced use)
  * @returns {WasmClient}
  */
@@ -1417,7 +1429,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 59, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("ProgressEvent")], shim_idx: 91, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_d6c9c4134d6de53a___features__gen_ProgressEvent__ProgressEvent______true_);
             return ret;
         },

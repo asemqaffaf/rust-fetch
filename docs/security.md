@@ -197,6 +197,8 @@ const stream = llm.events('/v1/chat/completions', {
 
 Each native Node adapter module owns its connection pool, TLS configuration and request cancellation scope. Worker environments cannot change one another's verification policy or cancel requests with the same numeric ID. Leaving a worker closes its pending native requests, including calls with `timeoutMs: 0`. Within a scope, an active ID cannot be overwritten and a cancelled request's late completion cannot remove its replacement.
 
+Each Wasm instance is bound to its own Node adapter and WebSocket guard during entry-point initialization. Loading another package copy before constructing a client cannot change the first copy's transport or native TLS policy. The global discovery hooks do not select an instance's adapter.
+
 Node response processing uses actual raw header pairs. Inherited `Object.prototype` properties cannot supply framing, decompression, a MIME type or a redirect location; response header objects keep their usual plain-object shape. A response header named `__proto__` is preserved as data.
 
 The Rust client's alternative reqwest pools for per-request connect/redirect settings are capped at 32. Eviction drops only the cached handle; active requests keep their own clones.
