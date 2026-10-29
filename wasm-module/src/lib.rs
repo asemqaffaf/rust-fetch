@@ -49,6 +49,7 @@ pub mod http;
 
 mod budget;
 mod idempotency;
+mod limiter;
 mod lines;
 mod runtime;
 mod sse;
@@ -61,6 +62,7 @@ pub use wasm::WasmClient;
 pub use budget::RetryBudget;
 pub use client::{Client, ClientBuilder, ProgressCallback, RequestBuilder, StreamingResponse};
 pub use error::{Error, Result};
+pub use limiter::RateLimit;
 pub use types::{Headers, Method, Multipart, Progress, Redirect, Response, ResponseBody};
 
 // Re-export all public items from feature modules for backward compatibility

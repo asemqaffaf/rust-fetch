@@ -120,6 +120,12 @@ export interface RetryBudgetOptions {
     windowMs?: number;
 }
 
+/** A burst of `requests` attempts, continuously refilled over `perMs`. Retries spend tokens too. */
+export interface RateLimitOptions {
+    requests: number;
+    perMs: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
     /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
     baseUrl?: string;
@@ -174,6 +180,12 @@ export interface ClientOptions extends BrowserRequestOptions {
      * limit, before anything is sent. Applies on every transport. Default: no limit
      */
     maxPendingRequests?: number;
+    /** Maximum attempts in flight. Streams/SSE hold a slot until their body ends or is cancelled. */
+    maxConcurrent?: number;
+    /** Client-side token bucket. First burst is immediate; retries re-enter FIFO admission. */
+    rateLimit?: RateLimitOptions;
+    /** Apply maxConcurrent/rateLimit independently to each origin. Default: false */
+    limitsPerOrigin?: boolean;
     /**
      * Header names that carry credentials (case-insensitive), e.g. `['x-api-key']`. On a redirect to another origin,
      * Node.js requests drop them along with `Authorization`, `Cookie` and `Proxy-Authorization`. Browsers follow

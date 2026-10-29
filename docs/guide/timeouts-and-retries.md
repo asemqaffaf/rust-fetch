@@ -2,6 +2,8 @@
 
 ## Timeouts
 
+[Concurrency and rate limits](/guide/load-limits) can queue attempts before they start. The queue wait does not use the attempt timeout; use a signal for a total deadline.
+
 `timeoutMs` limits each attempt, from sending the request to receiving the last byte of the body. When retries are on, each attempt gets the full timeout. For `responseType: 'stream'`, the timeout covers only the wait for the headers; after that, reading the stream is up to you.
 
 ## Retries

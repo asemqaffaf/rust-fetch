@@ -145,6 +145,12 @@ export interface RetryBudgetOptions {
   windowMs?: number;
 }
 
+/** A burst of `requests` attempts, continuously refilled over `perMs`. Retries spend tokens too. */
+export interface RateLimitOptions {
+  requests: number;
+  perMs: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
   /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
   baseUrl?: string;
@@ -199,6 +205,12 @@ export interface ClientOptions extends BrowserRequestOptions {
    * limit, before anything is sent. Applies on every transport. Default: no limit
    */
   maxPendingRequests?: number;
+  /** Maximum attempts in flight. Streams/SSE hold a slot until their body ends or is cancelled. */
+  maxConcurrent?: number;
+  /** Client-side token bucket. First burst is immediate; retries re-enter FIFO admission. */
+  rateLimit?: RateLimitOptions;
+  /** Apply maxConcurrent/rateLimit independently to each origin. Default: false */
+  limitsPerOrigin?: boolean;
   /**
    * Header names that carry credentials (case-insensitive), e.g. `['x-api-key']`. On a redirect to another origin,
    * Node.js requests drop them along with `Authorization`, `Cookie` and `Proxy-Authorization`. Browsers follow
@@ -453,6 +465,22 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxRedirects") {
                 builder = builder.max_redirects(parse_max_redirects(&max)?);
+            }
+            if let Some(max) = prop(options, "maxConcurrent") {
+                builder = builder.max_concurrent(positive_u32(&max, "maxConcurrent")?);
+            }
+            if let Some(limit) = prop(options, "rateLimit") {
+                let requests = prop(&limit, "requests")
+                    .ok_or_else(|| invalid("rateLimit.requests", "is required"))?;
+                let per = prop(&limit, "perMs")
+                    .ok_or_else(|| invalid("rateLimit.perMs", "is required"))?;
+                builder = builder.rate_limit(crate::RateLimit::new(
+                    u32::try_from(positive_u32(&requests, "rateLimit.requests")?).unwrap(),
+                    parse_delay(&per, "rateLimit.perMs")?,
+                ));
+            }
+            if let Some(per_origin) = prop(options, "limitsPerOrigin") {
+                builder = builder.limits_per_origin(parse_bool(&per_origin, "limitsPerOrigin")?);
             }
             if let Some(max) = prop(options, "maxPendingRequests") {
                 builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);

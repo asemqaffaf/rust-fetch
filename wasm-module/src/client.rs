@@ -52,6 +52,7 @@ pub(crate) struct ClientConfig {
     max_pending_requests: Option<usize>,
     /// Shared by the client's clones through the `Arc<ClientConfig>`
     retry_budget: Option<Arc<Budget>>,
+    limiter: Option<Arc<crate::limiter::Limiter>>,
     /// JavaScript: `maxLineBytes`, for NDJSON responses and event streams
     pub(crate) max_line_bytes: Option<usize>,
     /// JavaScript: `maxEventBytes`, for event streams
@@ -100,6 +101,7 @@ struct RawResponse {
     url: String,
     headers: Headers,
     body: Vec<u8>,
+    permit: Option<crate::limiter::Ticket>,
     // In JavaScript runtimes, streamed requests are sent with fetch() instead
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     stream: Option<reqwest::Response>,
@@ -124,6 +126,7 @@ pub struct StreamingResponse {
     inner: StreamBody,
     progress: Option<ProgressFn>,
     limit: Option<u64>,
+    permit: Option<crate::limiter::Ticket>,
 }
 
 /// The unread body of a streamed response: reqwest's on native targets,
@@ -162,7 +165,7 @@ impl StreamingResponse {
         // A Content-Length over the limit fails on the first read
         let declared_too_large =
             matches!((limit, total), (Some(limit), Some(total)) if total > limit);
-        body_chunks(self.inner).map(move |chunk| {
+        let chunks = body_chunks(self.inner).map(move |chunk| {
             if let (true, Some(limit)) = (declared_too_large, limit) {
                 return Err(Error::too_large(limit));
             }
@@ -175,7 +178,8 @@ impl StreamingResponse {
                 progress(Progress { loaded, total });
             }
             Ok(chunk)
-        })
+        });
+        crate::limiter::PermitStream::new(chunks, self.permit)
     }
 
     /// The transport's stream as it is, when nothing needs to see the bytes
@@ -183,7 +187,7 @@ impl StreamingResponse {
     /// response back, to read through [`StreamingResponse::into_stream`]
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn into_raw(self) -> std::result::Result<Option<web_sys::ReadableStream>, Self> {
-        if self.progress.is_some() || self.limit.is_some() {
+        if self.progress.is_some() || self.limit.is_some() || self.permit.is_some() {
             return Err(self);
         }
         Ok(self.inner.into_raw())
@@ -344,7 +348,7 @@ impl Client {
         #[cfg(target_arch = "wasm32")]
         let url = reqwest::Url::parse(url.as_str())
             .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
-        self.execute_retrying(config.timeout, retry, None, || async {
+        self.execute_retrying(url.as_str(), config.timeout, retry, None, || async {
             let raw = self
                 .execute_once(&url, config, stream, progress, limit, guards)
                 .await?;
@@ -366,17 +370,24 @@ impl Client {
             }
         })
         .await
+        .map(|(mut raw, permit)| {
+            if stream {
+                raw.permit = permit;
+            }
+            raw
+        })
     }
 
     /// Shared retry/timeout policy for Rust responses and JS-native bodies.
     /// `refused` is set when the retry budget refused a retry.
     async fn execute_retrying<T, F, Fut>(
         &self,
+        url: &str,
         timeout: Option<Duration>,
         retry: RetryPolicy<'_>,
         refused: Option<&AtomicBool>,
         mut send: F,
-    ) -> Result<T>
+    ) -> Result<(T, Option<crate::limiter::Ticket>)>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<Attempt<T>>>,
@@ -394,9 +405,27 @@ impl Client {
             }
             Err(error)
         };
+        let gate = self
+            .config
+            .limiter
+            .as_ref()
+            .map(|limiter| limiter.gate(url));
         let mut attempt = 0;
+        let mut retry_error = None;
 
         loop {
+            let permit = match &gate {
+                // Keep the optional admission future out of the ordinary
+                // request's inline state: none of its queue/timer state is
+                // needed when limits are disabled.
+                Some(gate) => Some(Box::pin(gate.acquire()).await),
+                None => None,
+            };
+            if let Some(error) = retry_error.take() {
+                if budget.is_some_and(|budget| !budget.spend(runtime::now_ms())) {
+                    return refuse(error);
+                }
+            }
             let once = send();
             let outcome = match timeout {
                 Some(timeout) => runtime::timeout(timeout, once).await,
@@ -404,11 +433,17 @@ impl Client {
             };
 
             let (error, retry_after) = match outcome {
-                Ok(Attempt::Success(response)) => return Ok(response),
+                Ok(Attempt::Success(response)) => return Ok((response, permit)),
                 Ok(Attempt::HttpError(error, retry_after)) => (error, retry_after),
                 Err(error) => (error, None),
             };
 
+            drop(permit);
+            if matches!(error, Error::Http { status: 429, .. }) {
+                if let (Some(gate), Some(delay)) = (&gate, retry_after) {
+                    gate.pause(delay);
+                }
+            }
             match Self::retry_delay(
                 retry.config,
                 attempt,
@@ -422,9 +457,7 @@ impl Client {
                     }
                     attempt += 1;
                     runtime::sleep(delay).await;
-                    if budget.is_some_and(|budget| !budget.spend(runtime::now_ms())) {
-                        return refuse(error);
-                    }
+                    retry_error = Some(error);
                 }
                 None => return Err(error),
             }
@@ -532,6 +565,7 @@ impl Client {
         };
 
         Ok(RawResponse {
+            permit: None,
             status: status.as_u16(),
             status_text: status.canonical_reason().unwrap_or("").to_string(),
             url,
@@ -854,6 +888,7 @@ pub struct ClientBuilder {
     allow_insecure_redirects: bool,
     max_pending_requests: Option<usize>,
     retry_budget: Option<RetryBudget>,
+    limits: crate::limiter::Config,
     max_line_bytes: Option<usize>,
     max_event_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
@@ -882,6 +917,7 @@ impl ClientBuilder {
             allow_insecure_redirects: true,
             max_pending_requests: None,
             retry_budget: None,
+            limits: crate::limiter::Config::default(),
             max_line_bytes: None,
             max_event_bytes: None,
             #[cfg(target_arch = "wasm32")]
@@ -1048,8 +1084,27 @@ impl ClientBuilder {
         self
     }
 
+    /// Maximum attempts in flight; streaming responses hold a slot until EOF or drop.
+    pub fn max_concurrent(mut self, limit: usize) -> Self {
+        self.limits.concurrent = Some(limit);
+        self
+    }
+
+    /// Limit attempt rate with a token bucket, including retries.
+    pub fn rate_limit(mut self, limit: crate::RateLimit) -> Self {
+        self.limits.rate = Some(limit);
+        self
+    }
+
+    /// Apply concurrency/rate limits independently to each origin, rather than globally.
+    pub fn limits_per_origin(mut self, per_origin: bool) -> Self {
+        self.limits.per_origin = per_origin;
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<Client> {
+        self.limits.validate()?;
         if let Some(name) = self.retry_budget.as_ref().and_then(RetryBudget::invalid) {
             return Err(Error::InvalidInput {
                 parameter: name.to_string(),
@@ -1099,6 +1154,10 @@ impl ClientBuilder {
                     .retry_budget
                     .map(|budget| Arc::new(Budget::new(budget))),
                 max_line_bytes: self.max_line_bytes,
+                limiter: self
+                    .limits
+                    .enabled()
+                    .then(|| Arc::new(crate::limiter::Limiter::new(self.limits))),
                 max_event_bytes: self.max_event_bytes,
                 #[cfg(target_arch = "wasm32")]
                 fetch_options: self.fetch_options,
@@ -1181,12 +1240,14 @@ impl RequestBuilder {
         };
         self.client
             .execute_retrying(
+                url.as_str(),
                 timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref(),
                 || request.send(),
             )
             .await
+            .map(|(response, _permit)| response)
     }
 
     /// Send an idempotency key, allowing POST/PATCH retries when configured.
@@ -1454,9 +1515,10 @@ impl RequestBuilder {
             &self.config,
             &self.transport_options(),
         )?;
-        let response = self
+        let (response, permit) = self
             .client
             .execute_retrying(
+                url.as_str(),
                 self.config.timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref(),
@@ -1475,6 +1537,7 @@ impl RequestBuilder {
             inner: response.body,
             progress: self.progress,
             limit: self.max_response_bytes,
+            permit,
         })
     }
 
@@ -1509,6 +1572,7 @@ impl RequestBuilder {
                 .expect("successful streaming attempts keep their body unread"),
             progress: self.progress,
             limit: self.max_response_bytes,
+            permit: raw.permit,
         })
     }
 }
@@ -1563,6 +1627,7 @@ mod tests {
         };
         let error = client
             .execute_retrying(
+                "http://test/",
                 None,
                 client.request(Method::Get, "").retry_policy(),
                 Some(&refused),
