@@ -92,6 +92,22 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
       }
     } finally { await local.close(); }
   });
+  it('does not retain an earlier redirect destination when the next attempt fails before headers', async () => {
+    let starts = 0;
+    const local = await startServer((req, res) => {
+      if (req.url === '/start') {
+        if (++starts === 1) { res.writeHead(302, { location: '/unavailable' }); res.end(); }
+        else req.socket.destroy();
+      } else { res.writeHead(503); res.end('unavailable'); }
+    });
+    try {
+      const client = new WasmClient({ retries: { maxRetries: 1, initialDelayMs: 1, jitter: false } });
+      const error = await rejection(client.get(local.url('/start')));
+      assert.equal(error.kind, 'NetworkError');
+      assert.equal(error.attempts, 2);
+      assert.equal(error.url, local.url('/start'));
+    } finally { await local.close(); }
+  });
   it('keeps intercepted validation errors tied to the rewritten request', async () => {
     const client = new WasmClient();
     client.addRequestInterceptor((request) => { request.method = 'PATCH'; request.url = 'bad://rewritten'; });

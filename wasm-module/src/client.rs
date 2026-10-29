@@ -552,6 +552,7 @@ impl Client {
             #[cfg(target_arch = "wasm32")]
             if let Some(state) = retry.state {
                 state.cause.borrow_mut().take();
+                state.url.borrow_mut().take();
                 state.attempts.fetch_add(1, Ordering::Relaxed);
             }
             let once = send();
