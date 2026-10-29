@@ -42,6 +42,9 @@ before(async () => {
 });
 after(async () => { for (const session of sessions) session.destroy(); server.closeAllConnections?.(); await new Promise((resolve) => server.close(resolve)); http1.closeAllConnections(); await new Promise((resolve) => http1.close(resolve)); });
 for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
+  // WebKit's Soup network backend explicitly rejects pending-stream bodies,
+  // although its Request constructor accepts them. Cocoa supports uploads.
+  const networkStreams = name !== 'firefox' && !(name === 'webkit' && process.platform === 'linux');
   let available = true;
   try { readFileSync(engine.executablePath()); } catch { available = false; }
   describe(`${name} streaming uploads over HTTP/2`, { skip: !available, timeout: 30000 }, () => {
@@ -52,6 +55,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       const result = await page.evaluate(async () => {
         const { default: init, WasmClient } = await import('/rust_fetch.js'); await init();
         const c = new WasmClient({ retries: 0, timeoutMs: 5000 });
+        const control = (await c.get('/protocol')).body.protocol;
         let pulls = 0;
         const progress = [];
         try {
@@ -59,14 +63,18 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
             await new Promise((r) => setTimeout(r, 1));
             if (pulls++ === 64) controller.close(); else controller.enqueue(new Uint8Array(65536));
           } }, { highWaterMark: 0 }), onUploadProgress: (p) => progress.push(p) });
-          return { ok: true, body: response.body, progress, pulls };
-        } catch (error) { return { ok: false, kind: error.kind, parameter: error.parameter, message: error.message, pulls }; }
+          return { ok: true, body: response.body, progress, pulls, control };
+        } catch (error) { return { ok: false, kind: error.kind, parameter: error.parameter, message: error.message, pulls, control }; }
         finally { c.free(); }
       });
       if (name === 'firefox') {
         assert.equal(result.kind, 'InvalidInputError', JSON.stringify(result));
         assert.equal(result.parameter, 'body');
         assert.equal(result.pulls, 0);
+      } else if (!networkStreams) {
+        assert.equal(result.control, 2, 'ordinary fetch still uses the HTTP/2 server');
+        assert.equal(result.kind, 'NetworkError', JSON.stringify(result));
+        assert.equal(result.pulls, 0, 'Soup rejects streaming uploads before reading the producer');
       } else {
         assert.equal(result.ok, true, JSON.stringify(result));
         assert.equal(result.body.size, 64 * 65536);
@@ -75,8 +83,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         assert.ok(result.progress.every((p, i) => p.total === 0 && p.loaded >= (result.progress[i - 1]?.loaded ?? 0)));
       }
     });
-    it('cancels a pending producer and rejects body-preserving fetch redirects', async () => {
-      if (name === 'firefox') return;
+    it('cancels a pending producer and rejects body-preserving fetch redirects', { skip: !networkStreams }, async () => {
       const result = await page.evaluate(async () => {
         const { WasmClient } = await import('/rust_fetch.js');
         const c = new WasmClient({ retries: 0, timeoutMs: 2000 });
@@ -97,8 +104,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result.progress, result.lastProgress);
       assert.equal(result.redirect, 'NetworkError');
     });
-    it('retries fresh factories and keeps one-shot bodies single-use', async () => {
-      if (name === 'firefox') return;
+    it('retries fresh factories and keeps one-shot bodies single-use', { skip: !networkStreams }, async () => {
       const result = await page.evaluate(async (name) => {
         const { WasmClient } = await import('/rust_fetch.js');
         const c = new WasmClient({ retries: { maxRetries: 1, initialDelayMs: 0, retryNonIdempotent: true }, timeoutMs: 2000 });
@@ -110,8 +116,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       }, name);
       assert.equal(result.size, 3); assert.equal(result.opens, 3); assert.equal(result.status, 503);
     });
-    it('keeps invalid producer errors typed', async () => {
-      if (name === 'firefox') return;
+    it('keeps invalid producer errors typed', { skip: name === 'firefox' }, async () => {
       const result = await page.evaluate(async () => {
         const { WasmClient } = await import('/rust_fetch.js');
         const c = new WasmClient({ retries: 0, timeoutMs: 2000 });
@@ -125,8 +130,7 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result[1].kind, 'InvalidInputError');
       assert.equal(result[2].kind, 'NetworkError'); assert.match(result[2].message, /producer failure/);
     });
-    it('checks the HTTP/1.1 restriction on an actual connection', async (t) => {
-      if (name === 'firefox') return;
+    it('keeps HTTP/1.1 streaming failures explicit', { skip: name === 'firefox' }, async (t) => {
       await page.goto(http1Origin);
       const result = await page.evaluate(async () => {
         const { default: init, WasmClient } = await import('/rust_fetch.js'); await init();
