@@ -96,6 +96,8 @@ The report tested three clients on one machine. It didn't include `undici.reques
 
 The native Node.js transport against Node.js `fetch()`, from [our measurements](#our-measurements-every-client) (Apple M1 Pro, Node.js 22.13). The npm package doesn't include it yet; it has to be [built from source](/architecture#architecture).
 
+In unreleased 2.7.0, the native connection pool and TLS settings belong to one adapter module/environment; workers have separate pools. This matches the isolation of Node agents and prevents cancellation or TLS settings from crossing environments.
+
 | Workload | Native transport vs `fetch()` |
 | --- | --- |
 | HTTPS, 50 concurrent small-JSON requests | **1.95×** throughput |
