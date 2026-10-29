@@ -16,8 +16,9 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
+import { Worker } from 'node:worker_threads';
 import { WasmClient } from '../../pkg/node.js';
-import { json, rejection, startServer } from './helpers.mjs';
+import { json, rejection, sleep, startServer } from './helpers.mjs';
 
 let server;
 let endlessClosed = false;
@@ -207,6 +208,50 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     assert.equal(res.body.body, 'héllo');
   });
 
+  it('uses actual response headers under prototype pollution, including framing and decompression', async () => {
+    const worker = new Worker(`
+      const { parentPort } = require('node:worker_threads');
+      const zlib = require('node:zlib');
+      const payload = Buffer.from(JSON.stringify({ intact: true }));
+      const local = require('node:http').createServer((req, res) => {
+        if (req.url === '/missing-location') { res.writeHead(302); res.end(); return; }
+        const body = req.url === '/gzip' ? zlib.gzipSync(payload) : payload;
+        if (req.url !== '/no-type') res.setHeader('content-type', 'application/json');
+        if (req.url === '/gzip') res.setHeader('content-encoding', 'gzip');
+        res.setHeader('__proto__', 'server-value');
+        res.setHeader('x-repeat', ['a', 'b']);
+        res.writeHead(200);
+        res.write(body.subarray(0, 3));
+        setImmediate(() => res.end(body.subarray(3)));
+      });
+      local.listen(0, '127.0.0.1', () => parentPort.postMessage(local.address().port));
+    `, { eval: true });
+    const port = await new Promise((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject); });
+    const polluted = { 'content-length': '1', 'content-type': 'application/json', 'content-encoding': 'gzip', location: 'http://does-not-exist.invalid/', 'x-inherited': 'secret' };
+    for (const [name, value] of Object.entries(polluted)) Object.prototype[name] = value;
+    const c = client();
+    try {
+      for (const path of ['/plain', '/gzip']) {
+        const response = await c.get(`http://127.0.0.1:${port}${path}`);
+        assert.equal(response.body.intact, true);
+        assert.equal(response.headers['__proto__'], 'server-value');
+        assert.equal(response.headers['x-repeat'], 'a, b');
+        assert.equal(Object.hasOwn(response.headers, 'x-inherited'), false);
+        assert.equal(Object.getPrototypeOf(response.headers), Object.prototype);
+      }
+      const binary = await c.get(`http://127.0.0.1:${port}/no-type`);
+      assert.ok(binary.body instanceof Uint8Array, 'an inherited MIME type must not select JSON decoding');
+      const streamed = await c.get(`http://127.0.0.1:${port}/plain`, { responseType: 'stream' });
+      const text = await new Response(streamed.body).text();
+      assert.deepEqual(JSON.parse(text), { intact: true });
+      const error = await rejection(c.get(`http://127.0.0.1:${port}/missing-location`));
+      assert.equal(error.kind, 'HttpError'); assert.equal(error.status, 302);
+    } finally {
+      for (const name of Object.keys(polluted)) delete Object.prototype[name];
+      await worker.terminate();
+    }
+  });
+
   it('lets the process exit as soon as requests finish', async () => {
     const script = `import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
       const c = new WasmClient();
@@ -323,6 +368,21 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     it('rejects a certificate that is not trusted', async () => {
       const error = await rejection(client().get(url()));
       assert.equal(error.kind, 'NetworkError');
+    });
+
+    it('keeps insecure native TLS configuration out of other scopes', { skip: !nativeExpected }, async () => {
+      const source = `
+        const native = require(${JSON.stringify(fileURLToPath(addon))});
+        const insecure = native.configure({ zstd: false, rejectUnauthorized: false });
+        const secure = native.configure({ zstd: false, rejectUnauthorized: true });
+        const request = { method: 'GET', url: ${JSON.stringify(url())}, headers: [], timeout: 2000 };
+        Promise.all([native.send({ ...request, id: 1 }, insecure), native.send({ ...request, id: 2 }, secure)])
+          .then(results => console.log(JSON.stringify(results.map(r => ({ status: r.status, error: r.error })))));
+      `;
+      const { stdout } = await promisify(execFile)(process.execPath, ['-e', source]);
+      const [insecure, secure] = JSON.parse(stdout);
+      assert.equal(insecure.status, 200);
+      assert.ok(secure.error, 'loading an insecure scope first must not disable verification in a secure scope');
     });
 
     it('trusts certificates from NODE_EXTRA_CA_CERTS', async () => {
@@ -528,17 +588,76 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
   }, async () => {
     const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
-    assert.equal(addon.TRANSPORT_VERSION, 3);
+    assert.equal(addon.TRANSPORT_VERSION, 4);
+    const scope = addon.configure({ zstd: false, rejectUnauthorized: true });
     const s = await startServer((req, res) => res.end('ok'));
     try {
       const attempts = [];
       for (let i = 0; i < 512; i++) {
         const id = 0xffff0000 + i;
-        attempts.push(addon.send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }));
-        addon.cancel(id);
+        attempts.push(addon.send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }, scope));
+        addon.cancel(id, scope);
       }
       for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
     } finally { await s.close(); }
+  });
+
+  describe('native environment scopes', { skip: !nativeExpected }, () => {
+    const api = () => createRequire(import.meta.url)(fileURLToPath(addon));
+    const scope = (native) => native.configure({ zstd: false, rejectUnauthorized: true });
+    it('isolates identical request IDs in separate module scopes', async () => {
+      const native = api();
+      const firstScope = scope(native), secondScope = scope(native);
+      const replies = [];
+      const local = http.createServer((req, res) => { replies.push(res); });
+      await new Promise((resolve) => local.listen(0, '127.0.0.1', resolve));
+      const request = { id: 71, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
+      try {
+        const first = native.send(request, firstScope), second = native.send(request, secondScope);
+        for (let i = 0; i < 100 && replies.length < 2; i++) await sleep(5);
+        assert.equal(replies.length, 2);
+        native.cancel(71, firstScope);
+        assert.equal((await first).code, 'ABORT_ERR');
+        for (const response of replies) if (!response.destroyed) response.end('ok');
+        assert.equal((await second).status, 200);
+      } finally { native.cancel(71, firstScope); native.cancel(71, secondScope); local.closeAllConnections(); await new Promise((r) => local.close(r)); }
+    });
+    it('rejects occupied IDs and ignores late completion of a cancelled generation', async () => {
+      const native = api(), active = scope(native);
+      const local = http.createServer(() => {});
+      await new Promise((r) => local.listen(0, '127.0.0.1', r));
+      const request = { id: 72, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
+      try {
+        const first = native.send(request, active);
+        assert.equal((await native.send(request, active)).code, 'RUST_FETCH_REQUEST_ID');
+        native.cancel(72, active);
+        const replacement = native.send(request, active);
+        assert.equal((await first).code, 'ABORT_ERR');
+        native.cancel(72, active);
+        assert.equal((await replacement).code, 'ABORT_ERR', 'the old completion must not unregister its replacement');
+      } finally { native.cancel(72, active); local.closeAllConnections(); await new Promise((r) => local.close(r)); }
+    });
+    it('closes native sockets when a worker exits with requests still pending', { timeout: 10000 }, async () => {
+      let connected = false, closed = false;
+      const local = http.createServer((req) => { connected = true; req.socket.once('close', () => { closed = true; }); });
+      await new Promise((r) => local.listen(0, '127.0.0.1', r));
+      const worker = new Worker(`
+        const { parentPort, workerData } = require('node:worker_threads');
+        import(workerData.module).then(({ WasmClient }) => {
+          new WasmClient({ timeoutMs: 0 }).get(workerData.url).catch(() => {});
+          parentPort.postMessage('started');
+        });
+      `, { eval: true, workerData: { module: new URL('../../pkg/node.js', import.meta.url).href, url: `http://127.0.0.1:${local.address().port}/` } });
+      try {
+        await new Promise((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject); });
+        for (let i = 0; i < 100 && !connected; i++) await sleep(5);
+        assert.equal(connected, true);
+        await worker.terminate();
+        for (let i = 0; i < 100 && !closed; i++) await sleep(5);
+        assert.equal(closed, true, 'environment cleanup must cancel requests without an attempt timeout');
+        assert.equal((await client().get(server.url('/echo'))).body.headers.connection, undefined, 'the main environment remains usable');
+      } finally { await worker.terminate(); local.closeAllConnections(); await new Promise((r) => local.close(r)); }
+    });
   });
 
   describe('request queue', () => {

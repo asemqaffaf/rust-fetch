@@ -40,14 +40,15 @@ initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)
  * The native addon, or undefined. RUST_FETCH_NATIVE overrides its path;
  * anything that doesn't load (e.g. `0`) keeps the node:http transport.
  */
+let nativeScope;
 function loadNative() {
   const path = process.env.RUST_FETCH_NATIVE ?? `./rust-fetch-native.${process.platform}-${process.arch}.node`;
   try {
     const addon = createRequire(import.meta.url)(path);
-    // An older local binary would silently ignore new phase options.
-    if (addon.TRANSPORT_VERSION !== 3) return undefined;
+    // Older local binaries do not understand the current transport contract.
+    if (addon.TRANSPORT_VERSION !== 4) return undefined;
     const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
-    addon.configure({
+    nativeScope = addon.configure({
       zstd: typeof zlib.zstdDecompressSync === 'function',
       rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0',
       extraCaCerts: extraCaCerts ? readFileSync(extraCaCerts) : undefined,
@@ -522,8 +523,8 @@ function decoderStream(encoding) {
 }
 
 /** A streamed response body as a web `ReadableStream`, decompressed; cancelling it closes the response */
-function bodyStream(response, method) {
-  const encodings = (method === 'HEAD' ? '' : response.headers['content-encoding'] ?? '')
+function bodyStream(response, method, headers) {
+  const encodings = (method === 'HEAD' ? '' : headers['content-encoding'] ?? '')
     .toLowerCase()
     .split(',')
     .map((e) => e.trim())
@@ -593,10 +594,12 @@ const COMPRESSED_SLACK = 1024 * 1024;
 
 /** Response headers as one string per name; repeated headers joined with ", " */
 function flattenHeaders(raw) {
-  const headers = {};
-  for (const name in raw) {
-    const value = raw[name];
-    headers[name] = Array.isArray(value) ? value.join(', ') : value;
+  // Parse raw pairs ourselves: IncomingMessage's lazy header map can join or
+  // discard genuine headers when Object.prototype contains the same name.
+  const headers = { __proto__: null };
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i].toLowerCase();
+    headers[name] = headers[name] === undefined ? raw[i + 1] : `${headers[name]}, ${raw[i + 1]}`;
   }
   return headers;
 }
@@ -686,7 +689,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   state.phases?.connect();
   const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
-    const location = response.headers.location;
+    const receivedHeaders = flattenHeaders(response.rawHeaders);
+    const location = receivedHeaders.location;
     const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
     state.phases?.headers(REDIRECT_STATUSES.has(status) && location && !state.manual, state.stream && success);
 
@@ -741,33 +745,35 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 
     // Streamed: resolve with the body as it arrives (error statuses are read in full)
     if (state.stream && success) {
-      const value = { status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) };
+      const body = bodyStream(response, method, receivedHeaders);
+      const value = { status, url: url.href, headers: Object.setPrototypeOf(receivedHeaders, Object.prototype), body };
       if (uploading) { uploading.then(() => resolve(value), reject); return; }
       return resolve(value);
     }
 
     // With a Content-Length, fill one preallocated buffer (a single copy);
     // otherwise collect chunks and join them at the end.
-    const expected = Number(response.headers['content-length']);
+    const expected = Number(receivedHeaders['content-length']);
     // maxResponseBytes limits the decompressed body: check what the server
     // declares, then what arrives (a compressed body gets some slack, and its
     // decompression is bounded too)
     const limit = state.maxResponseBytes;
-    const encoded = !!response.headers['content-encoding'] && response.headers['content-encoding'].trim().toLowerCase() !== 'identity';
+    const encoded = !!receivedHeaders['content-encoding'] && receivedHeaders['content-encoding'].trim().toLowerCase() !== 'identity';
     const rawLimit = limit === undefined ? Infinity : encoded ? limit + COMPRESSED_SLACK : limit;
     if (Number.isSafeInteger(expected) && expected > rawLimit && method !== 'HEAD') {
       response.destroy();
       return reject(tooLarge(limit));
     }
-    const preallocated = !response.headers['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
+    const preallocated = !receivedHeaders['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
     const buffer = preallocated ? new Uint8Array(expected) : undefined;
     let received = 0;
+    let buffered = 0;
     const chunks = [];
     const onProgress = status >= 200 && status < 300 ? state.onDownloadProgress : undefined;
     const total = Number.isSafeInteger(expected) ? expected : null;
     response.on('data', (chunk) => {
       state.phases?.data();
-      if (buffer && received + chunk.length <= expected) buffer.set(chunk, received);
+      if (buffer && received + chunk.length <= expected) { buffer.set(chunk, received); buffered += chunk.length; }
       else chunks.push(chunk);
       received += chunk.length;
       if (received > rawLimit) {
@@ -789,11 +795,11 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
         if (buffer && received === expected && chunks.length === 0) {
           body = buffer;
         } else {
-          const raw = buffer ? Buffer.concat([buffer.subarray(0, Math.min(received, expected)), ...chunks]) : Buffer.concat(chunks);
-          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding'], limit));
+          const raw = buffer ? Buffer.concat([buffer.subarray(0, buffered), ...chunks]) : Buffer.concat(chunks);
+          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, receivedHeaders['content-encoding'], limit));
           if (body.length > (limit ?? Infinity)) throw tooLarge(limit);
         }
-        const value = { status, url: url.href, headers: flattenHeaders(response.headers), body };
+        const value = { status, url: url.href, headers: Object.setPrototypeOf(receivedHeaders, Object.prototype), body };
         if (uploading && success) uploading.then(() => resolve(value), reject);
         else { if (upload) { upload.cancel(); if (!request.writableFinished) request.destroy(); } resolve(value); }
       } catch (error) {
@@ -1001,7 +1007,7 @@ function nativeTransport(request, upload) {
       } else if (options.timeout > 0) {
         pending = { ...options, timeout: Math.max(1, options.timeout - elapsed) };
       }
-      native.send(pending).then((response) => {
+      native.send(pending, nativeScope).then((response) => {
         release();
         resolve(response);
       });
@@ -1029,17 +1035,12 @@ function nativeTransport(request, upload) {
       }
       throw coded(new Error(response.error), response.code);
     }
-    const headers = {};
-    const raw = response.headers;
-    for (let i = 0; i < raw.length; i += 2) {
-      const name = raw[i];
-      headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
-    }
+    const headers = Object.setPrototypeOf(flattenHeaders(response.headers), Object.prototype);
     return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
   });
   finished.cancel = () => {
     upload?.cancel();
-    if (dispatched) native.cancel(id);
+    if (dispatched) native.cancel(id, nativeScope);
     else giveUp({ error: 'The request was cancelled', code: 'ABORT_ERR' });
   };
   return finished;
@@ -1053,7 +1054,7 @@ function finishResponse({ status, url, headers, body }, bodyType, manual) {
   const ok = status >= 200 && status < 300;
   const success = ok || (manual && REDIRECT_STATUSES.has(status));
   // Error statuses carry their body as text (for HttpError.body)
-  const decoded = success ? decodeBody(body, headers['content-type'], bodyType) : decodeBody(body, '', TEXT);
+  const decoded = success ? decodeBody(body, Object.hasOwn(headers, 'content-type') ? headers['content-type'] : undefined, bodyType) : decodeBody(body, '', TEXT);
   return { status, statusText: '', ok, url, headers, body: decoded };
 }
 
