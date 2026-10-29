@@ -29,4 +29,6 @@ try {
 
 With a [retry budget](/guide/timeouts-and-retries#retries), an error whose retry the budget refused also has `retryBudgetExhausted: true`, whatever its `kind`.
 
+Request errors also carry `method`, `url` and `attempts` (zero for validation failures). The URL identifies the last destination known to the transport and includes query strings unless you configure `redactUrl`. Opt-in [observability](/guide/observability) adds timings and preserves an underlying JavaScript `cause` where available. SSE and WebSocket errors carry connection context too.
+
 Long error bodies (such as an HTML error page) are truncated to 200 characters in `message`. `error.body` always has the full text.

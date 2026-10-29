@@ -174,6 +174,7 @@ struct Inner {
 
 struct Shared {
     settings: Settings,
+    request_state: std::sync::Arc<super::RequestState>,
     inner: RefCell<Inner>,
     /// Aborted by `close()`: cancels the connection in flight and any reconnection delay
     closer: web_sys::AbortController,
@@ -294,6 +295,7 @@ impl WasmClient {
         let (resolve_opened, reject_opened) = opened_callbacks.unzip();
 
         let shared = Rc::new(Shared {
+            request_state: std::sync::Arc::default(),
             settings,
             inner: RefCell::new(Inner {
                 state: State::Connecting,
@@ -450,6 +452,19 @@ enum Ended {
     Failed(Error),
 }
 
+fn connection_error(shared: &Shared, error: Error) -> JsValue {
+    let url = shared.request_state.url.borrow();
+    super::error_context(
+        shared.request_state.with_cause(error.into_js()),
+        shared.settings.method.to_reqwest().as_str(),
+        url.as_deref().unwrap_or(&shared.settings.target),
+        shared
+            .request_state
+            .attempts
+            .load(std::sync::atomic::Ordering::Relaxed),
+    )
+}
+
 async fn run(
     client: &crate::client::Client,
     shared: &Rc<Shared>,
@@ -460,7 +475,7 @@ async fn run(
         Ok::<(), Error>(())
     };
     if let Err(error) = crate::timeouts::with_deadline(shared.settings.deadline, operation).await {
-        let error = error.into_js();
+        let error = connection_error(shared, error);
         report(shared.settings.on_error.as_ref(), &error);
         finish(shared, Some(error));
     }
@@ -485,11 +500,11 @@ async fn run_loop(
         let error = match ended {
             Ended::Finished => return finish(shared, None),
             Ended::Failed(error) => {
-                let error = error.into_js();
+                let error = connection_error(shared, error);
                 report(shared.settings.on_error.as_ref(), &error);
                 return finish(shared, Some(error));
             }
-            Ended::Dropped(error) => error.into_js(),
+            Ended::Dropped(error) => connection_error(shared, error),
         };
         if is_closed(shared) {
             return;
@@ -558,6 +573,15 @@ async fn connect(
         let (mut builder, body) =
             super::request_builder(client, request, &super::Options::new(&settings.options))?;
         builder.deadline = settings.deadline.map(Box::new);
+        #[cfg(target_arch = "wasm32")]
+        {
+            builder.retry_refused = Some(std::sync::Arc::clone(&shared.request_state));
+            builder.apply_trace(
+                super::Options::new(&settings.options)
+                    .get("__trace")
+                    .and_then(|v| v.dyn_into().ok()),
+            )?;
+        }
         if accept {
             builder = builder.header("accept", "text/event-stream");
         }
@@ -748,6 +772,18 @@ fn dispatch(shared: &Rc<Shared>, event: sse::Event) -> bool {
 
 /// Closed for good: settle promises and waiting iterators, release the signal, call onClose
 fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
+    let error = error.map(|error| {
+        let url = shared.request_state.url.borrow();
+        super::error_context(
+            error,
+            shared.settings.method.to_reqwest().as_str(),
+            url.as_deref().unwrap_or(&shared.settings.target),
+            shared
+                .request_state
+                .attempts
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    });
     let (waiters, reject_opened, resolve_closed, listener, room) = {
         let mut inner = shared.inner.borrow_mut();
         if inner.state == State::Closed {

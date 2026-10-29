@@ -136,10 +136,17 @@ describe('published package', () => {
        await init();
        const options: ClientOptions = { baseUrl: 'https://api.example.com', timeoutMs: 1000, retries: { maxRetries: 2, retryOn: [503] },
          maxConcurrent: 10, rateLimit: { requests: 100, perMs: 60000 }, limitsPerOrigin: true,
-         circuitBreaker: { failureThreshold: 5, resetAfterMs: 30000 }, onCircuitChange: ({ origin, to }) => console.log(origin, to) };
+         circuitBreaker: { failureThreshold: 5, resetAfterMs: 30000 }, onCircuitChange: ({ origin, to }) => console.log(origin, to),
+         timings: true, metrics: true, debug: (entry) => console.log(entry.type, entry.url),
+         onRequestEnd: (entry) => console.log(entry.timings?.totalMs),
+         propagateTrace: true, traceOrigins: ['https://api.example.com'],
+         traceContext: () => ({ traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' }) };
        const client = new WasmClient(options);
        const res: HttpResponse<User> = await client.get('/users/1');
        const name: string = res.body.name;
+       const elapsed: number | undefined = res.timings?.totalMs;
+       const p95: number | null = client.stats().latency.p95Ms;
+       const attempts: number | undefined = ({} as RustFetchError).attempts;
        // Request methods are generic over the body type; untyped calls stay \`any\`
        const typed = await client.get<User>('/users/1');
        const id: number = typed.body.id;
@@ -150,7 +157,7 @@ describe('published package', () => {
        const viaFetch: HttpResponse<User[]> = await client.fetch<User[]>('/users');
        const untyped = await client.get('/anything');
        const anything: number = untyped.body;
-       const socket = client.websocket('/live', { reconnect: true, messageType: 'json', onMessage: (m: unknown) => m });
+       const socket = client.websocket('/live', { reconnect: true, idleTimeoutMs: 30000, messageType: 'json', onMessage: (m: unknown) => m });
        const state: 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed' = socket.state;
        await client.post('/upload', { body: new Blob(['x']), onUploadProgress: ({ loaded, total }) => loaded / total });
        const requestOptions: RequestOptions = { connectTimeoutMs: 100, responseTimeoutMs: 200, idleTimeoutMs: 300, deadlineMs: 400, retries: 0, params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),

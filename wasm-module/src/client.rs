@@ -93,6 +93,10 @@ type ProgressFn = Arc<dyn ProgressCallback>;
 struct RetryPolicy<'a> {
     config: Option<&'a RetryConfig>,
     replay_safe: bool,
+    #[cfg(target_arch = "wasm32")]
+    observer: Option<&'a js_sys::Function>,
+    #[cfg(target_arch = "wasm32")]
+    state: Option<&'a crate::wasm::RequestState>,
 }
 
 /// A response from one attempt: either fully read, or (for successful
@@ -314,6 +318,11 @@ impl Client {
     /// Relative URLs are resolved against the client's base URL (or, in a
     /// browser, against the page URL). Absolute URLs are used as-is.
     pub fn request(&self, method: Method, url: impl AsRef<str>) -> RequestBuilder {
+        self.request_owned(method, url.as_ref().to_owned())
+    }
+
+    /// Reuse URLs already owned by the JavaScript request boundary.
+    pub(crate) fn request_owned(&self, method: Method, url: String) -> RequestBuilder {
         let (redirect, max_redirects) = (self.config.redirect, self.config.max_redirects);
         let (follow_redirects, limit) = redirect.config(max_redirects);
         RequestBuilder {
@@ -327,10 +336,12 @@ impl Client {
                 max_redirects: limit,
                 response_format: ResponseFormat::Auto,
             },
-            url: url.as_ref().to_string(),
+            url,
             query: Vec::new(),
             progress: None,
             retry_config: None,
+            #[cfg(target_arch = "wasm32")]
+            observer: None,
             phase_overrides: None,
             deadline: None,
             idempotency_header: None,
@@ -471,6 +482,14 @@ impl Client {
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = Result<Attempt<T>>>,
     {
+        #[cfg(target_arch = "wasm32")]
+        observe_text(retry.observer, "resolved", url);
+        #[cfg(target_arch = "wasm32")]
+        let mut destination = crate::wasm::DestinationGuard {
+            state: retry.state,
+            url,
+            success: false,
+        };
         let _pending = self.admit()?;
         let budget = self.config.retry_budget.as_deref();
         // The budget is checked before waiting to retry and spent once the
@@ -493,6 +512,12 @@ impl Client {
             if let Some(breaker) = &self.config.breaker {
                 breaker.check(url)?;
             }
+            #[cfg(target_arch = "wasm32")]
+            observe(
+                retry.observer,
+                "queueStart",
+                &wasm_bindgen::JsValue::UNDEFINED,
+            );
             let permit = match &gate {
                 // Keep the optional admission future out of the ordinary
                 // request's inline state: none of its queue/timer state is
@@ -518,12 +543,34 @@ impl Client {
                     return refuse(error);
                 }
             }
+            #[cfg(target_arch = "wasm32")]
+            observe(
+                retry.observer,
+                "attemptStart",
+                &wasm_bindgen::JsValue::UNDEFINED,
+            );
+            #[cfg(target_arch = "wasm32")]
+            if let Some(state) = retry.state {
+                state.cause.borrow_mut().take();
+                state.attempts.fetch_add(1, Ordering::Relaxed);
+            }
             let once = send();
             let outcome = match timeout {
                 Some(timeout) => runtime::timeout(timeout, once).await,
                 None => once.await,
             };
 
+            #[cfg(target_arch = "wasm32")]
+            if retry.observer.is_some() {
+                let value = match &outcome {
+                    Ok(Attempt::HttpError(Error::Http { status, .. }, _)) => {
+                        wasm_bindgen::JsValue::from(*status)
+                    }
+                    Err(error) => error.kind().into(),
+                    _ => wasm_bindgen::JsValue::UNDEFINED,
+                };
+                observe(retry.observer, "attemptEnd", &value);
+            }
             if let Some(probe) = probe {
                 let failed = match &outcome {
                     Err(error) => matches!(error.kind(), "NetworkError" | "TimeoutError"),
@@ -535,7 +582,13 @@ impl Client {
                 probe.finish(failed);
             }
             let (error, retry_after) = match outcome {
-                Ok(Attempt::Success(response)) => return Ok((response, permit)),
+                Ok(Attempt::Success(response)) => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        destination.success = true;
+                    }
+                    return Ok((response, permit));
+                }
                 Ok(Attempt::HttpError(error, retry_after)) => (error, retry_after),
                 Err(error) => (error, None),
             };
@@ -557,6 +610,8 @@ impl Client {
                     if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
                         return refuse(error);
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    observe_retry(retry.observer, delay, &error, retry_after);
                     attempt += 1;
                     runtime::sleep(delay).await;
                     retry_error = Some(error);
@@ -1359,6 +1414,8 @@ pub struct RequestBuilder {
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
     #[cfg(target_arch = "wasm32")]
+    pub(crate) observer: Option<js_sys::Function>,
+    #[cfg(target_arch = "wasm32")]
     pub(crate) upload: Option<crate::wasm::upload::Upload>,
     phase_overrides: Option<Box<crate::PhaseTimeouts>>,
     pub(crate) deadline: Option<Box<crate::timeouts::Deadline>>,
@@ -1378,7 +1435,7 @@ pub struct RequestBuilder {
     /// JavaScript: set when the retry budget refused a retry, so the error
     /// can say so (`retryBudgetExhausted`)
     #[cfg(target_arch = "wasm32")]
-    pub(crate) retry_refused: Option<Arc<AtomicBool>>,
+    pub(crate) retry_refused: Option<Arc<crate::wasm::RequestState>>,
 }
 
 impl RequestBuilder {
@@ -1416,12 +1473,52 @@ impl RequestBuilder {
                 url.as_str(),
                 timeout,
                 self.retry_policy(),
-                self.retry_refused.as_deref(),
+                self.retry_refused.as_deref().map(|state| &state.refused),
                 || request.send(),
             ),
         )
         .await
         .map(|(response, _permit)| response)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn apply_trace(&mut self, callback: Option<js_sys::Function>) -> Result<()> {
+        let Some(callback) = callback else {
+            return Ok(());
+        };
+        self.check_absolute_url()?;
+        let url = resolve_url(
+            self.client.config.base_url.as_deref(),
+            page_url(),
+            &self.url,
+            &self.query,
+        )?;
+        let context = callback
+            .call1(&wasm_bindgen::JsValue::UNDEFINED, &url.as_str().into())
+            .map_err(|_| Error::InvalidInput {
+                parameter: "traceContext".into(),
+                reason: "invalid trace context".into(),
+            })?;
+        if context.is_null() || context.is_undefined() {
+            return Ok(());
+        }
+        for (name, values) in crate::wasm::parse_headers(&context)?.iter() {
+            if !self.config.headers.contains(name) {
+                for value in values {
+                    self.config.headers.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        self.sensitive_headers
+            .extend(["traceparent".to_string(), "tracestate".to_string()]);
+        // Browser fetch cannot inspect a cross-origin Location before forwarding
+        // custom headers. Manual redirects prevent trace IDs escaping the allowlist.
+        if !crate::wasm::transport::is_node() {
+            self.redirect = Redirect::Error;
+            self.config.follow_redirects = true;
+            self.config.max_redirects = 0;
+        }
+        Ok(())
     }
 
     /// Replace the client's phase timeout settings for this request.
@@ -1484,6 +1581,10 @@ impl RequestBuilder {
         });
         RetryPolicy {
             config,
+            #[cfg(target_arch = "wasm32")]
+            observer: self.observer.as_ref(),
+            #[cfg(target_arch = "wasm32")]
+            state: self.retry_refused.as_deref(),
             replay_safe: self.config.method.is_idempotent()
                 || keyed && matches!(self.config.method, Method::Post | Method::Patch),
         }
@@ -1656,6 +1757,8 @@ impl RequestBuilder {
             allow_insecure_redirects: self.allow_insecure_redirects,
             phases: self.phase_options(),
             upload: self.upload.as_ref(),
+            observer: self.observer.as_ref(),
+            request_state: self.retry_refused.as_ref(),
         }
     }
 
@@ -1728,7 +1831,7 @@ impl RequestBuilder {
                 url.as_str(),
                 self.config.timeout,
                 self.retry_policy(),
-                self.retry_refused.as_deref(),
+                self.retry_refused.as_deref().map(|state| &state.refused),
                 || request.send(),
             ),
         )
@@ -2207,7 +2310,8 @@ mod tests {
 
     #[test]
     fn test_retry_delay_policy() {
-        let retry = Some(&no_jitter_config());
+        let config = no_jitter_config();
+        let retry = Some(&config);
         let get = true;
 
         // Retryable errors on idempotent methods
@@ -2263,12 +2367,13 @@ mod tests {
         );
 
         // Flags turn individual causes off, and non-idempotent retries on
-        let retry = Some(&RetryConfig {
+        let config = RetryConfig {
             retry_on_network_error: false,
             retry_on_timeout: false,
             retry_non_idempotent: true,
             ..no_jitter_config()
-        });
+        };
+        let retry = Some(&config);
         assert!(Client::retry_delay(retry, 0, get, &network_error(), None).is_none());
         assert!(
             Client::retry_delay(retry, 0, get, &Error::Timeout { duration_ms: 1 }, None).is_none()
@@ -2402,4 +2507,47 @@ mod tests {
         assert!(matches!(bin, ResponseBody::Binary(_)));
         assert!(decode_body(b"oops".to_vec(), "", ResponseFormat::Json).is_err());
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn observe(
+    observer: Option<&js_sys::Function>,
+    event: &str,
+    value: &wasm_bindgen::JsValue,
+) {
+    if let Some(observer) = observer {
+        let _ = observer.call2(&wasm_bindgen::JsValue::UNDEFINED, &event.into(), value);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn observe_text(observer: Option<&js_sys::Function>, event: &str, value: &str) {
+    if observer.is_some() {
+        observe(observer, event, &value.into());
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn observe_retry(
+    observer: Option<&js_sys::Function>,
+    delay: Duration,
+    error: &Error,
+    retry_after: Option<Duration>,
+) {
+    if observer.is_none() {
+        return;
+    }
+    let detail = js_sys::Object::new();
+    let set = |name: &str, value: wasm_bindgen::JsValue| {
+        let _ = js_sys::Reflect::set(&detail, &name.into(), &value);
+    };
+    set("delayMs", (delay.as_secs_f64() * 1000.0).into());
+    set("reason", error.kind().into());
+    if let Error::Http { status, .. } = error {
+        set("status", (*status).into());
+    }
+    if let Some(delay) = retry_after {
+        set("retryAfterMs", (delay.as_secs_f64() * 1000.0).into());
+    }
+    observe(observer, "retry", &detail.into());
 }

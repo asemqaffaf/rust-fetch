@@ -8,6 +8,7 @@
 //! callers use under load.)
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,8 @@ use tokio_rustls::TlsConnector;
 use url::{Host, Url};
 
 const MAX_CONNECTIONS_PER_ORIGIN: usize = 256;
+const MAX_CACHED_ORIGINS: usize = 256;
+type Origins = Mutex<HashMap<String, Arc<Origin>>>;
 // Below the 5 s keep-alive timeout of Node servers, so an idle connection
 // isn't reused just as the server closes it
 const IDLE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -36,7 +39,7 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 pub(crate) type Sender = SendRequest<crate::upload::Outgoing>;
 
 pub(crate) struct Pool {
-    origins: Mutex<HashMap<String, Arc<Origin>>>,
+    origins: Arc<Origins>,
     tls: TlsConnector,
 }
 
@@ -44,30 +47,71 @@ struct Origin {
     slots: Arc<Semaphore>,
     /// Oldest first; requests take the newest
     idle: Mutex<VecDeque<(Sender, Instant)>>,
+    counts: Arc<Mutex<(u64, u64)>>,
+    queued: AtomicU32,
 }
 
 /// A connection in use, holding one of its origin's slots
 pub(crate) struct Connection {
     pub(crate) sender: Sender,
+    pub(crate) reused: bool,
+    pub(crate) connect_ms: Option<f64>,
+    pub(crate) tls_ms: Option<f64>,
     origin: Arc<Origin>,
     slot: OwnedSemaphorePermit,
+}
+
+struct Waiting<'a>(&'a AtomicU32);
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Pool {
     pub(crate) fn new(tls: ClientConfig) -> Self {
         Self {
-            origins: Mutex::default(),
+            origins: Arc::default(),
             tls: TlsConnector::from(Arc::new(tls)),
         }
     }
 
+    pub(crate) fn stats(&self) -> Vec<crate::PoolStats> {
+        let mut origins = lock(&self.origins);
+        trim_origins(&mut origins, MAX_CACHED_ORIGINS);
+        origins
+            .iter()
+            .map(|(origin, state)| {
+                let idle = lock(&state.idle)
+                    .iter()
+                    .filter(|(sender, _)| !sender.is_closed())
+                    .count() as u64;
+                let (opened, closed) = *lock(&state.counts);
+                let open = opened.saturating_sub(closed);
+                let idle = idle.min(open);
+                #[allow(clippy::cast_precision_loss)]
+                crate::PoolStats {
+                    origin: origin.clone(),
+                    opened: opened as f64,
+                    closed: closed as f64,
+                    idle: idle as f64,
+                    busy: (open - idle) as f64,
+                    queued: state.queued.load(Ordering::Relaxed),
+                }
+            })
+            .collect()
+    }
+
     /// Wait for a free slot, then reuse an idle connection or open one
-    pub(crate) async fn checkout(&self, url: &Url) -> Result<Connection, String> {
+    pub(crate) async fn checkout(&self, url: &Url, observe: bool) -> Result<Connection, String> {
         let origin = self.origin(url);
+        origin.queued.fetch_add(1, Ordering::Relaxed);
+        let waiting = Waiting(&origin.queued);
         let slot = Arc::clone(&origin.slots)
             .acquire_owned()
             .await
             .expect("the semaphore is never closed");
+        drop(waiting);
         loop {
             let idle = lock(&origin.idle).pop_back();
             let Some((mut sender, since)) = idle else {
@@ -77,14 +121,23 @@ impl Pool {
             if since.elapsed() < IDLE_TIMEOUT && sender.ready().await.is_ok() {
                 return Ok(Connection {
                     sender,
+                    reused: true,
+                    connect_ms: observe.then_some(0.0),
+                    tls_ms: observe.then_some(0.0),
                     origin,
                     slot,
                 });
             }
         }
-        let sender = self.connect(url).await?;
+        let start = observe.then(Instant::now);
+        let (sender, tls_ms) = self
+            .connect(url, Arc::clone(&origin.counts), observe)
+            .await?;
         Ok(Connection {
             sender,
+            reused: false,
+            tls_ms,
+            connect_ms: start.map(|start| start.elapsed().as_secs_f64() * 1000.0),
             origin,
             slot,
         })
@@ -95,11 +148,18 @@ impl Pool {
         &self,
         url: &Url,
         connection: Connection,
+        observe: bool,
     ) -> Result<Connection, String> {
         let Connection { origin, slot, .. } = connection;
-        let sender = self.connect(url).await?;
+        let start = observe.then(Instant::now);
+        let (sender, tls_ms) = self
+            .connect(url, Arc::clone(&origin.counts), observe)
+            .await?;
         Ok(Connection {
             sender,
+            reused: false,
+            tls_ms,
+            connect_ms: start.map(|start| start.elapsed().as_secs_f64() * 1000.0),
             origin,
             slot,
         })
@@ -111,16 +171,27 @@ impl Pool {
         if let Some(origin) = origins.get(&key) {
             return Arc::clone(origin);
         }
+        trim_origins(&mut origins, MAX_CACHED_ORIGINS - 1);
         let origin = Arc::new(Origin {
             slots: Arc::new(Semaphore::new(MAX_CONNECTIONS_PER_ORIGIN)),
             idle: Mutex::default(),
+            counts: Arc::default(),
+            queued: AtomicU32::new(0),
         });
-        tokio::spawn(close_idle(Arc::downgrade(&origin)));
+        tokio::spawn(close_idle(
+            Arc::downgrade(&origin),
+            Arc::downgrade(&self.origins),
+        ));
         origins.insert(key, Arc::clone(&origin));
         origin
     }
 
-    async fn connect(&self, url: &Url) -> Result<Sender, String> {
+    async fn connect(
+        &self,
+        url: &Url,
+        counts: Arc<Mutex<(u64, u64)>>,
+        observe: bool,
+    ) -> Result<(Sender, Option<f64>), String> {
         let host = url.host().ok_or_else(|| format!("No host in {url}"))?;
         let port = url
             .port_or_known_default()
@@ -134,7 +205,7 @@ impl Pool {
         // Like Node's agents (`noDelay: true`)
         let _ = tcp.set_nodelay(true);
         if url.scheme() != "https" {
-            return handshake(tcp).await;
+            return Ok((handshake(tcp, counts).await?, observe.then_some(0.0)));
         }
         let name = match host {
             Host::Domain(domain) => {
@@ -143,12 +214,14 @@ impl Pool {
             Host::Ipv4(ip) => ServerName::IpAddress(ip.into()),
             Host::Ipv6(ip) => ServerName::IpAddress(ip.into()),
         };
+        let tls_start = observe.then(Instant::now);
         let tls = self
             .tls
             .connect(name, tcp)
             .await
             .map_err(|e| format!("TLS connection to {host}:{port} failed: {e}"))?;
-        handshake(tls).await
+        let tls_ms = tls_start.map(|start| start.elapsed().as_secs_f64() * 1000.0);
+        Ok((handshake(tls, counts).await?, tls_ms))
     }
 }
 
@@ -159,6 +232,7 @@ impl Connection {
             sender,
             origin,
             slot,
+            ..
         } = self;
         if !sender.is_closed() {
             lock(&origin.idle).push_back((sender, Instant::now()));
@@ -169,16 +243,21 @@ impl Connection {
 
 async fn handshake(
     io: impl AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    counts: Arc<Mutex<(u64, u64)>>,
 ) -> Result<Sender, String> {
     let (sender, connection) = http1::handshake(TokioIo::new(io))
         .await
         .map_err(|e| format!("HTTP handshake failed: {e}"))?;
-    tokio::spawn(connection);
+    lock(&counts).0 += 1;
+    tokio::spawn(async move {
+        let _ = connection.await;
+        lock(&counts).1 += 1;
+    });
     Ok(sender)
 }
 
 /// Close an origin's connections once they have been idle for 4 s
-async fn close_idle(origin: Weak<Origin>) {
+async fn close_idle(origin: Weak<Origin>, registry: Weak<Origins>) {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tick.tick().await;
@@ -192,6 +271,26 @@ async fn close_idle(origin: Weak<Origin>) {
         {
             idle.pop_front();
         }
+        drop(idle);
+        drop(origin);
+        if let Some(registry) = registry.upgrade() {
+            trim_origins(&mut lock(&registry), MAX_CACHED_ORIGINS);
+        }
+    }
+}
+
+fn trim_origins(origins: &mut HashMap<String, Arc<Origin>>, limit: usize) {
+    while origins.len() > limit {
+        let expired = origins
+            .iter()
+            .find(|(_, origin)| {
+                Arc::strong_count(origin) == 1
+                    && origin.queued.load(Ordering::Relaxed) == 0
+                    && origin.slots.available_permits() == MAX_CONNECTIONS_PER_ORIGIN
+            })
+            .map(|(key, _)| key.clone());
+        let Some(expired) = expired else { break };
+        origins.remove(&expired);
     }
 }
 

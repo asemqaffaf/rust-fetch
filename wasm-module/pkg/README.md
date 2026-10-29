@@ -107,6 +107,15 @@ The rust-fetch column describes the JavaScript API; the Rust crate has no interc
 
 The documentation is in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/main/docs) and published from it on every change to `main`.
 
+
+## Observability
+
+Opt in with `timings: true`, `metrics: true`, `onRequestStart` / `onRequestEnd`, or `debug: true` (a debug callback also works). Node supports `DEBUG=rust-fetch`. Timings include queueing, attempts, headers, retry delays and total time; `client.stats()` returns bounded latency samples and request/pool snapshots. Streamed lifecycles finish at EOF or cancellation.
+
+Built-in logs and lifecycle hooks remove URL credentials/query strings, redact credential headers and `sensitiveHeaders`, and omit bodies and error messages. Errors carry `method`, `url` and `attempts`; use `redactUrl` before exporting application error URLs. Automatic W3C `traceparent`/`tracestate` propagation requires `propagateTrace`, an exact `traceOrigins` allowlist and a `traceContext` provider. OpenTelemetry remains an optional application integration.
+
+See [the observability guide](https://asemqaffaf.github.io/rust-fetch/guide/observability) for setup, timing semantics, metrics and tracing recipes. The [fault-injection comparison](https://asemqaffaf.github.io/rust-fetch/reliability) records local results against axios, ky, got, undici and fetch, including platform differences. Reproduce it with `npm run reliability:compare`; raw results and dependency versions are committed in `benchmarks/reliability/`.
+
 ## Contributing and license
 
 Contributions are welcome. See [CONTRIBUTING.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CONTRIBUTING.md) for the development process and pull request checks, and [SECURITY.md](https://github.com/asemqaffaf/rust-fetch/blob/main/SECURITY.md) to report a vulnerability. Releases are published by CI when a version tag is pushed; see [CONTRIBUTING.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CONTRIBUTING.md#releasing). Planned work is in the [roadmap](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md).

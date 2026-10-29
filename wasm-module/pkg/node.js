@@ -23,7 +23,7 @@ import { pipeline, Readable, Transform } from 'node:stream';
 import tls from 'node:tls';
 import v8 from 'node:v8';
 import zlib from 'node:zlib';
-import { __bindNodeTransport, initSync } from './rust_fetch.js';
+import { __bindNodeTransport, __setNodeDiagnostics, initSync } from './rust_fetch.js';
 
 // V8 before 13 (Node.js 20 to 23) can abort with "unreachable code" when it
 // deoptimizes code that inlined a call into WebAssembly during that call, as
@@ -79,6 +79,34 @@ const pools = new Map([
   [http, new http.Agent(POOL_OPTIONS)],
   [https, new https.Agent(POOL_OPTIONS)],
 ]);
+// Connection accounting is enabled only by observed requests.
+const observedSockets = new WeakSet();
+const observedPools = new Map();
+const requestOrigins = new WeakMap();
+function observeSocket(socket, origin, agent) {
+  if (observedSockets.has(socket)) return;
+  observedSockets.add(socket);
+  const label = observedPools.has(origin) || observedPools.size < 128 ? origin : '[other]';
+  if (!observedPools.has(label)) observedPools.set(label, { origin: label, opened: 0, closed: 0, sockets: new Map() });
+  const pool = observedPools.get(label);
+  pool.opened++;
+  pool.sockets.set(socket, agent);
+  socket.once('close', () => { pool.closed++; pool.sockets.delete(socket); });
+}
+function nodePoolStats() {
+  return [...observedPools.values()].map((pool) => {
+    let idle = 0, queued = 0;
+    for (const [socket, agent] of pool.sockets) {
+      if (Object.values(agent?.freeSockets ?? {}).some((sockets) => sockets.includes(socket))) idle++;
+    }
+    for (const agent of new Set(pool.sockets.values())) {
+      for (const requests of Object.values(agent?.requests ?? {})) {
+        for (const request of requests) if (requestOrigins.get(request) === pool.origin) queued++;
+      }
+    }
+    return { origin: pool.origin, opened: pool.opened, closed: pool.closed, idle, busy: pool.sockets.size - idle, queued };
+  });
+}
 // The options Node's own global agents are created with. Newer versions also
 // list unset ones (e.g. `proxyEnv: undefined` unless NODE_USE_ENV_PROXY is on).
 const NODE_AGENT_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, noDelay: true, defaultPort: 443, protocol: 'https:' };
@@ -670,6 +698,8 @@ function withoutHeaders(headers, names) {
 }
 
 function send(state, method, url, headers, body, redirects, resolve, reject) {
+  const rejectAttempt = reject;
+  reject = (error) => { if (error && typeof error === 'object' && !Object.hasOwn(error, 'url')) error.url = url.href; rejectAttempt(error); };
   // Settle even when cancelled, so the request's slot is released
   if (state.cancelled) return reject(new Error('The request was cancelled'));
   let args;
@@ -689,6 +719,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   state.phases?.connect();
   const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
+    state.observe?.('headers', { status, url: url.href });
     const receivedHeaders = flattenHeaders(response.rawHeaders);
     const location = receivedHeaders.location;
     const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
@@ -740,6 +771,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
         // The unfinished upload cannot be reused with the redirect's connection.
         request.destroy();
       }
+      state.observe?.('redirect', { status, url: next.href });
       return send(state, nextMethod, next, nextHeaders, nextBody, redirects + 1, resolve, reject);
     }
 
@@ -807,6 +839,22 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       }
     });
   });
+  if (state.observe) {
+    requestOrigins.set(request, url.origin);
+    const start = performance.now();
+    request.on('socket', (socket) => {
+      observeSocket(socket, url.origin, request.agent);
+      let tcpAt = socket.connecting ? undefined : start;
+      if (socket.connecting && socket.encrypted) socket.once('connect', () => { tcpAt = performance.now(); });
+      const connected = () => state.observe('connection', {
+        connectMs: request.reusedSocket ? 0 : performance.now() - start,
+        tlsMs: socket.encrypted && !request.reusedSocket && tcpAt !== undefined ? performance.now() - tcpAt : 0,
+        connectionReused: !!request.reusedSocket,
+      });
+      if (!socket.connecting && (!socket.encrypted || socket.getProtocol())) connected();
+      else socket.once(socket.encrypted ? 'secureConnect' : 'connect', connected);
+    });
+  }
   if (state.phases) request.on('socket', (socket) => {
     if (!socket.connecting && (!socket.encrypted || socket.getProtocol())) state.phases.connected();
     else socket.once(socket.encrypted ? 'secureConnect' : 'connect', () => state.phases.connected());
@@ -838,6 +886,14 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
  * AbortSignal into every request.
  */
 function nodeTransport(request) {
+  if (!request.__observe) return dispatchNodeTransport(request);
+  const pending = dispatchNodeTransport(request);
+  const observed = pending.catch((error) => { request.__observe('cause', error); throw error; });
+  observed.cancel = pending.cancel;
+  return observed;
+}
+
+function dispatchNodeTransport(request) {
   // The native transport makes its own connections, so only where the
   // node:http transport would use its own pool too, not an installed agent.
   // Progress callbacks run on this thread, so those requests stay here.
@@ -856,10 +912,13 @@ function nodeTransport(request) {
   const transport = request.url.startsWith('https:') ? https : request.url.startsWith('http:') ? http : undefined;
   const publicOnly = request.blockPrivateNetwork === true;
   if (native && transport && (!upload || contentLength !== '0') && !request.stream && !onUploadProgress && !onDownloadProgress && !proxy && !publicOnly && agentFor(transport) === pools.get(transport)) {
+    request.__observe?.('transport', 'native');
     return nativeTransport(request, upload);
   }
 
+  request.__observe?.('transport', 'node:http');
   const state = {
+    observe: request.__observe,
     cancelled: false,
     request: undefined,
     bodyType: request.bodyType ?? AUTO,
@@ -911,7 +970,8 @@ function nodeTransport(request) {
       fn(value);
     };
     const headers = withDefaultHeaders(request);
-    state.waiting = whenFree(() => send(state, request.method, url, headers, request.body, 0, settle(resolve), settle(reject)));
+    state.observe?.('transportQueued');
+    state.waiting = whenFree(() => { state.observe?.('transportStart'); return send(state, request.method, url, headers, request.body, 0, settle(resolve), settle(reject)); });
   });
   const cancel = () => {
     state.phases?.clear();
@@ -962,6 +1022,7 @@ function nativeTransport(request, upload) {
   const bodyType = request.bodyType ?? AUTO;
   const manual = request.redirect === 'manual';
   const options = {
+    observe: !!request.__observe,
     id,
     method: request.method,
     url: request.url,
@@ -987,7 +1048,9 @@ function nativeTransport(request, upload) {
   const sent = new Promise((resolve) => {
     let timer;
     const queuedAt = performance.now();
+    request.__observe?.('transportQueued');
     const entry = whenFree(() => {
+      request.__observe?.('transportStart');
       dispatched = true;
       clearTimeout(timer);
       // The timeout covers the wait here too
@@ -1026,14 +1089,20 @@ function nativeTransport(request, upload) {
     }
   });
   const finished = sent.then((response) => {
-    if (response.code === 'RUST_FETCH_TOO_LARGE') throw tooLarge(options.maxResponseBytes);
+    const failed = (error) => { error.url = response.url || request.url; return error; };
+    if (response.code === 'RUST_FETCH_TOO_LARGE') throw failed(tooLarge(options.maxResponseBytes));
     if (response.error != null) {
       upload?.cancel();
       if (response.code === 'RUST_FETCH_TIMEOUT') {
         const phase = response.phase ?? 'total';
-        throw timeoutError(phase, phase === 'total' ? request.timeout : request[`${phase}Timeout`]);
+        throw failed(timeoutError(phase, phase === 'total' ? request.timeout : request[`${phase}Timeout`]));
       }
-      throw coded(new Error(response.error), response.code);
+      throw failed(coded(new Error(response.error), response.code));
+    }
+    if (request.__observe) {
+      request.__observe('headers', { status: response.status, url: response.url });
+      request.__observe('connection', { connectMs: response.connectMs ?? null, tlsMs: response.tlsMs ?? null, connectionReused: response.connectionReused ?? null, ttfbMs: response.ttfbMs ?? null });
+      for (const redirect of response.redirects ?? []) request.__observe('redirect', redirect);
     }
     const headers = Object.setPrototypeOf(flattenHeaders(response.headers), Object.prototype);
     return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
@@ -1054,13 +1123,20 @@ function finishResponse({ status, url, headers, body }, bodyType, manual) {
   const ok = status >= 200 && status < 300;
   const success = ok || (manual && REDIRECT_STATUSES.has(status));
   // Error statuses carry their body as text (for HttpError.body)
-  const decoded = success ? decodeBody(body, Object.hasOwn(headers, 'content-type') ? headers['content-type'] : undefined, bodyType) : decodeBody(body, '', TEXT);
+  let decoded;
+  try { decoded = success ? decodeBody(body, Object.hasOwn(headers, 'content-type') ? headers['content-type'] : undefined, bodyType) : decodeBody(body, '', TEXT); }
+  catch (error) { error.url = url; throw error; }
   return { status, statusText: '', ok, url, headers, body: decoded };
 }
 
 // Bind before consumers can construct a client: later package imports must not
 // select this Wasm instance's TLS policy or WebSocket guard through a global.
 __bindNodeTransport(nodeTransport, websocketGuard);
+__setNodeDiagnostics(() => ({
+  queued: waiting.slice(waitingHead).filter((entry) => !entry.cancelled).length,
+  native: native?.stats ? native.stats(nativeScope) : null,
+  http: nodePoolStats(),
+}));
 // Retain the discovery hooks; this instance uses only its explicit binding.
 globalThis[Symbol.for('rust-fetch.transport')] = nodeTransport;
 globalThis[Symbol.for('rust-fetch.websocketGuard')] = websocketGuard;

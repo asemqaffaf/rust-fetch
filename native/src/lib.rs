@@ -109,6 +109,7 @@ pub fn configure(env: &napi::Env, options: Options) -> napi::Result<External<Sco
 pub struct Request {
     /// Identifies the request for `cancel`
     pub id: u32,
+    pub observe: Option<bool>,
     pub method: String,
     pub url: String,
     /// Header names and values, alternating; repeated names are sent once each
@@ -143,6 +144,11 @@ pub struct Request {
 /// The finished response, or `error` (with `code` for timeouts)
 #[napi(object)]
 pub struct Response {
+    pub connect_ms: Option<f64>,
+    pub tls_ms: Option<f64>,
+    pub connection_reused: Option<bool>,
+    pub ttfb_ms: Option<f64>,
+    pub redirects: Option<Vec<RedirectInfo>>,
     pub status: u32,
     pub url: String,
     /// Header names and values, alternating
@@ -203,20 +209,7 @@ async fn send_attempt(
 
     match outcome {
         Ok(Ok(Ok(response))) => response,
-        Ok(Ok(Err(message))) => {
-            if let Some((phase, ms)) = timeouts::details(&message) {
-                return Response::timed_out(phase, ms);
-            }
-            let code = message
-                .starts_with(TOO_LARGE)
-                .then_some("RUST_FETCH_TOO_LARGE")
-                .or_else(|| {
-                    message
-                        .contains(upload::INVALID)
-                        .then_some("RUST_FETCH_UPLOAD_INPUT")
-                });
-            Response::failed(message, code)
-        }
+        Ok(Ok(Err(message))) => Response::failure(message),
         Ok(Err(_aborted)) => {
             Response::failed("The request was cancelled".into(), Some("ABORT_ERR"))
         }
@@ -230,7 +223,43 @@ pub fn cancel(id: u32, scope: &External<Scope>) {
     scope.0.pending.cancel(id);
 }
 
+#[napi(object)]
+pub struct RedirectInfo {
+    pub status: u32,
+    pub url: String,
+}
+#[napi(object)]
+pub struct PoolStats {
+    pub origin: String,
+    pub opened: f64,
+    pub closed: f64,
+    pub idle: f64,
+    pub busy: f64,
+    pub queued: u32,
+}
+/// A snapshot of this adapter's pools, never another module or worker's scope.
+#[napi]
+#[must_use]
+pub fn stats(scope: &External<Scope>) -> Vec<PoolStats> {
+    scope.0.pool.stats()
+}
+
 impl Response {
+    fn failure(message: String) -> Self {
+        if let Some((phase, ms)) = timeouts::details(&message) {
+            return Self::timed_out(phase, ms);
+        }
+        let code = message
+            .starts_with(TOO_LARGE)
+            .then_some("RUST_FETCH_TOO_LARGE")
+            .or_else(|| {
+                message
+                    .contains(upload::INVALID)
+                    .then_some("RUST_FETCH_UPLOAD_INPUT")
+            });
+        Self::failed(message, code)
+    }
+
     fn received(response: &hyper::Response<Incoming>, url: Url) -> Self {
         let mut headers = Vec::with_capacity(response.headers().len() * 2);
         for (name, value) in response.headers() {
@@ -238,6 +267,11 @@ impl Response {
             headers.push(String::from_utf8_lossy(value.as_bytes()).into_owned());
         }
         Self {
+            tls_ms: None,
+            connect_ms: None,
+            connection_reused: None,
+            ttfb_ms: None,
+            redirects: None,
             status: u32::from(response.status().as_u16()),
             url: url.into(),
             headers,
@@ -265,6 +299,11 @@ impl Response {
 
     fn failed(error: String, code: Option<&str>) -> Self {
         Self {
+            tls_ms: None,
+            connect_ms: None,
+            connection_reused: None,
+            ttfb_ms: None,
+            redirects: None,
             status: 0,
             url: String::new(),
             headers: Vec::new(),
@@ -287,7 +326,12 @@ impl Request {
 }
 
 impl Transport {
+    // Redirect rewriting and the final URL share one attempt state.
+    #[allow(clippy::too_many_lines)]
     async fn send(&self, mut request: Request) -> Result<Response, String> {
+        let observe = request.observe.unwrap_or(false);
+        let started = observe.then(std::time::Instant::now);
+        let mut history = Vec::new();
         let connect_timeout = timeouts::duration(request.connect_timeout);
         let mut first_connect_timeout = timeouts::duration(request.connect_timeout_remaining);
         let response_timeout = timeouts::duration(request.response_timeout);
@@ -308,84 +352,110 @@ impl Transport {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let limit = request.max_response_bytes.map(|limit| limit as u64);
 
-        loop {
-            let (connection, response) = timeouts::until(
-                response_deadline,
-                response_timeout,
-                self.exchange(
-                    &url,
-                    http_request(
-                        &method,
+        let outcome: Result<Response, String> = async {
+            loop {
+                let (connection, response) = timeouts::until(
+                    response_deadline,
+                    response_timeout,
+                    self.exchange(
                         &url,
-                        &headers,
-                        upload::Outgoing::new(body.as_ref(), upload.as_mut()),
-                    )?,
-                    first_connect_timeout.take().or(connect_timeout),
-                ),
-            )
-            .await?;
-            let status = response.status().as_u16();
+                        http_request(
+                            &method,
+                            &url,
+                            &headers,
+                            upload::Outgoing::new(body.as_ref(), upload.as_mut()),
+                        )?,
+                        first_connect_timeout.take().or(connect_timeout),
+                        observe,
+                    ),
+                )
+                .await?;
+                let status = response.status().as_u16();
 
-            if let (true, Some(location)) = (
-                !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
-                response.headers().get(LOCATION),
-            ) {
-                let location = String::from_utf8_lossy(location.as_bytes()).into_owned();
-                let drained = http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
-                if upload.is_none()
-                    && timeouts::until(response_deadline, response_timeout, async {
-                        drained.collect().await.map_err(|error| error.to_string())
-                    })
-                    .await
-                    .is_ok()
-                {
+                if let (true, Some(location)) = (
+                    !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
+                    response.headers().get(LOCATION),
+                ) {
+                    let location = String::from_utf8_lossy(location.as_bytes()).into_owned();
+                    let drained =
+                        http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
+                    if upload.is_none()
+                        && timeouts::until(response_deadline, response_timeout, async {
+                            drained.collect().await.map_err(|error| error.to_string())
+                        })
+                        .await
+                        .is_ok()
+                    {
+                        connection.release();
+                    }
+                    let next = redirect_url(
+                        &url,
+                        &location,
+                        redirects,
+                        max_redirects,
+                        allow_insecure,
+                        status,
+                    )?;
+                    rewrite_redirect(status, &mut method, &mut body, &mut headers);
+                    if method == Method::GET || method == Method::HEAD {
+                        upload = None;
+                    } else if let Some(upload) = &mut upload {
+                        upload.replay().await?;
+                    }
+                    if next.origin() != url.origin() {
+                        drop_credentials(&mut headers, &sensitive);
+                    }
+                    if observe {
+                        history.push(RedirectInfo {
+                            status: u32::from(status),
+                            url: next.to_string(),
+                        });
+                    }
+                    url = next;
+                    redirects += 1;
+                    continue;
+                }
+
+                let mut finished = Response::received(&response, url.clone());
+                if let Some(started) = started {
+                    finished.connect_ms = connection.connect_ms;
+                    finished.tls_ms = connection.tls_ms;
+                    finished.connection_reused = Some(connection.reused);
+                    finished.ttfb_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+                    finished.redirects = Some(history);
+                }
+                let encoding = response
+                    .headers()
+                    .get(CONTENT_ENCODING)
+                    .map(|e| String::from_utf8_lossy(e.as_bytes()).to_ascii_lowercase());
+                let raw =
+                    read_body(response, encoding.as_deref(), limit, &method, idle_timeout).await?;
+                if (200..300).contains(&status) {
+                    if let Some(upload) = &upload {
+                        upload.finished().await?;
+                    }
+                    connection.release();
+                } else if upload.is_none() {
                     connection.release();
                 }
-                let next = redirect_url(
-                    &url,
-                    &location,
-                    redirects,
-                    max_redirects,
-                    allow_insecure,
-                    status,
-                )?;
-                rewrite_redirect(status, &mut method, &mut body, &mut headers);
-                if method == Method::GET || method == Method::HEAD {
-                    upload = None;
-                } else if let Some(upload) = &mut upload {
-                    upload.replay().await?;
-                }
-                if next.origin() != url.origin() {
-                    drop_credentials(&mut headers, &sensitive);
-                }
-                url = next;
-                redirects += 1;
-                continue;
+                let body = match encoding {
+                    Some(encoding) if method != Method::HEAD => {
+                        decode(raw, encoding, self.zstd, limit).await?
+                    }
+                    _ => Vec::from(raw),
+                };
+                finished.body = Some(body.into());
+                return Ok(finished);
             }
-
-            let mut finished = Response::received(&response, url);
-            let encoding = response
-                .headers()
-                .get(CONTENT_ENCODING)
-                .map(|e| String::from_utf8_lossy(e.as_bytes()).to_ascii_lowercase());
-            let raw =
-                read_body(response, encoding.as_deref(), limit, &method, idle_timeout).await?;
-            if (200..300).contains(&status) {
-                if let Some(upload) = &upload {
-                    upload.finished().await?;
-                }
-                connection.release();
-            } else if upload.is_none() {
-                connection.release();
+        }
+        .await;
+        match outcome {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                let mut failed = Response::failure(error);
+                failed.url = url.to_string();
+                Ok(failed)
             }
-            let body = match encoding {
-                Some(encoding) if method != Method::HEAD => {
-                    decode(raw, encoding, self.zstd, limit).await?
-                }
-                _ => Vec::from(raw),
-            };
-            finished.body = Some(body.into());
-            return Ok(finished);
         }
     }
 
@@ -397,9 +467,10 @@ impl Transport {
         url: &Url,
         request: hyper::Request<upload::Outgoing>,
         connect_timeout: Option<Duration>,
+        observe: bool,
     ) -> Result<(Connection, hyper::Response<Incoming>), String> {
         let mut connection =
-            timeouts::wait(connect_timeout, "connect", self.pool.checkout(url)).await?;
+            timeouts::wait(connect_timeout, "connect", self.pool.checkout(url, observe)).await?;
         let mut error = match connection.sender.try_send_request(request).await {
             Ok(response) => return Ok((connection, response)),
             Err(error) => error,
@@ -410,7 +481,7 @@ impl Transport {
         let mut connection = timeouts::wait(
             connect_timeout,
             "connect",
-            self.pool.reconnect(url, connection),
+            self.pool.reconnect(url, connection, observe),
         )
         .await?;
         let response = connection

@@ -47,3 +47,13 @@ git worktree add ../rust-fetch-main main
 npm run build && npm run build:native
 npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg
 ```
+
+## Parser and boundary fuzzing
+
+The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line parsers, Retry-After, URL/base/redirect resolution, header validation and multipart encoding. Chunked parser results must match whole-input results under 4 KiB line and 16 KiB event limits. The `fuzzing` feature exposes harness entry points and is disabled in published Wasm builds.
+
+Run `cargo +nightly-2026-10-28 fuzz run sse -- -max_total_time=180` from `wasm-module` (replace `sse` with `lines`, `retry_after`, `urls`, `headers` or `multipart`). cargo-fuzz 0.13.2 and lockfiles are pinned in CI. `FUZZ_SEED` and `FUZZ_CASES` control `npm run fuzz:js`; fetch is stubbed so generated values cannot contact the network. Failures print a reproducible seed/case.
+
+The scheduled fuzz workflow runs each target for three minutes, with short pull-request smoke runs. Crashes are uploaded as artifacts and scheduled failures open a deduplicated issue. Minimize a reproducer, fix it and add a unit/JS regression before closing. Keep intentional seeds under `corpus/<target>/seed` or `regression-*`; generated mutation corpora and artifacts are ignored.
+
+The reliability comparison uses loopback fault fixtures, pinned development-only client dependencies, three rounds, full body consumption and a separate abort watchdog. Run npm run reliability:compare to regenerate its raw JSON and report. Transport conformance includes the same fault classes in native, node:http, fetch and real Chromium/Firefox/WebKit.

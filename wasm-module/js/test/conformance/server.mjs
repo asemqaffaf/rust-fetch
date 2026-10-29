@@ -62,6 +62,49 @@ export async function startServers(extra = () => false) {
     });
 
     switch (url.pathname) {
+      case '/fault/reset':
+        return req.socket.destroy();
+      case '/fault/truncated':
+        res.writeHead(200, { 'content-length': 1000, 'content-type': 'text/plain' });
+        res.write('short');
+        return res.socket.end();
+      case '/fault/headers':
+        res.setHeader('x-oversized', 'x'.repeat(1024 * 1024));
+        return res.end('ok');
+      case '/fault/idle':
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.write('first');
+        return;
+      case '/fault/drip': {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.write('x');
+        const interval = setInterval(() => res.write('x'), 30);
+        res.once('close', () => clearInterval(interval));
+        return;
+      }
+      case '/fault/sse-idle':
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(': keepalive\n\n');
+        return;
+      case '/fault/sse-reconnect-storm':
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        return res.end((seen.get(id)?.length ?? 0) <= 2
+          ? ': accepted then closed\n\n'
+          : 'data: recovered\n\ndata: [DONE]\n\n');
+      case '/fault/half-open':
+        req.socket.pause();
+        return;
+      case '/fault/slow':
+        await sleep(30);
+        return json(res, { ok: true });
+      case '/fault/trace':
+        return json(res, { traceparent: req.headers.traceparent ?? null, tracestate: req.headers.tracestate ?? null });
+      case '/fault/redirect-error':
+        res.writeHead(302, { location: '/status?code=503' });
+        return res.end();
+      case '/fault/recovery':
+        if ((seen.get(id)?.length ?? 0) === 1) return json(res, { retry: true }, 503, { 'retry-after': '0' });
+        return json(res, { recovered: true });
       case '/echo':
         return json(res, { origin, method: req.method, body });
       case '/v1/target':

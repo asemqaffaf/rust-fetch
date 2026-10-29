@@ -49,6 +49,9 @@ pub mod http;
 
 mod budget;
 mod circuit;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
 mod idempotency;
 mod limiter;
 mod lines;

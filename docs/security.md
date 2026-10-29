@@ -204,3 +204,14 @@ Node response processing uses actual raw header pairs. Inherited `Object.prototy
 The Rust client's alternative reqwest pools for per-request connect/redirect settings are capped at 32. Eviction drops only the cached handle; active requests keep their own clones.
 
 Secret scanning and Dependabot security updates are enabled for the GitHub repository. Dependency advisory checks and release provenance remain enforced in CI.
+
+## 2.7.0 audit
+
+- Native TLS policy, pending IDs and cancellation are scoped to an adapter; each Wasm instance explicitly binds its HTTP transport and WebSocket guard. A later package import or replacement of global discovery hooks cannot change that binding.
+- Native idle-origin caches retain at most 256 idle entries during admission/cleanup, while active origin handles keep their semaphore and pool. The Rust client's alternative transport cache remains capped at 32.
+- Optional logs and lifecycle hooks redact URL user info, query strings, credential headers and sensitiveHeaders, and never export bodies/error messages. Trace context requires an explicit destination allowlist and is stripped on cross-origin redirects. Browser automatic tracing refuses redirects.
+- Scheduled parser and JavaScript/Wasm boundary fuzzing runs offline against the actual validation paths. Crashes retain reproducers; a separate scheduled-report job can open an issue without giving pull-request test jobs write permissions.
+- Fault-injection rows run on every adapter in the conformance matrix. Header-buffer limits remain controlled by each runtime: WebKit accepts the tested 1 MiB header, so the matrix explicitly records that difference rather than claiming a uniform limit.
+- Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
+
+See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
