@@ -753,6 +753,85 @@ describe('retries', () => {
   });
 });
 
+describe('circuit breakers', () => {
+  it('opens after consecutive failures, isolates origins, then closes after a successful probe', async () => {
+    let failed = true;
+    const changes = [];
+    const s = await startServer((req, res) => {
+      res.writeHead(req.url === '/4xx' ? 404 : failed ? 503 : 200);
+      res.end('reply');
+    });
+    const other = await startServer((req, res) => json(res, { ok: true }));
+    try {
+      const c = new WasmClient({ circuitBreaker: { failureThreshold: 2, resetAfterMs: 50 }, onCircuitChange: (entry) => changes.push(entry) });
+      await rejection(c.get(s.url()));
+      await rejection(c.get(s.url('/4xx'))); // reachable API resets the failure streak
+      await rejection(c.get(s.url()));
+      await rejection(c.get(s.url()));
+      const error = await rejection(c.get(s.url('/blocked?token=secret')));
+      assert.equal(error.kind, 'CircuitOpenError');
+      assert.equal(error.origin, new URL(s.url()).origin);
+      assert.ok(error.retryAfterMs > 0 && error.retryAfterMs <= 50);
+      assert.equal(s.requests.length, 4);
+      assert.equal((await c.get(other.url())).status, 200);
+      await sleep(60);
+      failed = false;
+      assert.equal((await c.get(s.url())).status, 200);
+      assert.equal((await c.get(s.url())).status, 200);
+      assert.deepEqual(changes.map(({ from, to }) => [from, to]), [['closed', 'open'], ['open', 'half-open'], ['half-open', 'closed']]);
+      assert.ok(changes.every((entry) => !entry.origin.includes('token')));
+    } finally { await s.close(); await other.close(); }
+  });
+
+  it('allows exactly one half-open probe and releases a cancelled probe', async () => {
+    const s = await startServer(async (req, res, ctx) => {
+      if (ctx.count === 0) { res.writeHead(503); return res.end('down'); }
+      await sleep(100);
+      return json(res, { recovered: true });
+    });
+    try {
+      const c = new WasmClient({ circuitBreaker: { failureThreshold: 1, resetAfterMs: 20 } });
+      await rejection(c.get(s.url()));
+      await sleep(30);
+      const controller = new AbortController();
+      const probe = rejection(c.get(s.url(), { signal: controller.signal }));
+      await sleep(20);
+      const blocked = await Promise.all(Array.from({ length: 5 }, () => rejection(c.get(s.url()))));
+      assert.ok(blocked.every((e) => e.kind === 'CircuitOpenError'));
+      assert.equal(s.requests.length, 2);
+      controller.abort();
+      assert.equal((await probe).kind, 'CancelledError');
+      assert.equal((await c.get(s.url())).body.recovered, true);
+    } finally { await s.close(); }
+  });
+
+  it('stops retries when they open a circuit and counts network failures/timeouts', async () => {
+    const s = await startServer((req, res) => { res.writeHead(503); res.end('down'); });
+    try {
+      const c = new WasmClient({ retries: { maxRetries: 5, initialDelayMs: 0 }, circuitBreaker: { failureThreshold: 2 } });
+      assert.equal((await rejection(c.get(s.url()))).kind, 'CircuitOpenError');
+      assert.equal(s.requests.length, 2);
+      const queued = new WasmClient({ maxConcurrent: 1, circuitBreaker: { failureThreshold: 1 } });
+      const errors = await Promise.all(Array.from({ length: 4 }, () => rejection(queued.get(s.url()))));
+      assert.equal(errors[0].kind, 'HttpError');
+      assert.ok(errors.slice(1).every((error) => error.kind === 'CircuitOpenError'));
+      assert.equal(s.requests.length, 3, 'queued calls recheck a circuit that opened before their admission');
+    } finally { await s.close(); }
+    const c = new WasmClient({ circuitBreaker: { failureThreshold: 1 } });
+    assert.equal((await rejection(c.get(s.url()))).kind, 'NetworkError');
+    assert.equal((await rejection(c.get(s.url()))).kind, 'CircuitOpenError');
+    const timed = new WasmClient({ timeoutMs: 20, circuitBreaker: { failureThreshold: 1 } });
+    assert.equal((await rejection(timed.get(server.url('/slow')))).kind, 'TimeoutError');
+    assert.equal((await rejection(timed.get(server.url('/slow')))).kind, 'CircuitOpenError');
+  });
+
+  it('validates circuit options before any request', () => {
+    for (const options of [{ circuitBreaker: true }, { circuitBreaker: { failureThreshold: 0 } }, { circuitBreaker: { failureThreshold: 1.5 } }, { circuitBreaker: { resetAfterMs: 0 } }, { onCircuitChange: true }]) {
+      assert.throws(() => new WasmClient(options), (e) => e.kind === 'InvalidInputError');
+    }
+  });
+});
+
 describe('client load limits', () => {
   it('queues attempts FIFO within maxConcurrent and cancels queued calls without sending', async () => {
     let active = 0;

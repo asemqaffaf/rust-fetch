@@ -1441,6 +1441,48 @@ async fn limits_queue_fifo_and_start_attempt_timeouts_after_admission() {
 }
 
 #[tokio::test]
+async fn circuit_breakers_share_state_across_clones_and_stop_retries() {
+    let server = TestServer::start(|_, _| Reply::new(503, "down"));
+    let transitions = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&transitions);
+    let client = Client::builder()
+        .retry_config(fast_retries(5))
+        .circuit_breaker(rust_fetch::CircuitBreaker::new(2, Duration::from_secs(1)))
+        .on_circuit_change(move |event| observed.lock().unwrap().push(event))
+        .build()
+        .unwrap();
+    let error = client.get(server.url("/")).await.unwrap_err();
+    assert_eq!(error.kind(), "CircuitOpenError");
+    assert_eq!(server.requests().len(), 2);
+    let clone = client.clone();
+    assert_eq!(
+        clone.get(server.url("/")).await.unwrap_err().kind(),
+        "CircuitOpenError"
+    );
+    assert_eq!(transitions.lock().unwrap().len(), 1);
+    let healthy = TestServer::start(|_, _| Reply::new(200, "ok"));
+    assert_eq!(client.get(healthy.url("/")).await.unwrap().status, 200);
+    let slow = TestServer::start(|_, _| Reply::new(200, "late").delay(Duration::from_millis(100)));
+    let timed = Client::builder()
+        .timeout(Duration::from_millis(20))
+        .circuit_breaker(rust_fetch::CircuitBreaker::new(1, Duration::from_secs(1)))
+        .build()
+        .unwrap();
+    assert_eq!(
+        timed.get(slow.url("/")).await.unwrap_err().kind(),
+        "TimeoutError"
+    );
+    assert_eq!(
+        timed.get(slow.url("/")).await.unwrap_err().kind(),
+        "CircuitOpenError"
+    );
+    assert!(Client::builder()
+        .circuit_breaker(rust_fetch::CircuitBreaker::new(0, Duration::from_secs(1)))
+        .build()
+        .is_err());
+}
+
+#[tokio::test]
 async fn a_429_pauses_the_rate_bucket_and_retries_reenter_it() {
     let server = TestServer::start(|_, i| {
         if i == 0 {

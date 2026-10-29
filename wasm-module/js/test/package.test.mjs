@@ -135,7 +135,8 @@ describe('published package', () => {
        interface User { id: number; name: string }
        await init();
        const options: ClientOptions = { baseUrl: 'https://api.example.com', timeoutMs: 1000, retries: { maxRetries: 2, retryOn: [503] },
-         maxConcurrent: 10, rateLimit: { requests: 100, perMs: 60000 }, limitsPerOrigin: true };
+         maxConcurrent: 10, rateLimit: { requests: 100, perMs: 60000 }, limitsPerOrigin: true,
+         circuitBreaker: { failureThreshold: 5, resetAfterMs: 30000 }, onCircuitChange: ({ origin, to }) => console.log(origin, to) };
        const client = new WasmClient(options);
        const res: HttpResponse<User> = await client.get('/users/1');
        const name: string = res.body.name;
