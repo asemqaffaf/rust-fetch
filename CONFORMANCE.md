@@ -125,5 +125,5 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 5. browsers read a response ahead of the page themselves, however slowly it's consumed: their own fetch() took 59–64 MB of 64 in this test, as rust-fetch did; how far varies by browser and machine
 6. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)
 7. Node.js 20 requires --experimental-websocket; without it WebSocket cases are unavailable.
-8. WebKit accepts a 1 MiB response header. Header-buffer limits are controlled by the browser network stack, outside the JavaScript adapter; this is recorded rather than claimed as a uniform rejection.
+8. WebKit's network stack controls header-buffer limits: macOS accepts the tested 1 MiB header, while Linux rejects it as a NetworkError. Neither limit is configurable by the JavaScript adapter.
 9. Upload progress uses XMLHttpRequest in browsers, fetch in a runtime without XHR, and node:http in Node (including when the native addon is installed).
