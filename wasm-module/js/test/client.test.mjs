@@ -563,7 +563,6 @@ describe('errors', () => {
       [c.get(server.url('/echo'), { signal: 'nope' }), 'signal'],
       [c.get(server.url('/echo'), { headers: { 'bad header': 'x' } }), 'request'],
       [c.get(server.url('/echo'), { headers: { 'x-ok': 'line\nbreak' } }), 'request'],
-      [c.post(server.url('/echo'), { body: new ReadableStream() }), 'body'],
       [c.post(server.url('/echo'), { body: 10n }), 'body'],
     ];
     for (const [promise, parameter] of cases) {

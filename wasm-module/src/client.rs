@@ -346,6 +346,8 @@ impl Client {
             fetch_options: self.config.fetch_options.clone(),
             #[cfg(target_arch = "wasm32")]
             retry_refused: None,
+            #[cfg(target_arch = "wasm32")]
+            upload: None,
         }
     }
 
@@ -1351,6 +1353,8 @@ pub struct RequestBuilder {
     progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) upload: Option<crate::wasm::upload::Upload>,
     phase_overrides: Option<Box<crate::PhaseTimeouts>>,
     pub(crate) deadline: Option<Box<crate::timeouts::Deadline>>,
     idempotency_header: Option<String>,
@@ -1463,11 +1467,18 @@ impl RequestBuilder {
                 .get_first(name)
                 .is_some_and(|key| !key.trim().is_empty())
         });
-        RetryPolicy {
-            config: self
-                .retry_config
+        let config = self
+            .retry_config
+            .as_ref()
+            .or(self.client.config.retry_config.as_ref());
+        #[cfg(target_arch = "wasm32")]
+        let config = config.filter(|_| {
+            self.upload
                 .as_ref()
-                .or(self.client.config.retry_config.as_ref()),
+                .map_or(true, |upload| upload.replayable())
+        });
+        RetryPolicy {
+            config,
             replay_safe: self.config.method.is_idempotent()
                 || keyed && matches!(self.config.method, Method::Post | Method::Patch),
         }
@@ -1639,6 +1650,7 @@ impl RequestBuilder {
             sensitive_headers: &self.sensitive_headers,
             allow_insecure_redirects: self.allow_insecure_redirects,
             phases: self.phase_options(),
+            upload: self.upload.as_ref(),
         }
     }
 

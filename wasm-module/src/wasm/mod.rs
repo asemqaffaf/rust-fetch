@@ -13,6 +13,7 @@ pub(crate) mod futures;
 pub(crate) mod idempotency;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
+pub(crate) mod upload;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod url;
 #[cfg(target_arch = "wasm32")]
@@ -52,9 +53,15 @@ export type QueryParams =
  * - `Blob` / `File` is sent as bytes with the blob's type
  * - `FormData` is sent as `multipart/form-data`, including files
  * - `URLSearchParams` is sent form-encoded (`application/x-www-form-urlencoded`)
+ * - `ReadableStream` / async iterable byte sources stream with backpressure; a factory permits replay
  * - anything else is sent as JSON (`application/json`), like `JSON.stringify`
  */
-export type RequestBody = string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | FormData | URLSearchParams | object | number | boolean | null;
+export type UploadChunk = string | ArrayBuffer | ArrayBufferView;
+/** A one-shot byte source. Node Readable implements AsyncIterable. */
+export type UploadBody = ReadableStream<UploadChunk> | AsyncIterable<UploadChunk>;
+/** Called for every attempt; return a fresh source to allow retries. */
+export type UploadBodyFactory = () => UploadBody | Promise<UploadBody>;
+export type RequestBody = UploadBody | UploadBodyFactory | string | Uint8Array | ArrayBuffer | ArrayBufferView | Blob | FormData | URLSearchParams | object | number | boolean | null;
 
 /**
  * How to decode the response body:
@@ -106,7 +113,7 @@ export interface DownloadProgress {
   total: number | null;
 }
 
-/** Upload progress: bytes of the request body sent so far, and the body's size. */
+/** Upload progress: bytes handed to the transport, and body size (0 when unknown). */
 export interface UploadProgress {
   loaded: number;
   total: number;
@@ -1106,11 +1113,19 @@ async fn send_prepared(
 
     builder = apply_body(builder, body).await?;
     if let BodyType::Stream | BodyType::Ndjson = body_type {
-        if upload_progress.is_some() {
+        #[cfg(target_arch = "wasm32")]
+        let has_upload = builder.upload.is_some();
+        #[cfg(not(target_arch = "wasm32"))]
+        let has_upload = false;
+        if upload_progress.is_some() && !has_upload {
             return Err(invalid(
                 "onUploadProgress",
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let (Some(upload), Some(callback)) = (&builder.upload, &upload_progress) {
+            upload.progress(callback)?;
         }
         let max_line_bytes = parse_stream_limit(
             &options.raw("maxLineBytes"),
@@ -1430,11 +1445,15 @@ async fn apply_body(request: RequestBuilder, body: BodyMode) -> Result<RequestBu
             let bytes = blob_bytes(&value).await?;
             return Ok(with_default_content_type(request, &content_type).bytes(bytes));
         }
-        if is_instance_of_global(&value, "ReadableStream") {
-            return Err(invalid(
-                "body",
-                "ReadableStream bodies are not supported; send bytes, a Blob or FormData",
-            ));
+        #[cfg(target_arch = "wasm32")]
+        if let Some(upload) = upload::Upload::from_value(&value)? {
+            if matches!(request.config.method, Method::Get | Method::Head) {
+                return Err(invalid("body", "GET and HEAD cannot have streaming bodies"));
+            }
+            let mut request = with_default_content_type(request, "application/octet-stream");
+            upload.activate();
+            request.upload = Some(upload);
+            return Ok(request);
         }
     }
 

@@ -338,9 +338,7 @@ async fn explicit_content_type_is_kept() {
 #[wasm_bindgen_test]
 async fn unsupported_bodies_are_rejected() {
     for value in [
-        "new ReadableStream()",
         "undefined",
-        "() => 1",
         "10n",
         "(() => { const a = {}; a.self = a; return a; })()",
     ] {
@@ -675,7 +673,7 @@ async fn invalid_requests_reject_before_any_network_io() {
 
     let error = rejection(client.post(
         "https://example.com".into(),
-        Some(js("{ body: new ReadableStream() }").unchecked_into()),
+        Some(js("{ body: Symbol('invalid') }").unchecked_into()),
     ))
     .await;
     assert_eq!(get(&error, "parameter").as_string().unwrap(), "body");
@@ -1045,5 +1043,36 @@ async fn promise_adapter_schedules_once_and_preserves_fulfillment_and_rejection(
             .as_string()
             .unwrap(),
         "failure"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn streaming_bodies_stay_lazy_and_expose_replay_policy() {
+    js_sys::eval(include_str!("../../js/upload.js")).unwrap();
+    for (expression, replayable) in [
+        ("new ReadableStream()", false),
+        (
+            "(async function* () { yield new Uint8Array([1]); })()",
+            false,
+        ),
+        ("() => new ReadableStream()", true),
+    ] {
+        let request = apply_body(request(), BodyMode::Auto(js(expression)))
+            .await
+            .unwrap();
+        let upload = request.upload.as_ref().unwrap();
+        assert_eq!(upload.replayable(), replayable);
+        assert!(request.config.body.is_none());
+        assert_eq!(
+            content_type(&request).as_deref(),
+            Some("application/octet-stream")
+        );
+    }
+    let get = Client::new()
+        .unwrap()
+        .request(Method::Get, "https://example.com");
+    assert_eq!(
+        error_parameter(apply_body(get, BodyMode::Auto(js("new ReadableStream()"))).await),
+        "body"
     );
 }
