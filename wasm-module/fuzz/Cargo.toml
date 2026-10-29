@@ -1,0 +1,54 @@
+[package]
+name = "rust-fetch-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+[package.metadata]
+cargo-fuzz = true
+[dependencies]
+libfuzzer-sys = "0.4"
+rust-fetch = { path = "..", features = ["fuzzing"] }
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "sse"
+path = "fuzz_targets/sse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lines"
+path = "fuzz_targets/lines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "retry_after"
+path = "fuzz_targets/retry_after.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "urls"
+path = "fuzz_targets/urls.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "headers"
+path = "fuzz_targets/headers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multipart"
+path = "fuzz_targets/multipart.rs"
+test = false
+doc = false
+bench = false

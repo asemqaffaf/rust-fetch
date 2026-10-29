@@ -1,0 +1,1496 @@
+{
+  "method": {
+    "timeoutMs": 150,
+    "watchdogMs": 1000,
+    "retries": 0,
+    "rounds": 3,
+    "body": "fully consumed",
+    "endpoints": "loopback only",
+    "note": "Axios timeout is inactivity-based; the watchdog identifies missing total deadlines. HTTP statuses are normalized after full-body consumption."
+  },
+  "versions": {
+    "node": "v22.23.3",
+    "rustFetchManifest": "2.6.1",
+    "axios": "1.20.0",
+    "ky": "2.2.0",
+    "got": "15.1.0",
+    "undici": "7.30.1"
+  },
+  "bundleSha256": "c8b37da24f8fd4c94461eac012d6403b06fb67d274f2894b3543563c1280fe53",
+  "observations": {
+    "rust-fetch/native": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.5282909999999958,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 0.9864589999999964,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 0.540834000000018,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.4812499999999886,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.6932079999999985,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.588832999999994,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.9134999999999991,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.428875000000005,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.1062090000000069,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.4392079999999794,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.95504200000002,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 2.973792000000003,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.826542,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.660208,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.59391599999998,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.19716700000004,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.97004099999992,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.0847500000001,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.64800000000014,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.00099999999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.15487499999995,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 4.47529099999997,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.5329999999999018,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.9621250000000146,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 0.7570000000000618,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 0.40954099999999016,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 0.7403340000000753,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.6483339999999771,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.4732080000001133,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.34237499999994725,
+          "watchdog": false
+        }
+      ]
+    },
+    "rust-fetch/node:http": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.189374999999984,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 0.7197500000000048,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 0.6367919999999856,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.1360420000000033,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.6774580000000014,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.6785000000000139,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.2553340000000048,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.195083000000011,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 0.8509160000000122,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 2.5820420000000013,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 2.3209579999999903,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.947624999999988,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.90574999999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 153.95191599999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.32295799999997,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.77387499999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 154.070834,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.95612500000004,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 154.11145799999986,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 153.39645799999994,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 151.8644999999999,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 14.669708000000128,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 9.129832999999962,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 8.450583000000051,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 1.294332999999824,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 0.7362909999999374,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "error": "HttpError",
+          "elapsedMs": 0.81512500000008,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.9088749999998527,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.5922500000001492,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "error": "HttpError",
+          "elapsedMs": 0.4866660000000138,
+          "watchdog": false
+        }
+      ]
+    },
+    "fetch": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 8.735375000000005,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.634332999999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.0200000000000102,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.9274169999999913,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 0.7463329999999928,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 0.7978749999999764,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.2196250000000077,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.2485419999999863,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.858458999999982,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 3.0458329999999876,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 2.4557920000000024,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 2.478041999999988,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 151.08408400000002,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 154.338667,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 152.04900000000004,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 154.24637499999994,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.58170800000005,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 152.04762499999993,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 156.14470800000004,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 151.74120799999992,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 152.37912499999993,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 11.52820799999995,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 8.858208999999988,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 7.1582089999999425,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.7345420000001468,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.559291999999914,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.6039589999998043,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.5593340000000353,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 1.0823750000001837,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.5810420000000249,
+          "watchdog": false
+        }
+      ]
+    },
+    "undici": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 9.124291,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.992291999999992,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.1553340000000105,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 2.1218749999999886,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 0.7616659999999911,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 0.8776249999999948,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.2691250000000025,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.3694580000000087,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 1.9935409999999933,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 3.267583000000002,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 2.9192500000000052,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 2.457084000000009,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 150.308583,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 152.40474999999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.5464159999999,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.50191700000005,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.082584,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.70770900000014,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 153.1211249999999,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 151.93291599999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": 23,
+          "elapsedMs": 156.37179200000014,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 15.442041999999901,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 9.399791999999934,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "TypeError",
+          "elapsedMs": 6.853083999999853,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.6234160000001339,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.6841249999999945,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.489875000000211,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.4551250000001801,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.46145800000022064,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.6198749999998654,
+          "watchdog": false
+        }
+      ]
+    },
+    "axios": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 7.384541000000013,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.2030409999999847,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 0.7723750000000109,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "ECONNRESET",
+          "elapsedMs": 1.0802089999999964,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "ECONNRESET",
+          "elapsedMs": 0.9437089999999841,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "ECONNRESET",
+          "elapsedMs": 0.8309999999999889,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 1.4194579999999917,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 1.2516669999999976,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 2.024166000000008,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 3.084916000000021,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 2.2861660000000086,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 2.0651670000000024,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "AxiosError",
+          "code": "ECONNABORTED",
+          "elapsedMs": 152.900708,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "AxiosError",
+          "code": "ECONNABORTED",
+          "elapsedMs": 155.795208,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "AxiosError",
+          "code": "ECONNABORTED",
+          "elapsedMs": 158.57741699999997,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 155.45408300000008,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 154.07287500000007,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "AxiosError",
+          "code": "ERR_BAD_RESPONSE",
+          "elapsedMs": 154.859917,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "watchdog",
+          "error": "CanceledError",
+          "code": "ERR_CANCELED",
+          "elapsedMs": 1004.747083,
+          "watchdog": true
+        },
+        {
+          "outcome": "watchdog",
+          "error": "CanceledError",
+          "code": "ERR_CANCELED",
+          "elapsedMs": 1002.3376669999998,
+          "watchdog": true
+        },
+        {
+          "outcome": "watchdog",
+          "error": "CanceledError",
+          "code": "ERR_CANCELED",
+          "elapsedMs": 1002.5422089999997,
+          "watchdog": true
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
+          "code": "ERR_FR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 23.42883299999994,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
+          "code": "ERR_FR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 13.979041999999936,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "Error [ERR_FR_TOO_MANY_REDIRECTS]",
+          "code": "ERR_FR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 8.689957999999933,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.8116250000002765,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.5714169999992009,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.48816700000043056,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.5457079999996495,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.4764999999997599,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.6157499999999345,
+          "watchdog": false
+        }
+      ]
+    },
+    "ky": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 9.340041999999983,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.9711670000000083,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.1405829999999924,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 2.62420800000001,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.1003750000000139,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.0456659999999829,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.7009579999999858,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.4590000000000032,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 1.880207999999982,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.6606669999999895,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 2.803958999999992,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 3.1389580000000024,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 152.21616699999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 155.23779099999996,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 155.98624999999998,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 157.42154099999993,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 154.61558300000002,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 155.4764580000001,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 154.75216699999987,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 154.66212500000006,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "elapsedMs": 157.38191700000016,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 16.110875000000078,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 8.434999999999945,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "NetworkError",
+          "elapsedMs": 7.039250000000038,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.8697500000000673,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.752042000000074,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.6479170000000067,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.8016250000000582,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.8082080000001497,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.8385419999999613,
+          "watchdog": false
+        }
+      ]
+    },
+    "got": {
+      "success": [
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 8.01608299999998,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.352708000000007,
+          "watchdog": false
+        },
+        {
+          "outcome": "ok",
+          "status": 200,
+          "elapsedMs": 1.0714999999999861,
+          "watchdog": false
+        }
+      ],
+      "reset": [
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "ECONNRESET",
+          "elapsedMs": 1.445791999999983,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "ECONNRESET",
+          "elapsedMs": 1.1663750000000164,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "ECONNRESET",
+          "elapsedMs": 0.7396659999999997,
+          "watchdog": false
+        }
+      ],
+      "truncated": [
+        {
+          "outcome": "network",
+          "error": "ReadError",
+          "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+          "elapsedMs": 1.854332999999997,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "ReadError",
+          "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+          "elapsedMs": 1.5212080000000014,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "ReadError",
+          "code": "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+          "elapsedMs": 2.2435000000000116,
+          "watchdog": false
+        }
+      ],
+      "oversizedHeaders": [
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 2.5406249999999773,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 2.313749999999999,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "RequestError",
+          "code": "HPE_HEADER_OVERFLOW",
+          "elapsedMs": 2.403082999999981,
+          "watchdog": false
+        }
+      ],
+      "stalledHeaders": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 152.97225000000003,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 155.13404199999997,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 153.157333,
+          "watchdog": false
+        }
+      ],
+      "stalledBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 157.03549999999996,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 156.237709,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 155.65166699999986,
+          "watchdog": false
+        }
+      ],
+      "trickleBody": [
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 158.01241700000014,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 156.55041699999992,
+          "watchdog": false
+        },
+        {
+          "outcome": "timeout",
+          "error": "TimeoutError",
+          "code": "ETIMEDOUT",
+          "elapsedMs": 154.63991599999986,
+          "watchdog": false
+        }
+      ],
+      "redirectLoop": [
+        {
+          "outcome": "network",
+          "error": "MaxRedirectsError",
+          "code": "ERR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 18.383833000000095,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "MaxRedirectsError",
+          "code": "ERR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 10.500958999999966,
+          "watchdog": false
+        },
+        {
+          "outcome": "network",
+          "error": "MaxRedirectsError",
+          "code": "ERR_TOO_MANY_REDIRECTS",
+          "elapsedMs": 9.851625000000013,
+          "watchdog": false
+        }
+      ],
+      "rateLimited": [
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.9490840000000844,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.7136660000001029,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:429",
+          "status": 429,
+          "elapsedMs": 0.602542000000085,
+          "watchdog": false
+        }
+      ],
+      "unavailable": [
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.5989580000000387,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.5298749999999472,
+          "watchdog": false
+        },
+        {
+          "outcome": "http:503",
+          "status": 503,
+          "elapsedMs": 0.6871659999999338,
+          "watchdog": false
+        }
+      ]
+    }
+  }
+}

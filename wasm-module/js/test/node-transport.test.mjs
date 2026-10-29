@@ -410,6 +410,16 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(error.kind, 'NetworkError');
     });
 
+    it('measures TLS setup and reuse on observed node:https requests', async () => {
+      await withEnv({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }, async () => {
+        const c = new WasmClient({ timings: true });
+        const first = await c.get(url(), { onDownloadProgress() {} });
+        assert.ok(first.timings.attempts[0].tlsMs >= 0);
+        const next = await c.get(url(), { onDownloadProgress() {} });
+        assert.equal(next.timings.attempts[0].connectionReused, true);
+      });
+    });
+
     it('keeps insecure native TLS configuration out of other scopes', { skip: !nativeExpected }, async () => {
       const source = `
         const native = require(${JSON.stringify(fileURLToPath(addon))});
@@ -1025,4 +1035,19 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       }
     });
   });
+});
+
+it('bounds cached idle native origins after destination churn', { skip: !nativeExpected }, async () => {
+  const native = createRequire(import.meta.url)(fileURLToPath(addon));
+  const scope = native.configure({ zstd: false, rejectUnauthorized: true });
+  for (let id = 0; id < 300; id++) {
+    const port = await new Promise((resolve) => {
+      const probe = net.createServer().listen(0, '127.0.0.1', () => {
+        const port = probe.address().port;
+        probe.close(() => resolve(port));
+      });
+    });
+    await native.send({ id, method: 'GET', url: 'http://127.0.0.1:' + port + '/', headers: [], timeout: 100 }, scope);
+  }
+  assert.ok(native.stats(scope).length <= 256);
 });

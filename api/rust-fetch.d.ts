@@ -145,7 +145,81 @@ export interface CircuitChange {
     to: CircuitState;
 }
 
+export interface AttemptTimings {
+    startMs: number;
+    /** null when the runtime cannot observe headers separately. */
+    ttfbMs: number | null;
+    totalMs: number;
+    status?: number;
+    error?: RustFetchErrorKind;
+    transport?: 'native' | 'node:http' | 'fetch' | 'XMLHttpRequest';
+    connectMs?: number | null;
+    tlsMs?: number | null;
+    connectionReused?: boolean | null;
+}
+export interface RequestTimings {
+    queuedMs: number;
+    retryDelayMs: number;
+    attempts: AttemptTimings[];
+    totalMs: number;
+}
+export interface RequestLifecycle {
+    type: string;
+    method: string;
+    /** Credentials, fragment and query are removed before hooks/loggers see it. */
+    url: string;
+    status?: number;
+    error?: { kind?: RustFetchErrorKind; status?: number; phase?: string };
+    timings?: RequestTimings;
+}
+export interface DebugEntry extends RequestLifecycle {
+    headers?: Record<string, string>;
+    attempt?: number;
+    delayMs?: number;
+    reason?: RustFetchErrorKind;
+    retryAfterMs?: number;
+    location?: string;
+    totalMs?: number;
+}
+export interface TraceContext { traceparent: string; tracestate?: string }
+export interface PoolStats {
+    origin: string;
+    opened: number;
+    closed: number;
+    idle: number;
+    busy: number;
+    queued?: number;
+}
+export interface ClientStats {
+    requests: { started: number; completed: number; failed: number; active: number };
+    attempts: number;
+    retries: number;
+    latency: { count: number; minMs: number | null; maxMs: number | null; meanMs: number | null; p50Ms: number | null; p95Ms: number | null; p99Ms: number | null; sampleCount: number };
+    origins: Record<string, { started: number; completed: number; failed: number; active: number }>;
+    /** Node pools are shared by clients in this adapter module. null in browsers. */
+    pools: { queued: number; native: PoolStats[] | null; http: PoolStats[] } | null;
+}
+export interface WasmClient {
+    /** Enable collection from this call onward (or configure metrics: true); returns a detached snapshot. */
+    stats(): ClientStats;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
+    /** Collect attempt and logical-request timings. Off by default. */
+    timings?: boolean;
+    /** Collect bounded per-client latency/count samples from construction. Off by default. */
+    metrics?: boolean;
+    onRequestStart?: (entry: RequestLifecycle) => void;
+    onRequestEnd?: (entry: RequestLifecycle) => void;
+    /** Structured, redacted logging; Node also supports DEBUG=rust-fetch. */
+    debug?: boolean | ((entry: DebugEntry) => void);
+    /** Apply a custom redactor to error URLs and already-sanitized hook/log URLs. */
+    redactUrl?: (url: string) => string;
+    /** Automatic W3C propagation is off unless explicitly enabled with an origin allowlist. */
+    propagateTrace?: boolean;
+    traceOrigins?: string[];
+    traceContext?: () => TraceContext | undefined;
+
     /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
     baseUrl?: string;
     /** Headers sent with every request; per-request headers with the same name replace them */
@@ -332,6 +406,8 @@ export type ResponseFulfilledInterceptor = (response: HttpResponse) => HttpRespo
 export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpResponse | Promise<HttpResponse>;
 
 export interface HttpResponse<T = any> {
+    /** Enabled by timings/hooks; streamed totals finalize at EOF/cancel. */
+    timings?: RequestTimings;
     status: number;
     statusText: string;
     /** `true` for 2xx responses (other statuses reject with an `HttpError`); `false` for a redirect resolved with `redirect: 'manual'` */
@@ -355,6 +431,11 @@ export type RustFetchErrorKind =
 | 'CancelledError';
 
 export interface RustFetchError extends Error {
+    method?: string;
+    url?: string;
+    attempts?: number;
+    cause?: unknown;
+    timings?: RequestTimings;
     name: RustFetchErrorKind;
     kind: RustFetchErrorKind;
     /** HttpError: response status */
@@ -490,6 +571,8 @@ export interface WebSocketReconnectInfo {
 }
 
 export interface WebSocketOptions {
+    /** Maximum silence after open/between received messages. 0 disables; defaults to the client's idleTimeoutMs. No heartbeat messages are sent. */
+    idleTimeoutMs?: number;
     /** Subprotocols to offer */
     protocols?: string | string[];
     params?: QueryParams;
