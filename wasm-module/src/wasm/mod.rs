@@ -151,6 +151,19 @@ export interface RateLimitOptions {
   perMs: number;
 }
 
+export interface CircuitBreakerOptions {
+  /** Consecutive failed attempts (network errors, timeouts, 5xx) before opening. Default: 5 */
+  failureThreshold?: number;
+  /** Delay before allowing one recovery probe. Default: 30000 */
+  resetAfterMs?: number;
+}
+export type CircuitState = 'closed' | 'open' | 'half-open';
+export interface CircuitChange {
+  origin: string;
+  from: CircuitState;
+  to: CircuitState;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
   /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
   baseUrl?: string;
@@ -207,6 +220,10 @@ export interface ClientOptions extends BrowserRequestOptions {
   maxPendingRequests?: number;
   /** Maximum attempts in flight. Streams/SSE hold a slot until their body ends or is cancelled. */
   maxConcurrent?: number;
+  /** Opt-in per-origin circuit breaker. Off by default; counts failed attempts including retries. */
+  circuitBreaker?: CircuitBreakerOptions;
+  /** Observes transitions outside the state lock. Thrown exceptions are reported as unhandled rejections. */
+  onCircuitChange?: (change: CircuitChange) => void;
   /** Client-side token bucket. First burst is immediate; retries re-enter FIFO admission. */
   rateLimit?: RateLimitOptions;
   /** Apply maxConcurrent/rateLimit independently to each origin. Default: false */
@@ -329,6 +346,7 @@ export interface HttpResponse<T = any> {
 
 /** Every rejection is an `Error` with `name` and `kind` set to one of these. */
 export type RustFetchErrorKind =
+  | 'CircuitOpenError'
   | 'NetworkError'
   | 'HttpError'
   | 'ParseError'
@@ -360,6 +378,10 @@ export interface RustFetchError extends Error {
   maxEventBytes?: number;
   /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
   retryBudgetExhausted?: boolean;
+  /** CircuitOpenError: the origin whose circuit refused the request */
+  origin?: string;
+  /** CircuitOpenError: milliseconds until recovery may be probed */
+  retryAfterMs?: number;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
   maxQueuedMessages?: number;
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
@@ -465,6 +487,35 @@ impl WasmClient {
             }
             if let Some(max) = prop(options, "maxRedirects") {
                 builder = builder.max_redirects(parse_max_redirects(&max)?);
+            }
+            if let Some(circuit) = prop(options, "circuitBreaker") {
+                if !circuit.is_object() {
+                    return Err(invalid("circuitBreaker", "must be an options object"));
+                }
+                let threshold = prop(&circuit, "failureThreshold")
+                    .map(|value| positive_u32(&value, "circuitBreaker.failureThreshold"))
+                    .transpose()?
+                    .unwrap_or(5);
+                let reset = prop(&circuit, "resetAfterMs")
+                    .map(|value| parse_delay(&value, "circuitBreaker.resetAfterMs"))
+                    .transpose()?
+                    .unwrap_or(Duration::from_secs(30));
+                builder = builder.circuit_breaker(crate::CircuitBreaker::new(
+                    u32::try_from(threshold).unwrap(),
+                    reset,
+                ));
+            }
+            #[cfg(target_arch = "wasm32")]
+            if let Some(callback) = callback_option(options, "onCircuitChange")? {
+                builder = builder.on_circuit_change(move |change: crate::CircuitChange| {
+                    let value = js_sys::Object::new();
+                    let _ = set(&value, "origin", &change.origin.into());
+                    let _ = set(&value, "from", &change.from.as_str().into());
+                    let _ = set(&value, "to", &change.to.as_str().into());
+                    if let Err(error) = callback.call1(&JsValue::UNDEFINED, &value) {
+                        let _ = js_sys::Promise::reject(&error);
+                    }
+                });
             }
             if let Some(max) = prop(options, "maxConcurrent") {
                 builder = builder.max_concurrent(positive_u32(&max, "maxConcurrent")?);
@@ -1983,6 +2034,14 @@ impl From<Error> for JsValue {
         obj.set_name(error.kind());
         let _ = js_sys::Reflect::set(&obj, &"kind".into(), &error.kind().into());
 
+        if let Some(circuit) = error.circuit_open() {
+            let _ = js_sys::Reflect::set(&obj, &"origin".into(), &circuit.origin.as_str().into());
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &"retryAfterMs".into(),
+                &(circuit.retry_after.as_secs_f64() * 1000.0).into(),
+            );
+        }
         // Add additional context based on error type
         match &error {
             Error::Http {

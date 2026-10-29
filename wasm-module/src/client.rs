@@ -53,6 +53,7 @@ pub(crate) struct ClientConfig {
     /// Shared by the client's clones through the `Arc<ClientConfig>`
     retry_budget: Option<Arc<Budget>>,
     limiter: Option<Arc<crate::limiter::Limiter>>,
+    breaker: Option<Arc<crate::circuit::Breaker>>,
     /// JavaScript: `maxLineBytes`, for NDJSON responses and event streams
     pub(crate) max_line_bytes: Option<usize>,
     /// JavaScript: `maxEventBytes`, for event streams
@@ -394,9 +395,6 @@ impl Client {
     {
         let _pending = self.admit()?;
         let budget = self.config.retry_budget.as_deref();
-        if let Some(budget) = budget {
-            budget.request(runtime::now_ms());
-        }
         // The budget is checked before waiting to retry and spent once the
         // retry is sent; either way, a refusal returns the attempt's error
         let refuse = |error| {
@@ -414,6 +412,9 @@ impl Client {
         let mut retry_error = None;
 
         loop {
+            if let Some(breaker) = &self.config.breaker {
+                breaker.check(url)?;
+            }
             let permit = match &gate {
                 // Keep the optional admission future out of the ordinary
                 // request's inline state: none of its queue/timer state is
@@ -421,6 +422,19 @@ impl Client {
                 Some(gate) => Some(Box::pin(gate.acquire()).await),
                 None => None,
             };
+            // Box optional probe state so disabled circuits do not enlarge
+            // the ordinary request's inline future.
+            let probe = self
+                .config
+                .breaker
+                .as_ref()
+                .map(|breaker| breaker.enter(url).map(Box::new))
+                .transpose()?;
+            if attempt == 0 {
+                if let Some(budget) = budget {
+                    budget.request(runtime::now_ms());
+                }
+            }
             if let Some(error) = retry_error.take() {
                 if budget.is_some_and(|budget| !budget.spend(runtime::now_ms())) {
                     return refuse(error);
@@ -432,6 +446,16 @@ impl Client {
                 None => once.await,
             };
 
+            if let Some(probe) = probe {
+                let failed = match &outcome {
+                    Err(error) => matches!(error.kind(), "NetworkError" | "TimeoutError"),
+                    Ok(Attempt::HttpError(Error::Http { status, .. }, _)) => {
+                        (500..600).contains(status)
+                    }
+                    _ => false,
+                };
+                probe.finish(failed);
+            }
             let (error, retry_after) = match outcome {
                 Ok(Attempt::Success(response)) => return Ok((response, permit)),
                 Ok(Attempt::HttpError(error, retry_after)) => (error, retry_after),
@@ -889,6 +913,10 @@ pub struct ClientBuilder {
     max_pending_requests: Option<usize>,
     retry_budget: Option<RetryBudget>,
     limits: crate::limiter::Config,
+    circuit: Option<crate::CircuitBreaker>,
+    // The builder only stores this callback; it never invokes it. Preserve
+    // its existing panic-safety traits without restricting application hooks.
+    circuit_hook: Option<std::panic::AssertUnwindSafe<Arc<dyn crate::CircuitCallback>>>,
     max_line_bytes: Option<usize>,
     max_event_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
@@ -918,6 +946,8 @@ impl ClientBuilder {
             max_pending_requests: None,
             retry_budget: None,
             limits: crate::limiter::Config::default(),
+            circuit: None,
+            circuit_hook: None,
             max_line_bytes: None,
             max_event_bytes: None,
             #[cfg(target_arch = "wasm32")]
@@ -1102,9 +1132,28 @@ impl ClientBuilder {
         self
     }
 
+    /// Fail fast per origin after consecutive availability failures.
+    pub fn circuit_breaker(mut self, config: crate::CircuitBreaker) -> Self {
+        self.circuit = Some(config);
+        self
+    }
+
+    /// Observe circuit transitions. Called outside the circuit's lock.
+    pub fn on_circuit_change(mut self, callback: impl crate::CircuitCallback + 'static) -> Self {
+        self.circuit_hook = Some(std::panic::AssertUnwindSafe(Arc::new(callback)));
+        self
+    }
+
     /// Build the client
     pub fn build(self) -> Result<Client> {
         self.limits.validate()?;
+        let breaker = self
+            .circuit
+            .map(|config| {
+                crate::circuit::Breaker::new(config, self.circuit_hook.map(|hook| hook.0))
+                    .map(Arc::new)
+            })
+            .transpose()?;
         if let Some(name) = self.retry_budget.as_ref().and_then(RetryBudget::invalid) {
             return Err(Error::InvalidInput {
                 parameter: name.to_string(),
@@ -1139,6 +1188,7 @@ impl ClientBuilder {
         Ok(Client {
             inner,
             config: Arc::new(ClientConfig {
+                breaker,
                 default_headers: self.headers,
                 timeout: self.timeout,
                 retry_config: self.retry_config,
@@ -1604,6 +1654,12 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn client_builder_preserves_panic_safety() {
+        fn check<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>(_: T) {}
+        check(Client::builder().on_circuit_change(std::mem::drop::<crate::CircuitChange>));
+    }
+
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]

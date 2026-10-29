@@ -126,6 +126,19 @@ export interface RateLimitOptions {
     perMs: number;
 }
 
+export interface CircuitBreakerOptions {
+    /** Consecutive failed attempts (network errors, timeouts, 5xx) before opening. Default: 5 */
+    failureThreshold?: number;
+    /** Delay before allowing one recovery probe. Default: 30000 */
+    resetAfterMs?: number;
+}
+export type CircuitState = 'closed' | 'open' | 'half-open';
+export interface CircuitChange {
+    origin: string;
+    from: CircuitState;
+    to: CircuitState;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
     /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
     baseUrl?: string;
@@ -182,6 +195,10 @@ export interface ClientOptions extends BrowserRequestOptions {
     maxPendingRequests?: number;
     /** Maximum attempts in flight. Streams/SSE hold a slot until their body ends or is cancelled. */
     maxConcurrent?: number;
+    /** Opt-in per-origin circuit breaker. Off by default; counts failed attempts including retries. */
+    circuitBreaker?: CircuitBreakerOptions;
+    /** Observes transitions outside the state lock. Thrown exceptions are reported as unhandled rejections. */
+    onCircuitChange?: (change: CircuitChange) => void;
     /** Client-side token bucket. First burst is immediate; retries re-enter FIFO admission. */
     rateLimit?: RateLimitOptions;
     /** Apply maxConcurrent/rateLimit independently to each origin. Default: false */
@@ -304,6 +321,7 @@ export interface HttpResponse<T = any> {
 
 /** Every rejection is an `Error` with `name` and `kind` set to one of these. */
 export type RustFetchErrorKind =
+| 'CircuitOpenError'
 | 'NetworkError'
 | 'HttpError'
 | 'ParseError'
@@ -335,6 +353,10 @@ export interface RustFetchError extends Error {
     maxEventBytes?: number;
     /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
     retryBudgetExhausted?: boolean;
+    /** CircuitOpenError: the origin whose circuit refused the request */
+    origin?: string;
+    /** CircuitOpenError: milliseconds until recovery may be probed */
+    retryAfterMs?: number;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
     maxQueuedMessages?: number;
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
