@@ -9,9 +9,9 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 440_000, gzip: 165_000, brotli: 137_000 }, // 129.2 kB since #93 parses URLs with the runtime's URL (188.5 kB with the url crate and its Unicode tables)
+  'rust_fetch_bg.wasm': { raw: 480_000, gzip: 192_000, brotli: 156_000 }, // 129.2 kB since #93 parses URLs with the runtime's URL (188.5 kB with the url crate and its Unicode tables)
   'rust_fetch.js': { raw: 72_000, gzip: 12_000, brotli: 10_500 }, // the JS glue; #93 added the URL bindings
-  'node.js': { raw: 39_000, gzip: 13_000, brotli: 11_500 }, // the Node.js transports, request queue, proxies, SSRF guards (requests and WebSockets), the V8 crash workaround and the native addon's loader (not loaded by browsers)
+  'node.js': { raw: 43_000, gzip: 14_000, brotli: 12_500 }, // the Node.js transports, request queue, proxies, SSRF guards (requests and WebSockets), the V8 crash workaround and the native addon's loader (not loaded by browsers)
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);

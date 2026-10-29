@@ -48,6 +48,15 @@ export interface EventStreamOptions extends BrowserRequestOptions {
   params?: QueryParams;
   /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
   timeoutMs?: number;
+  /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+  connectTimeoutMs?: number;
+  /** Time until final response headers arrive. `0` disables. */
+  responseTimeoutMs?: number;
+  /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+  idleTimeoutMs?: number;
+  /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+  deadlineMs?: number;
+
   /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
   retries?: number | RetryOptions;
   /** Overrides the client's key policy; generated keys are reused across retries and reconnections. Requires server deduplication. */
@@ -132,6 +141,7 @@ struct Settings {
     target: String,
     body: JsValue,
     options: JsValue,
+    deadline: Option<crate::timeouts::Deadline>,
     max_line_bytes: Option<usize>,
     max_event_bytes: Option<usize>,
     reconnect: Option<RetryConfig>,
@@ -331,6 +341,7 @@ impl WasmClient {
 /// Parse and validate the options up front, so mistakes throw from `events()`
 fn settings(client: &crate::client::Client, target: String, options: JsValue) -> Result<Settings> {
     let options = super::idempotency::freeze(options, &client.config.idempotency)?;
+    super::parse_phase_options(&super::Options::new(&options), &client.config.phases)?;
     let method = match prop(&options, "method") {
         Some(method) => parse_method(
             &method
@@ -405,6 +416,7 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         method,
         url,
         target,
+        deadline: super::request_deadline(&options, client.config.phases.deadline)?,
         body: prop(&options, "body").unwrap_or(JsValue::UNDEFINED),
         max_line_bytes: stream_limit("maxLineBytes", client.config.max_line_bytes)?,
         max_event_bytes: stream_limit("maxEventBytes", client.config.max_event_bytes)?,
@@ -430,8 +442,24 @@ enum Ended {
     Failed(Error),
 }
 
-/// Connect, read, and reconnect until the stream is finished
 async fn run(
+    client: &crate::client::Client,
+    shared: &Rc<Shared>,
+    interceptors: &[js_sys::Function],
+) {
+    let operation = async {
+        run_loop(client, shared, interceptors).await;
+        Ok::<(), Error>(())
+    };
+    if let Err(error) = crate::timeouts::with_deadline(shared.settings.deadline, operation).await {
+        let error = error.into_js();
+        report(shared.settings.on_error.as_ref(), &error);
+        finish(shared, Some(error));
+    }
+}
+
+/// Connect, read, and reconnect until the stream is finished
+async fn run_loop(
     client: &crate::client::Client,
     shared: &Rc<Shared>,
     interceptors: &[js_sys::Function],
@@ -459,6 +487,13 @@ async fn run(
             return;
         }
         report(shared.settings.on_error.as_ref(), &error);
+        if shared
+            .settings
+            .deadline
+            .is_some_and(|deadline| deadline.remaining().is_zero())
+        {
+            return finish(shared, Some(error));
+        }
         let Some(config) = shared
             .settings
             .reconnect
@@ -514,6 +549,7 @@ async fn connect(
         let accept = !request.headers.contains("accept");
         let (mut builder, body) =
             super::request_builder(client, request, &super::Options::new(&settings.options))?;
+        builder.deadline = settings.deadline.map(Box::new);
         if accept {
             builder = builder.header("accept", "text/event-stream");
         }

@@ -8,6 +8,13 @@ use crate::error::{Error, Result};
 use std::future::Future;
 use std::time::Duration;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(catch, js_namespace = performance, js_name = now)]
+    fn monotonic_now() -> std::result::Result<f64, wasm_bindgen::JsValue>;
+}
+
 /// Sleep for the given duration
 pub(crate) async fn sleep(duration: Duration) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -45,11 +52,11 @@ pub(crate) async fn timeout<T>(
     }
 }
 
-/// Milliseconds on a clock that only matters for intervals (the retry budget)
+/// Milliseconds on an interval clock for budgets and deadlines.
 pub(crate) fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
-        js_sys::Date::now()
+        monotonic_now().unwrap_or_else(|_| js_sys::Date::now())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -80,4 +87,23 @@ pub(crate) fn random() -> f64 {
         let value = (hasher.finish() >> 11) as f64 / (1u64 << 53) as f64;
         value
     }
+}
+
+/// A phase timeout preserves errors returned by the operation itself.
+pub(crate) fn timeout_phase<T, E: From<Error>, F: Future<Output = std::result::Result<T, E>>>(
+    duration: Duration,
+    phase: crate::TimeoutPhase,
+    configured: Duration,
+    fut: F,
+) -> impl Future<Output = std::result::Result<T, E>> {
+    use futures_util::FutureExt;
+    #[cfg(not(target_arch = "wasm32"))]
+    let timed = tokio::time::timeout(duration, fut);
+    #[cfg(target_arch = "wasm32")]
+    let timed = crate::wasm::futures::Deadline::new(fut, duration);
+    // Hold the operation once: an async wrapper retained another copy of
+    // its state while moving it into the timer.
+    timed.map(move |result| {
+        result.unwrap_or_else(|_| Err(Error::phase_timeout(phase, configured).into()))
+    })
 }

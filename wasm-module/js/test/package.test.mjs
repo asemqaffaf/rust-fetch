@@ -153,12 +153,13 @@ describe('published package', () => {
        const socket = client.websocket('/live', { reconnect: true, messageType: 'json', onMessage: (m: unknown) => m });
        const state: 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed' = socket.state;
        await client.post('/upload', { body: new Blob(['x']), onUploadProgress: ({ loaded, total }) => loaded / total });
-       const requestOptions: RequestOptions = { retries: 0, params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),
+       const requestOptions: RequestOptions = { connectTimeoutMs: 100, responseTimeoutMs: 200, idleTimeoutMs: 300, deadlineMs: 400, retries: 0, params: { tag: ['a', 'b'] }, responseType: 'stream', signal: AbortSignal.timeout(10),
          onDownloadProgress: (p: DownloadProgress) => p.loaded };
        const init2: FetchInit = { retries: { maxRetries: 1, retryNonIdempotent: true }, method: 'POST', body: new FormData() };
        await client.fetch('/upload', init2);
        await client.get('/x', requestOptions);
-       client.events('/events', { retries: { maxRetries: 1 }, reconnect: false, idempotencyKey: 'order-42', idempotencyHeader: 'X-Key' }).close();
+       const timeoutPhase: RustFetchError['phase'] = 'connect';
+       client.events('/events', { responseTimeoutMs: 100, idleTimeoutMs: 200, deadlineMs: 300, retries: { maxRetries: 1 }, reconnect: false, idempotencyKey: 'order-42', idempotencyHeader: 'X-Key' }).close();
        // @ts-expect-error retries must be a count or RetryOptions
        await client.get('/x', { retries: true });
        client.addRequestInterceptor((r: InterceptedRequest) => { r.headers.authorization = name; });

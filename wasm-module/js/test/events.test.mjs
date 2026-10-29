@@ -127,6 +127,21 @@ function collector(count) {
 }
 
 describe('events', () => {
+  it('reconnects after idle timeouts and closes at a deadline during backoff', async () => {
+    const errors = [];
+    const stream = client().events('/feed?id=phase-deadline', { idleTimeoutMs: 100, deadlineMs: 1500, reconnect: { initialDelayMs: 3000, jitter: false }, onError: (e) => errors.push([e.kind, e.phase, e.timeoutMs]) });
+    await stream.opened;
+    await stream.closed;
+    assert.deepEqual(errors, [['TimeoutError', 'idle', 100], ['TimeoutError', 'total', 1500]]);
+    assert.equal(connections.get('phase-deadline').length, 1);
+    const idleErrors = [];
+    const retrying = client().events('/feed?id=phase-idle', { idleTimeoutMs: 35, reconnect: { maxRetries: 1, initialDelayMs: 1 }, onError: (e) => { idleErrors.push(e.phase); if (idleErrors.length === 2) retrying.close(); } });
+    await retrying.opened;
+    await retrying.closed;
+    assert.deepEqual(idleErrors, ['idle', 'idle']);
+    assert.equal(connections.get('phase-idle').length, 2);
+  });
+
   it('reuses generated idempotency keys across SSE reconnections without changing caller options', async () => {
     const c = new WasmClient({ baseUrl: server.url('/v1'), idempotencyKey: true });
     const { all, onEvent } = collector(2);

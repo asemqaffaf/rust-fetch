@@ -12,6 +12,7 @@
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)]
 
 mod pool;
+mod timeouts;
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -31,6 +32,10 @@ use url::{Position, Url};
 use pool::{lock, Connection, Pool};
 
 const MAX_REDIRECTS: u32 = 20;
+/// Private wire protocol understood by the JavaScript adapter.
+#[napi]
+pub const TRANSPORT_VERSION: u32 = 2;
+
 /// How errors for bodies over `max_response_bytes` start; `send` reports them
 /// with the code `RUST_FETCH_TOO_LARGE`
 const TOO_LARGE: &str = "Response body larger than maxResponseBytes";
@@ -104,6 +109,14 @@ pub struct Request {
     pub body: Option<Uint8Array>,
     /// Timeout for the whole attempt, in ms
     pub timeout: Option<f64>,
+    /// Time to acquire/establish a connection, including TLS, in ms.
+    pub connect_timeout: Option<f64>,
+    /// Remaining first-connection allowance after the JavaScript queue wait.
+    pub connect_timeout_remaining: Option<f64>,
+    /// Time until final response headers, in ms.
+    pub response_timeout: Option<f64>,
+    /// Maximum gap between incoming body chunks, in ms.
+    pub idle_timeout: Option<f64>,
     /// Return redirects instead of following them (`redirect: 'manual'`)
     pub manual: Option<bool>,
     /// Redirects to follow before failing (default 20); `0` fails on any redirect
@@ -126,24 +139,51 @@ pub struct Response {
     pub body: Option<Buffer>,
     pub error: Option<String>,
     pub code: Option<String>,
+    /// Timeout phase, when code is `RUST_FETCH_TIMEOUT`.
+    pub phase: Option<String>,
+    /// Configured phase duration (the JS adapter restores pre-queue values).
+    pub timeout_ms: Option<f64>,
 }
 
 /// Send one attempt. Failures resolve with `error` set rather than rejecting.
 #[napi]
-pub async fn send(request: Request) -> Response {
+pub fn send(
+    env: &napi::Env,
+    request: Request,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'_, Response>> {
     let Some(transport) = TRANSPORT.get() else {
-        return Response::failed("rust-fetch native transport is not configured".into(), None);
+        return env.spawn_future(async {
+            Ok(Response::failed(
+                "rust-fetch native transport is not configured".into(),
+                None,
+            ))
+        });
     };
     let id = request.id;
-    let timeout = request.timeout.filter(|ms| *ms > 0.0);
     let (handle, registration) = AbortHandle::new_pair();
+    // Register on the calling JS thread. With an async napi function, cancel
+    // could run before Tokio first polled send and silently miss the attempt.
     lock(&transport.pending).insert(id, handle);
+    let promise =
+        env.spawn_future(async move { Ok(send_attempt(transport, request, registration).await) });
+    if promise.is_err() {
+        lock(&transport.pending).remove(&id);
+    }
+    promise
+}
 
+async fn send_attempt(
+    transport: &Transport,
+    request: Request,
+    registration: futures_util::future::AbortRegistration,
+) -> Response {
+    let id = request.id;
+    let timeout = timeouts::duration(request.timeout);
     let attempt = Abortable::new(transport.send(request), registration);
     let outcome = match timeout {
-        Some(ms) => tokio::time::timeout(Duration::from_secs_f64(ms / 1000.0), attempt)
+        Some(duration) => tokio::time::timeout(duration, attempt)
             .await
-            .map_err(|_| ms),
+            .map_err(|_| duration),
         None => Ok(attempt.await),
     };
     lock(&transport.pending).remove(&id);
@@ -151,6 +191,9 @@ pub async fn send(request: Request) -> Response {
     match outcome {
         Ok(Ok(Ok(response))) => response,
         Ok(Ok(Err(message))) => {
+            if let Some((phase, ms)) = timeouts::details(&message) {
+                return Response::timed_out(phase, ms);
+            }
             let code = message
                 .starts_with(TOO_LARGE)
                 .then_some("RUST_FETCH_TOO_LARGE");
@@ -159,10 +202,7 @@ pub async fn send(request: Request) -> Response {
         Ok(Err(_aborted)) => {
             Response::failed("The request was cancelled".into(), Some("ABORT_ERR"))
         }
-        Err(ms) => Response::failed(
-            format!("Request timeout after {ms}ms"),
-            Some("RUST_FETCH_TIMEOUT"),
-        ),
+        Err(duration) => Response::timed_out("total", duration.as_secs_f64() * 1000.0),
     }
 }
 
@@ -177,6 +217,21 @@ pub fn cancel(id: u32) {
 }
 
 impl Response {
+    fn timed_out(phase: &str, ms: f64) -> Self {
+        let label = if phase == "total" {
+            String::new()
+        } else {
+            format!("{phase} ")
+        };
+        let mut response = Self::failed(
+            format!("Request {label}timeout after {ms}ms"),
+            Some("RUST_FETCH_TIMEOUT"),
+        );
+        response.phase = Some(phase.to_string());
+        response.timeout_ms = Some(ms);
+        response
+    }
+
     fn failed(error: String, code: Option<&str>) -> Self {
         Self {
             status: 0,
@@ -185,12 +240,20 @@ impl Response {
             body: None,
             error: Some(error),
             code: code.map(str::to_owned),
+            phase: None,
+            timeout_ms: None,
         }
     }
 }
 
 impl Transport {
     async fn send(&self, request: Request) -> Result<Response, String> {
+        let connect_timeout = timeouts::duration(request.connect_timeout);
+        let mut first_connect_timeout = timeouts::duration(request.connect_timeout_remaining);
+        let response_timeout = timeouts::duration(request.response_timeout);
+        let idle_timeout = timeouts::duration(request.idle_timeout);
+        let response_deadline =
+            response_timeout.and_then(|duration| tokio::time::Instant::now().checked_add(duration));
         let mut url = Url::parse(&request.url).map_err(|e| e.to_string())?;
         let mut method =
             Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
@@ -205,9 +268,16 @@ impl Transport {
         let limit = request.max_response_bytes.map(|limit| limit as u64);
 
         loop {
-            let (connection, response) = self
-                .exchange(&url, http_request(&method, &url, &headers, body.as_ref())?)
-                .await?;
+            let (connection, response) = timeouts::until(
+                response_deadline,
+                response_timeout,
+                self.exchange(
+                    &url,
+                    http_request(&method, &url, &headers, body.as_ref())?,
+                    first_connect_timeout.take().or(connect_timeout),
+                ),
+            )
+            .await?;
             let status = response.status().as_u16();
 
             let location = response
@@ -219,44 +289,23 @@ impl Transport {
                 location,
             ) {
                 let drained = http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
-                if drained.collect().await.is_ok() {
+                if timeouts::until(response_deadline, response_timeout, async {
+                    drained.collect().await.map_err(|error| error.to_string())
+                })
+                .await
+                .is_ok()
+                {
                     connection.release();
                 }
-                if redirects >= max_redirects {
-                    return Err(if max_redirects == 0 {
-                        format!("Redirect not allowed: {status} to {location}")
-                    } else {
-                        format!("Too many redirects (more than {max_redirects})")
-                    });
-                }
-                let next = url
-                    .join(&location)
-                    .map_err(|_| format!("Invalid redirect location: {location}"))?;
-                if !matches!(next.scheme(), "http" | "https") {
-                    return Err(format!("Unsupported redirect to {}:", next.scheme()));
-                }
-                if !allow_insecure && url.scheme() == "https" && next.scheme() == "http" {
-                    return Err(format!(
-                        "Insecure redirect refused (allowInsecureRedirects is false): https: to {}",
-                        next.origin().ascii_serialization()
-                    ));
-                }
-                // Same rules as fetch(): 303, and 301/302 after POST, become a bodiless GET
-                if (status == 303 && method != Method::GET && method != Method::HEAD)
-                    || (matches!(status, 301 | 302) && method == Method::POST)
-                {
-                    method = Method::GET;
-                    body = None;
-                    for name in [
-                        "content-type",
-                        "content-length",
-                        "content-encoding",
-                        "content-language",
-                        "content-location",
-                    ] {
-                        headers.remove(name);
-                    }
-                }
+                let next = redirect_url(
+                    &url,
+                    &location,
+                    redirects,
+                    max_redirects,
+                    allow_insecure,
+                    status,
+                )?;
+                rewrite_redirect(status, &mut method, &mut body, &mut headers);
                 if next.origin() != url.origin() {
                     drop_credentials(&mut headers, &sensitive);
                 }
@@ -274,7 +323,8 @@ impl Transport {
                 .headers()
                 .get(CONTENT_ENCODING)
                 .map(|e| String::from_utf8_lossy(e.as_bytes()).to_ascii_lowercase());
-            let raw = read_body(response, encoding.as_deref(), limit, &method).await?;
+            let raw =
+                read_body(response, encoding.as_deref(), limit, &method, idle_timeout).await?;
             connection.release();
             let body = match encoding {
                 Some(encoding) if method != Method::HEAD => {
@@ -289,6 +339,8 @@ impl Transport {
                 body: Some(body.into()),
                 error: None,
                 code: None,
+                phase: None,
+                timeout_ms: None,
             });
         }
     }
@@ -300,8 +352,10 @@ impl Transport {
         &self,
         url: &Url,
         request: hyper::Request<Full<Bytes>>,
+        connect_timeout: Option<Duration>,
     ) -> Result<(Connection, hyper::Response<Incoming>), String> {
-        let mut connection = self.pool.checkout(url).await?;
+        let mut connection =
+            timeouts::wait(connect_timeout, "connect", self.pool.checkout(url)).await?;
         let mut error = match connection.sender.try_send_request(request).await {
             Ok(response) => return Ok((connection, response)),
             Err(error) => error,
@@ -309,7 +363,12 @@ impl Transport {
         let Some(request) = error.take_message() else {
             return Err(error_message(&error.into_error()));
         };
-        let mut connection = self.pool.reconnect(url, connection).await?;
+        let mut connection = timeouts::wait(
+            connect_timeout,
+            "connect",
+            self.pool.reconnect(url, connection),
+        )
+        .await?;
         let response = connection
             .sender
             .send_request(request)
@@ -327,6 +386,7 @@ async fn read_body(
     encoding: Option<&str>,
     limit: Option<u64>,
     method: &Method,
+    idle: Option<Duration>,
 ) -> Result<Bytes, String> {
     let incomplete = |e: &dyn std::error::Error| {
         format!(
@@ -334,6 +394,50 @@ async fn read_body(
             error_message(e)
         )
     };
+    if let Some(idle) = idle {
+        let limit = limit.filter(|_| method != Method::HEAD);
+        let encoded = encoding.is_some_and(|e| e.trim() != "identity");
+        let raw_limit = limit.map(|limit| {
+            if encoded {
+                limit.saturating_add(COMPRESSED_SLACK)
+            } else {
+                limit
+            }
+        });
+        let declared = response
+            .headers()
+            .get(hyper::header::CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok()?.trim().parse::<u64>().ok());
+        if let (Some(declared), Some(raw_limit), Some(limit)) = (declared, raw_limit, limit) {
+            if declared > raw_limit {
+                return Err(too_large(limit));
+            }
+        }
+        let mut incoming = response.into_body();
+        let mut bytes = Vec::new();
+        loop {
+            let frame = timeouts::wait(Some(idle), "idle", async {
+                incoming
+                    .frame()
+                    .await
+                    .transpose()
+                    .map_err(|error| incomplete(&error))
+            })
+            .await?;
+            let Some(frame) = frame else {
+                break;
+            };
+            if let Ok(chunk) = frame.into_data() {
+                if raw_limit.is_some_and(|raw_limit| {
+                    (bytes.len() as u64).saturating_add(chunk.len() as u64) > raw_limit
+                }) {
+                    return Err(too_large(limit.unwrap()));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+        return Ok(bytes.into());
+    }
     let Some(limit) = limit.filter(|_| method != Method::HEAD) else {
         let body = response.into_body().collect().await;
         return Ok(body.map_err(|e| incomplete(&e))?.to_bytes());
@@ -461,6 +565,60 @@ fn drop_credentials(headers: &mut HeaderMap, sensitive: &[String]) {
     for name in sensitive {
         headers.remove(name.as_str());
     }
+}
+
+fn rewrite_redirect(
+    status: u16,
+    method: &mut Method,
+    body: &mut Option<Bytes>,
+    headers: &mut HeaderMap,
+) {
+    // Same rules as fetch(): 303, and 301/302 after POST, become a bodiless GET
+    if (status == 303 && *method != Method::GET && *method != Method::HEAD)
+        || (matches!(status, 301 | 302) && *method == Method::POST)
+    {
+        *method = Method::GET;
+        *body = None;
+        for name in [
+            "content-type",
+            "content-length",
+            "content-encoding",
+            "content-language",
+            "content-location",
+        ] {
+            headers.remove(name);
+        }
+    }
+}
+
+fn redirect_url(
+    current: &Url,
+    location: &str,
+    redirects: u32,
+    max_redirects: u32,
+    allow_insecure: bool,
+    status: u16,
+) -> Result<Url, String> {
+    if redirects >= max_redirects {
+        return Err(if max_redirects == 0 {
+            format!("Redirect not allowed: {status} to {location}")
+        } else {
+            format!("Too many redirects (more than {max_redirects})")
+        });
+    }
+    let next = current
+        .join(location)
+        .map_err(|_| format!("Invalid redirect location: {location}"))?;
+    if !matches!(next.scheme(), "http" | "https") {
+        return Err(format!("Unsupported redirect to {}:", next.scheme()));
+    }
+    if !allow_insecure && current.scheme() == "https" && next.scheme() == "http" {
+        return Err(format!(
+            "Insecure redirect refused (allowInsecureRedirects is false): https: to {}",
+            next.origin().ascii_serialization()
+        ));
+    }
+    Ok(next)
 }
 
 fn header_map(pairs: &[String]) -> Result<HeaderMap, String> {

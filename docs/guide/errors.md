@@ -5,7 +5,7 @@ Every rejection is an `Error` whose `name` and `kind` are one of:
 | `kind` | When | Extra fields |
 | --- | --- | --- |
 | `HttpError` | Non-2xx response | `status`, `statusText`, `body` (full response body as text) |
-| `TimeoutError` | An attempt exceeded `timeoutMs` | `timeoutMs` |
+| `TimeoutError` | An attempt, phase timer or logical deadline expired | `timeoutMs`, `phase` (`connect`, `response`, `idle`, `total`) |
 | `CircuitOpenError` | Opt-in [circuit breaker](/guide/circuit-breakers) refused the attempt | `origin`, `retryAfterMs` |
 | `NetworkError` | DNS, connection, TLS or CORS failure, a body cut off mid-transfer, a WebSocket that fails to connect or drops, or a limit you set | The limit that was reached, when one was: `maxResponseBytes`, `maxPendingRequests`, `maxLineBytes`, `maxEventBytes`, `maxQueuedMessages` or `maxQueuedBytes` |
 | `CancelledError` | The `signal` was aborted | |

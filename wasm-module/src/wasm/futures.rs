@@ -28,11 +28,16 @@ extern "C" {
 pub(crate) struct Delay {
     inner: JsFuture,
     handle: JsValue,
+    remaining: Duration,
 }
 
 impl Delay {
     pub(crate) fn new(duration: Duration) -> Self {
-        let ms = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
+        // Browser/Node timers clamp at i32::MAX ms. Chain long waits and
+        // round sub-millisecond durations up rather than shortening them.
+        let chunk = duration.min(Duration::from_millis(i32::MAX as u64));
+        let rounded = chunk.as_millis() + u128::from(chunk.subsec_nanos() % 1_000_000 != 0);
+        let ms = i32::try_from(rounded).unwrap_or(i32::MAX);
         let mut handle = JsValue::UNDEFINED;
         let promise = js_sys::Promise::new(&mut |resolve, _reject| {
             handle = set_timeout(&resolve, ms);
@@ -40,6 +45,7 @@ impl Delay {
         Self {
             inner: JsFuture::from(promise),
             handle,
+            remaining: duration.saturating_sub(chunk),
         }
     }
 }
@@ -48,7 +54,16 @@ impl Future for Delay {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        Pin::new(&mut self.inner).poll(cx).map(|_| ())
+        loop {
+            match Pin::new(&mut self.inner).poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) if self.remaining.is_zero() => return Poll::Ready(()),
+                Poll::Ready(_) => {
+                    let remaining = self.remaining;
+                    *self = Self::new(remaining);
+                }
+            }
+        }
     }
 }
 
@@ -224,5 +239,47 @@ impl<T, S: futures_util::Stream<Item = Result<T>>> futures_util::Stream for Abor
             }
         }
         self.inner.as_mut().poll_next(cx)
+    }
+}
+
+/// Complete a JS promise while holding its Rust future once. The async
+/// adapter in future_to_promise retained both its argument and await state,
+/// doubling pending request memory when new optional policies enlarged it.
+pub(crate) fn promise<F>(future: F) -> js_sys::Promise
+where
+    F: Future<Output = std::result::Result<JsValue, JsValue>> + 'static,
+{
+    let mut future = Some(future);
+    js_sys::Promise::new(&mut |resolve, reject| {
+        wasm_bindgen_futures::spawn_local(PromiseFuture {
+            future: future.take().expect("Promise executor runs once"),
+            resolve,
+            reject,
+        });
+    })
+}
+
+pin_project_lite::pin_project! {
+    struct PromiseFuture<F> {
+        #[pin]
+        future: F,
+        resolve: js_sys::Function,
+        reject: js_sys::Function,
+    }
+}
+impl<F: Future<Output = std::result::Result<JsValue, JsValue>>> Future for PromiseFuture<F> {
+    type Output = ();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.project();
+        let result = match this.future.poll(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(result) => result,
+        };
+        let (callback, value) = match result {
+            Ok(value) => (this.resolve, value),
+            Err(error) => (this.reject, error),
+        };
+        let _ = callback.call1(&JsValue::UNDEFINED, &value);
+        Poll::Ready(())
     }
 }

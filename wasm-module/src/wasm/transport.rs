@@ -131,10 +131,12 @@ pub(crate) struct TransportOptions<'a> {
     pub(crate) sensitive_headers: &'a [String],
     /// Node.js: `allowInsecureRedirects`
     pub(crate) allow_insecure_redirects: bool,
+    pub(crate) phases: &'a crate::PhaseTimeouts,
 }
 
 pub(crate) enum PreparedRequest {
     Fetch {
+        phases: Option<Box<crate::PhaseTimeouts>>,
         url: String,
         init: web_sys::RequestInit,
         body_type: BodyType,
@@ -234,7 +236,11 @@ impl PreparedRequest {
         // XMLHttpRequest always follows redirects and has no equivalent for
         // most fetch() options; fetch() reports upload progress only once
         // XMLHttpRequest can't stop reading at a limit either
-        let xhr = progress.upload.is_some() && redirect == Redirect::Follow && limit.is_none();
+        let xhr = progress.upload.is_some()
+            && redirect == Redirect::Follow
+            && limit.is_none()
+            && options.phases.response.is_none()
+            && options.phases.idle.is_none();
         if let (true, Some(with_credentials)) = (xhr, xhr_credentials(fetch_options)) {
             if has_global("XMLHttpRequest") {
                 let mut headers: Vec<(String, String)> = headers
@@ -266,6 +272,8 @@ impl PreparedRequest {
             fetch_options,
         )?;
         Ok(Self::Fetch {
+            phases: (options.phases.response.is_some() || options.phases.idle.is_some())
+                .then(|| Box::new(*options.phases)),
             url: url.to_string(),
             init,
             body_type,
@@ -284,6 +292,7 @@ impl PreparedRequest {
     pub(crate) async fn send(&self) -> Result<Attempt<JsValue>> {
         match self {
             Self::Fetch {
+                phases,
                 url,
                 init,
                 body_type,
@@ -300,6 +309,7 @@ impl PreparedRequest {
                     *body_length,
                     *redirect,
                     *limit,
+                    phases.as_deref(),
                 )
                 .await
             }
@@ -338,6 +348,7 @@ impl PreparedRequest {
 /// transport in Node.js, and with `fetch()` everywhere else
 pub(crate) enum StreamingRequest {
     Fetch {
+        phases: Option<Box<crate::PhaseTimeouts>>,
         url: String,
         init: web_sys::RequestInit,
         redirect: Redirect,
@@ -412,6 +423,8 @@ impl StreamingRequest {
             fetch_options,
         )?;
         Ok(Self::Fetch {
+            phases: (options.phases.response.is_some() || options.phases.idle.is_some())
+                .then(|| Box::new(*options.phases)),
             url: url.to_string(),
             init,
             redirect,
@@ -424,11 +437,12 @@ impl StreamingRequest {
     pub(crate) async fn send(&self) -> Result<Attempt<StreamedResponse>> {
         match self {
             Self::Fetch {
+                phases,
                 url,
                 init,
                 redirect,
                 limit,
-            } => send_fetch_streaming(url, init, *redirect, *limit).await,
+            } => send_fetch_streaming(url, init, *redirect, *limit, phases.as_deref()).await,
             Self::Node {
                 transport,
                 request,
@@ -443,16 +457,31 @@ async fn send_fetch_streaming(
     init: &web_sys::RequestInit,
     redirect: Redirect,
     limit: Option<u64>,
+    phases: Option<&crate::PhaseTimeouts>,
 ) -> Result<Attempt<StreamedResponse>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
-    let guard = CancelGuard::new(move || controller.abort());
+    let cancel = controller.clone();
+    let guard = CancelGuard::new(move || cancel.abort());
     let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
-    let response: web_sys::Response =
+    let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(network_error)?
-            .unchecked_into();
+            .map_err(network_error)
+    };
+    let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
+        Some(duration) => {
+            crate::runtime::timeout_phase(
+                duration,
+                crate::TimeoutPhase::Response,
+                duration,
+                receive,
+            )
+            .await?
+        }
+        None => receive.await?,
+    }
+    .unchecked_into();
     let status = response.status();
     let headers = response.headers();
     let redirected = check_redirect(&response, &headers, redirect)?;
@@ -460,8 +489,20 @@ async fn send_fetch_streaming(
         // An error body is read whole, so it's limited here (a streamed
         // body is limited as it's read, like in the Node.js transports)
         check_declared_length(&headers, limit)?;
-        let buffer = match (limit, response.body()) {
-            (Some(_), Some(body)) => read_chunks(body, None, None, limit).await?,
+        let buffer = match (
+            limit.is_some() || phases.is_some_and(|phases| phases.idle.is_some()),
+            response.body(),
+        ) {
+            (true, Some(body)) => {
+                read_chunks(
+                    body,
+                    None,
+                    None,
+                    limit,
+                    phases.and_then(|phases| phases.idle),
+                )
+                .await?
+            }
             _ => JsFuture::from(response.array_buffer().map_err(network_error)?)
                 .await
                 .map_err(network_error)?,
@@ -486,6 +527,7 @@ async fn send_fetch_streaming(
         headers: rust_headers(&headers)?,
         body: FetchBody {
             body: response.body(),
+            controller: Some(controller),
             length,
         },
     }))
@@ -538,6 +580,7 @@ async fn send_node_streaming(
         url: get(&response, "url")?.as_string().unwrap_or_default(),
         headers,
         body: FetchBody {
+            controller: None,
             body: body.dyn_into().ok(),
             length,
         },
@@ -578,6 +621,15 @@ fn node_request(
     if let Some(body) = body {
         set(&request, "body", body)?;
     }
+    for (name, duration) in [
+        ("connectTimeout", options.phases.connect),
+        ("responseTimeout", options.phases.response),
+        ("idleTimeout", options.phases.idle),
+    ] {
+        if let Some(duration) = duration {
+            set(&request, name, &(duration.as_secs_f64() * 1000.0).into())?;
+        }
+    }
     if !config.follow_redirects {
         set(&request, "redirect", &"manual".into())?;
     }
@@ -611,6 +663,7 @@ fn node_request(
 /// A streamed response body; cancelled if dropped unread
 pub(crate) struct FetchBody {
     body: Option<web_sys::ReadableStream>,
+    controller: Option<web_sys::AbortController>,
     length: Option<u64>,
 }
 
@@ -622,8 +675,13 @@ impl FetchBody {
 
     /// The transport's own stream, for handing to the caller without copying
     /// each chunk through WebAssembly; `None` for a response without a body
-    pub(crate) fn into_raw(mut self) -> Option<web_sys::ReadableStream> {
-        self.body.take()
+    pub(crate) fn into_raw(
+        mut self,
+    ) -> (
+        Option<web_sys::ReadableStream>,
+        Option<web_sys::AbortController>,
+    ) {
+        (self.body.take(), self.controller.take())
     }
 
     /// The body, chunk by chunk; dropping the stream cancels the body
@@ -634,11 +692,14 @@ impl FetchBody {
                 .left_stream(),
             None => futures_util::stream::empty().right_stream(),
         };
-        chunks.map(|chunk| {
-            chunk
-                .map(|chunk| js_sys::Uint8Array::new(&chunk).to_vec())
-                .map_err(|error| body_error(&error))
-        })
+        body_with_abort(
+            chunks.map(|chunk| {
+                chunk
+                    .map(|chunk| js_sys::Uint8Array::new(&chunk).to_vec())
+                    .map_err(|error| body_error(&error))
+            }),
+            self.controller.take(),
+        )
     }
 }
 
@@ -652,9 +713,52 @@ pub(crate) fn body_error(error: &JsValue) -> Error {
 
 impl Drop for FetchBody {
     fn drop(&mut self) {
-        if let Some(body) = self.body.take() {
+        if let Some(controller) = self.controller.take() {
+            controller.abort();
+        } else if let Some(body) = self.body.take() {
             let _ = body.cancel();
         }
+    }
+}
+
+struct BodyAbort(Option<web_sys::AbortController>);
+impl Drop for BodyAbort {
+    fn drop(&mut self) {
+        if let Some(controller) = self.0.take() {
+            controller.abort();
+        }
+    }
+}
+pin_project_lite::pin_project! {
+    struct BodyWithAbort<S> {
+        #[pin]
+        inner: S,
+        abort: BodyAbort,
+    }
+}
+impl<S: futures_util::Stream> futures_util::Stream for BodyWithAbort<S> {
+    type Item = S::Item;
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.project();
+        let result = this.inner.poll_next(cx);
+        if matches!(&result, std::task::Poll::Ready(None)) {
+            this.abort.0.take();
+        }
+        result
+    }
+}
+/// Keep fetch's abort controller until EOF or cancellation. Reader cancellation
+/// alone does not promptly close an endless response in every browser.
+pub(crate) fn body_with_abort<S: futures_util::Stream>(
+    inner: S,
+    controller: Option<web_sys::AbortController>,
+) -> impl futures_util::Stream<Item = S::Item> {
+    BodyWithAbort {
+        inner,
+        abort: BodyAbort(controller),
     }
 }
 
@@ -802,12 +906,16 @@ async fn read_chunks(
     callback: Option<&js_sys::Function>,
     total: Option<f64>,
     limit: Option<u64>,
+    idle: Option<std::time::Duration>,
 ) -> Result<JsValue> {
-    let mut chunks = wasm_streams::ReadableStream::from_raw(body).into_stream();
+    let chunks = wasm_streams::ReadableStream::from_raw(body)
+        .into_stream()
+        .map(|chunk| chunk.map_err(network_error));
+    let mut chunks = std::pin::pin!(crate::timeouts::idle(chunks, idle));
     let mut parts = Vec::new();
     let mut loaded = 0u32;
     while let Some(chunk) = chunks.next().await {
-        let chunk: js_sys::Uint8Array = chunk.map_err(network_error)?.unchecked_into();
+        let chunk: js_sys::Uint8Array = chunk?.unchecked_into();
         loaded += chunk.length();
         // Dropping the stream cancels the rest of the body
         if let Some(limit) = limit.filter(|limit| u64::from(loaded) > *limit) {
@@ -850,16 +958,30 @@ async fn send_fetch(
     body_length: u32,
     redirect: Redirect,
     limit: Option<u64>,
+    phases: Option<&crate::PhaseTimeouts>,
 ) -> Result<Attempt<JsValue>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
     let guard = CancelGuard::new(move || controller.abort());
     let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
-    let response: web_sys::Response =
+    let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(network_error)?
-            .unchecked_into();
+            .map_err(network_error)
+    };
+    let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
+        Some(duration) => {
+            crate::runtime::timeout_phase(
+                duration,
+                crate::TimeoutPhase::Response,
+                duration,
+                receive,
+            )
+            .await?
+        }
+        None => receive.await?,
+    }
+    .unchecked_into();
     let status = response.status();
     let headers = response.headers();
     if let (Some(callback), true) = (&progress.upload, body_length > 0) {
@@ -879,9 +1001,19 @@ async fn send_fetch(
         .download
         .as_ref()
         .filter(|_| (200..300).contains(&status));
-    let (buffer, reported) = match (download.is_some() || limit.is_some(), response.body()) {
+    let (buffer, reported) = match (
+        download.is_some() || limit.is_some() || phases.is_some_and(|phases| phases.idle.is_some()),
+        response.body(),
+    ) {
         (true, Some(body)) => (
-            read_chunks(body, download, total, limit).await?,
+            read_chunks(
+                body,
+                download,
+                total,
+                limit,
+                phases.and_then(|phases| phases.idle),
+            )
+            .await?,
             download.is_some(),
         ),
         _ => {
@@ -1137,9 +1269,21 @@ fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
         .ok()
         .and_then(|code| code.as_string());
     match code.as_deref() {
-        Some("RUST_FETCH_TIMEOUT") => Error::Timeout {
-            duration_ms: timeout_ms,
-        },
+        Some("RUST_FETCH_TIMEOUT") => {
+            let phase = js_sys::Reflect::get(error, &"phase".into())
+                .ok()
+                .and_then(|value| value.as_string())
+                .map_or(crate::TimeoutPhase::Total, |phase| {
+                    crate::TimeoutPhase::parse(&phase)
+                });
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let duration = js_sys::Reflect::get(error, &"timeoutMs".into())
+                .ok()
+                .and_then(|value| value.as_f64())
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .map_or(timeout_ms, |value| value as u64);
+            Error::phase_timeout(phase, std::time::Duration::from_millis(duration))
+        }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         Some("RUST_FETCH_TOO_LARGE") => Error::too_large(
             js_sys::Reflect::get(error, &"maxResponseBytes".into())

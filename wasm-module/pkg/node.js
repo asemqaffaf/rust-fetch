@@ -44,6 +44,8 @@ function loadNative() {
   const path = process.env.RUST_FETCH_NATIVE ?? `./rust-fetch-native.${process.platform}-${process.arch}.node`;
   try {
     const addon = createRequire(import.meta.url)(path);
+    // An older local binary would silently ignore new phase options.
+    if (addon.TRANSPORT_VERSION !== 2) return undefined;
     const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
     addon.configure({
       zstd: typeof zlib.zstdDecompressSync === 'function',
@@ -155,11 +157,24 @@ function proxyAuthorization(proxy) {
   return { 'proxy-authorization': `Basic ${Buffer.from(credentials).toString('base64')}` };
 }
 
+const pendingTunnels = new WeakMap();
+
 /** HTTPS through a proxy: each pooled connection is a TLS session inside a CONNECT tunnel */
 class TunnelAgent extends https.Agent {
   constructor(proxy) {
     super(POOL_OPTIONS);
     this.proxy = proxy;
+  }
+
+  addRequest(request, options) {
+    // Until the CONNECT reply supplies a socket, destroying the outer HTTPS
+    // request must also cancel the proxy request that is acquiring its tunnel.
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    pendingTunnels.set(request, controller);
+    request.once('close', cancel);
+    request.once('socket', () => { request.removeListener('close', cancel); pendingTunnels.delete(request); });
+    super.addRequest(request, { ...options, signal: controller.signal });
   }
 
   createConnection(options, callback) {
@@ -171,6 +186,7 @@ class TunnelAgent extends https.Agent {
       method: 'CONNECT',
       path: target,
       headers: { host: target, ...proxyAuthorization(proxy) },
+      signal: options.signal,
       agent: false,
     });
     connect.once('connect', (response, socket) => {
@@ -178,7 +194,8 @@ class TunnelAgent extends https.Agent {
         socket.destroy();
         return callback(new TypeError(`The proxy refused to connect to ${target}: ${response.statusCode} ${response.statusMessage}`));
       }
-      callback(null, tls.connect({ ...options, socket }));
+      const { signal: _signal, ...tlsOptions } = options;
+      callback(null, tls.connect({ ...tlsOptions, socket }));
     });
     connect.once('error', callback);
     connect.end();
@@ -538,6 +555,38 @@ function tooLarge(limit) {
   return error;
 }
 
+function timeoutError(phase, timeoutMs) {
+  const label = phase === 'total' ? '' : `${phase} `;
+  return Object.assign(coded(new Error(`Request ${label}timeout after ${timeoutMs}ms`), 'RUST_FETCH_TIMEOUT'), { phase, timeoutMs });
+}
+
+/** Only allocated when phase limits are configured. */
+function phaseTimers(options, fail) {
+  const handles = new Map();
+  const clear = (phase) => { clearTimeout(handles.get(phase)); handles.delete(phase); };
+  const arm = (phase) => {
+    clear(phase);
+    const ms = options[`${phase}Timeout`];
+    if (ms > 0) handles.set(phase, setTimeout(() => fail(timeoutError(phase, ms)), ms));
+  };
+  return {
+    start() { arm('connect'); arm('response'); },
+    connect() { if (!handles.has('connect')) arm('connect'); },
+    connected() { clear('connect'); },
+    headers(redirecting, streamed) { clear('connect'); if (!redirecting) { clear('response'); if (!streamed) arm('idle'); } },
+    data() { arm('idle'); },
+    clear() { for (const handle of handles.values()) clearTimeout(handle); handles.clear(); },
+  };
+}
+
+function firstTimeout(options) {
+  let first;
+  for (const [phase, ms] of [['total', options.timeout], ['connect', options.connectTimeout], ['response', options.responseTimeout]]) {
+    if (ms > 0 && (!first || ms < first.ms)) first = { phase, ms };
+  }
+  return first;
+}
+
 // Compressed bodies may be this much larger than the decompressed limit before reading stops
 const COMPRESSED_SLACK = 1024 * 1024;
 
@@ -612,9 +661,12 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     return reject(error);
   }
   const [transport, target, options] = args;
+  state.phases?.connect();
   const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
     const location = response.headers.location;
+    const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
+    state.phases?.headers(REDIRECT_STATUSES.has(status) && location && !state.manual, state.stream && success);
 
     if (REDIRECT_STATUSES.has(status) && location && !state.manual) {
       let drained = 0;
@@ -655,7 +707,6 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     }
 
     // Streamed: resolve with the body as it arrives (error statuses are read in full)
-    const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
     if (state.stream && success) {
       return resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) });
     }
@@ -680,6 +731,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     const onProgress = status >= 200 && status < 300 ? state.onDownloadProgress : undefined;
     const total = Number.isSafeInteger(expected) ? expected : null;
     response.on('data', (chunk) => {
+      state.phases?.data();
       if (buffer && received + chunk.length <= expected) buffer.set(chunk, received);
       else chunks.push(chunk);
       received += chunk.length;
@@ -710,6 +762,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
         reject(error);
       }
     });
+  });
+  if (state.phases) request.on('socket', (socket) => {
+    if (!socket.connecting && (!socket.encrypted || socket.getProtocol())) state.phases.connected();
+    else socket.once(socket.encrypted ? 'secureConnect' : 'connect', () => state.phases.connected());
   });
   request.on('error', reject);
   writeBody(request, body, state.onUploadProgress);
@@ -761,11 +817,15 @@ function nodeTransport(request) {
   };
   let timer;
   const promise = new Promise((resolve, reject) => {
+    if (request.connectTimeout > 0 || request.responseTimeout > 0 || request.idleTimeout > 0) {
+      state.phases = phaseTimers(request, (error) => { cancel(); reject(error); });
+      state.phases.start();
+    }
     if (request.timeout > 0) {
       // Covers the whole attempt: connecting, redirects and reading the body
       timer = setTimeout(() => {
         cancel();
-        reject(coded(new Error(`Request timeout after ${request.timeout}ms`), 'RUST_FETCH_TIMEOUT'));
+        reject(timeoutError('total', request.timeout));
       }, request.timeout);
     }
     let url;
@@ -773,11 +833,13 @@ function nodeTransport(request) {
       url = new URL(request.url);
     } catch (error) {
       clearTimeout(timer);
+      state.phases?.clear();
       return reject(error);
     }
     let released = false;
     const settle = (fn) => (value) => {
       clearTimeout(timer);
+      state.phases?.clear();
       if (!released) {
         released = true;
         release();
@@ -788,8 +850,10 @@ function nodeTransport(request) {
     state.waiting = whenFree(() => send(state, request.method, url, headers, request.body, 0, settle(resolve), settle(reject)));
   });
   const cancel = () => {
+    state.phases?.clear();
     state.cancelled = true;
     if (state.waiting) state.waiting.cancelled = true;
+    if (state.proxy) pendingTunnels.get(state.request)?.abort();
     state.request?.destroy();
   };
   // Decode only after the socket's event handlers have returned: decoding
@@ -845,6 +909,9 @@ function nativeTransport(request) {
     sensitiveHeaders: request.sensitiveHeaders,
     allowInsecureRedirects: request.allowInsecureRedirects,
   };
+  if (request.connectTimeout > 0) options.connectTimeout = request.connectTimeout;
+  if (request.responseTimeout > 0) options.responseTimeout = request.responseTimeout;
+  if (request.idleTimeout > 0) options.idleTimeout = request.idleTimeout;
   let dispatched = false;
   let giveUp;
   const sent = new Promise((resolve) => {
@@ -854,8 +921,23 @@ function nativeTransport(request) {
       dispatched = true;
       clearTimeout(timer);
       // The timeout covers the wait here too
-      const timeout = options.timeout > 0 ? Math.max(1, options.timeout - (performance.now() - queuedAt)) : options.timeout;
-      native.send(timeout === options.timeout ? options : { ...options, timeout }).then((response) => {
+      const elapsed = performance.now() - queuedAt;
+      let pending = options;
+      if (options.connectTimeout > 0 || options.responseTimeout > 0) {
+        for (const [phase, field] of [['total', 'timeout'], ['connect', 'connectTimeout'], ['response', 'responseTimeout']]) {
+          if (options[field] > 0) {
+            if (elapsed >= options[field]) {
+              release();
+              return resolve({ error: timeoutError(phase, options[field]).message, code: 'RUST_FETCH_TIMEOUT', phase });
+            }
+            if (pending === options) pending = { ...options };
+            pending[field === 'connectTimeout' ? 'connectTimeoutRemaining' : field] = options[field] - elapsed;
+          }
+        }
+      } else if (options.timeout > 0) {
+        pending = { ...options, timeout: Math.max(1, options.timeout - elapsed) };
+      }
+      native.send(pending).then((response) => {
         release();
         resolve(response);
       });
@@ -868,13 +950,20 @@ function nativeTransport(request) {
       clearTimeout(timer);
       resolve(response);
     };
-    if (options.timeout > 0) {
-      timer = setTimeout(() => giveUp({ error: `Request timeout after ${options.timeout}ms`, code: 'RUST_FETCH_TIMEOUT' }), options.timeout);
+    const first = firstTimeout(options);
+    if (first) {
+      timer = setTimeout(() => giveUp({ error: timeoutError(first.phase, first.ms).message, code: 'RUST_FETCH_TIMEOUT', phase: first.phase }), first.ms);
     }
   });
   const finished = sent.then((response) => {
     if (response.code === 'RUST_FETCH_TOO_LARGE') throw tooLarge(options.maxResponseBytes);
-    if (response.error != null) throw coded(new Error(response.error), response.code);
+    if (response.error != null) {
+      if (response.code === 'RUST_FETCH_TIMEOUT') {
+        const phase = response.phase ?? 'total';
+        throw timeoutError(phase, phase === 'total' ? request.timeout : request[`${phase}Timeout`]);
+      }
+      throw coded(new Error(response.error), response.code);
+    }
     const headers = {};
     const raw = response.headers;
     for (let i = 0; i < raw.length; i += 2) {
