@@ -13,12 +13,12 @@ for await (const chunk of res.body) {
 console.log(`${received} bytes`);
 ```
 
-`for await` over a stream works in Node.js, Chrome and Firefox. Safari doesn't support it yet, so use `res.body.getReader()` there. Retries apply until the headers arrive, and error statuses still reject with an `HttpError`.
+`for await` over a stream works in Node.js, Chrome and Firefox. Safari doesn't support it yet, so use `res.body.getReader()` there. Retries apply until the headers arrive, and error statuses still reject with an `HttpError`. Use `idleTimeoutMs` to limit waiting for body chunks and `deadlineMs` to close the underlying body by an absolute deadline, including an unread body. See [Timeouts](/guide/timeouts-and-retries#timeouts).
 
 **Memory while streaming.** A stream is read as fast as you read it, not as fast as the server sends:
 - **Node.js:** a slow reader holds the server back. Only what the socket and stream buffers hold is read ahead: in a test, a server offering 64 MB had sent about 1.5 MB (0.8 MB as NDJSON) while the reader paused for a second. That's reduced read-ahead, not a fixed ceiling, since buffer sizes depend on the platform. Browsers read a response ahead of the page themselves (their own `fetch()` took 59–64 MB in the same test), so this applies to Node.js only.
 - **Cancelling releases the connection:** `reader.cancel()`, `break` out of `for await`, an aborted `signal`, or reaching `maxResponseBytes` closes it on every transport. A body you drop without reading or cancelling is closed when it's garbage-collected, so cancel one you don't need.
-- **Each chunk is yours:** every `Uint8Array` you receive owns its whole buffer, and rust-fetch keeps no reference to it. Without download progress or `maxResponseBytes`, chunks are handed over from the transport as they arrive, without copying them through WebAssembly; with either, rust-fetch reads each one on its way, so it's copied.
+- **Each chunk is yours:** every `Uint8Array` you receive owns its whole buffer, and rust-fetch keeps no reference to it. Without download progress, `maxResponseBytes`, idle timing or a body deadline, chunks are handed over from the transport as they arrive, without copying them through WebAssembly; with either, rust-fetch reads each one on its way, so it's copied.
 - **Per-line and per-event limits** for NDJSON and Server-Sent Events: [`maxLineBytes` and `maxEventBytes`](/security#limiting-line-length).
 
 These are checked on every transport by the [conformance suite](/conformance).
@@ -63,6 +63,7 @@ Each event is `{ event, data, id }`: `event` is `'message'` unless the server se
 
 | Option | Description |
 | --- | --- |
+| `connectTimeoutMs`, `responseTimeoutMs`, `idleTimeoutMs`, `deadlineMs` | As for requests; the logical deadline includes all reconnections and backoff |
 | `method`, `body`, `headers`, `params`, `timeoutMs` | As for requests. `timeoutMs` covers each connection attempt until the response headers arrive |
 | `reconnect` | Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and waiting the server's `retry:` delay (otherwise backing off like WebSockets). `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }`. Default: on for `GET`, off for other methods, which would resend their body |
 | `messageType` | `'auto'` (default: `data` is a string) or `'json'` |

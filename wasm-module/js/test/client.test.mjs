@@ -2,6 +2,7 @@
 // Run `npm run build` first, then `npm run test:js`.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import init, {
   WasmClient,
   create_client,
@@ -602,6 +603,146 @@ describe('timeouts', () => {
     assert.equal((await c.get(server.url('/slow?ms=200'), { timeoutMs: 0 })).body.slow, true);
     const quick = await rejection(client().get(server.url('/slow?ms=500'), { timeoutMs: 50 }));
     assert.equal(quick.timeoutMs, 50);
+  });
+});
+
+describe('phase timeouts and logical deadlines', () => {
+  const check = async (promise, phase, timeoutMs) => {
+    const error = await rejection(promise);
+    assert.equal(error.kind, 'TimeoutError', String(error));
+    assert.equal(error.phase, phase);
+    assert.equal(error.timeoutMs, timeoutMs);
+    return error;
+  };
+
+  it('validates each option and supports inherited settings and independent zero overrides', async () => {
+    for (const name of ['connectTimeoutMs', 'responseTimeoutMs', 'idleTimeoutMs', 'deadlineMs']) {
+      for (const value of [-1, NaN, Infinity, 'soon', true]) {
+        assert.throws(() => new WasmClient({ [name]: value }), { kind: 'InvalidInputError', parameter: name });
+        const error = await rejection(client().get(server.url('/echo'), { [name]: value }));
+        assert.equal(error.parameter, name);
+      }
+    }
+    const c = new WasmClient({ responseTimeoutMs: 20, idleTimeoutMs: 15, deadlineMs: 1000 });
+    await check(c.get(server.url('/slow?ms=80')), 'response', 20);
+    await check(c.get(server.url('/slow?ms=80'), { responseTimeoutMs: null }), 'response', 20);
+    assert.equal((await c.get(server.url('/slow?ms=80'), { responseTimeoutMs: 0 })).status, 200);
+    await check(c.get(server.url('/stream'), { responseTimeoutMs: 0 }), 'idle', 15);
+    assert.equal((await c.get(server.url('/stream'), { idleTimeoutMs: 0 })).status, 200);
+    const legacy = await check(c.get(server.url('/slow?ms=80'), { timeoutMs: 10, responseTimeoutMs: 0 }), 'total', 10);
+    assert.match(legacy.message, /Request timeout after 10ms/);
+  });
+
+  it('disables a client deadline per call and follows the options inheritance rules', async () => {
+    const c = new WasmClient({ deadlineMs: 20 });
+    await check(c.get(server.url('/slow?ms=80'), { deadlineMs: null }), 'total', 20);
+    assert.equal((await c.get(server.url('/slow?ms=80'), { deadlineMs: 0 })).status, 200);
+    const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'deadlineMs');
+    try {
+      Object.defineProperty(Object.prototype, 'deadlineMs', { configurable: true, value: 0.001 });
+      assert.equal((await client().get(server.url('/slow?ms=30'), { responseType: 'text' })).status, 200, 'plain options ignore Object.prototype');
+      await check(client().get(server.url('/slow?ms=80'), Object.create({ deadlineMs: 20 })), 'total', 20);
+    } finally { if (descriptor) Object.defineProperty(Object.prototype, 'deadlineMs', descriptor); else delete Object.prototype.deadlineMs; }
+  });
+
+  it('times out a stalled TLS handshake as connect on native and node:https', async () => {
+    const sockets = new Set();
+    const tcp = net.createServer((socket) => { sockets.add(socket); socket.on('data', () => {}); socket.on('close', () => sockets.delete(socket)); });
+    await new Promise((resolve) => tcp.listen(0, '127.0.0.1', resolve));
+    try {
+      await check(client().get(`https://127.0.0.1:${tcp.address().port}/`, { connectTimeoutMs: 30, responseTimeoutMs: 200, timeoutMs: 1000 }), 'connect', 30);
+    } finally { for (const socket of sockets) socket.destroy(); await new Promise((resolve) => tcp.close(resolve)); }
+  });
+
+  it('cancels a proxy CONNECT that has not supplied a socket', async () => {
+    let closed = false;
+    const sockets = new Set();
+    const proxy = net.createServer((socket) => {
+      sockets.add(socket); socket.on('data', () => {}); socket.on('error', () => {});
+      socket.on('close', () => { closed = true; sockets.delete(socket); });
+    });
+    await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    try {
+      const c = new WasmClient({ proxy: `http://127.0.0.1:${proxy.address().port}` });
+      await check(c.get('https://example.invalid/', { connectTimeoutMs: 30 }), 'connect', 30);
+      await sleep(30);
+      assert.equal(closed, true, 'timeout closes the pending CONNECT socket');
+    } finally { for (const socket of sockets) socket.destroy(); await new Promise((resolve) => proxy.close(resolve)); }
+  });
+
+  it('resets idle timers on chunks and preserves downloads and streamed errors', async () => {
+    const s = await startServer(async (req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      for (let i = 0; i < 6; i++) { res.write('chunk'); await sleep(15); }
+      res.end();
+    });
+    try {
+      const c = new WasmClient({ responseTimeoutMs: 40, idleTimeoutMs: 60 });
+      assert.equal((await c.get(s.url())).body, 'chunk'.repeat(6));
+      const progress = [];
+      assert.equal((await c.get(s.url(), { onDownloadProgress: (p) => progress.push(p) })).body, 'chunk'.repeat(6));
+      assert.equal(progress.at(-1).loaded, 30);
+      const response = await c.get(server.url('/stream'), { responseType: 'stream', idleTimeoutMs: 20 });
+      await check(new Response(response.body).text(), 'idle', 20);
+    } finally { await s.close(); }
+  });
+
+  it('closes unread streams at the deadline and releases concurrency capacity', async () => {
+    let closed = false;
+    const s = await startServer((req, res) => {
+      if (req.url === '/ok') return res.end('ok');
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('first');
+      res.once('close', () => { closed = true; });
+    });
+    try {
+      const c = new WasmClient({ maxConcurrent: 1 });
+      const response = await c.get(s.url(), { responseType: 'stream', deadlineMs: 40 });
+      await sleep(100);
+      assert.equal(closed, true, 'deadline cancels the source even if nobody reads');
+      assert.equal((await c.get(s.url('/ok'), { deadlineMs: 100, responseType: 'text' })).body, 'ok');
+      await check(new Response(response.body).text(), 'total', 40);
+    } finally { await s.close(); }
+  });
+
+  it('includes queueing and retry backoff in a single deadline', async () => {
+    const s = await startServer((req, res) => {
+      if (req.url === '/hold') { res.writeHead(200); return res.write('held'); }
+      res.writeHead(503); res.end('busy');
+    });
+    try {
+      const c = new WasmClient({ maxConcurrent: 1 });
+      const held = await c.get(s.url('/hold'), { responseType: 'stream' });
+      await check(c.get(s.url(), { deadlineMs: 20 }), 'total', 20);
+      assert.equal(s.requests.length, 1, 'expired queued work never reaches the server');
+      await held.body.cancel();
+      await check(c.get(s.url(), { deadlineMs: 30, retries: { maxRetries: 3, initialDelayMs: 200, jitter: false } }), 'total', 30);
+      assert.equal(s.requests.length, 2);
+    } finally { await s.close(); }
+  });
+
+  it('bounds async request interceptors and body preparation without sending late work', async () => {
+    const c = new WasmClient({ deadlineMs: 20 });
+    c.addRequestInterceptor(async (request) => { await sleep(60); return request; });
+    const before = server.requests.length;
+    await check(c.get(server.url('/echo')), 'total', 20);
+    await sleep(60);
+    assert.equal(server.requests.length, before);
+    const slowBlob = new Blob(['body']);
+    slowBlob.arrayBuffer = async () => { await sleep(60); return new ArrayBuffer(4); };
+    await check(client().post(server.url('/echo'), { body: slowBlob, deadlineMs: 20 }), 'total', 20);
+    assert.equal(server.requests.length, before);
+  });
+
+  it('classifies phase errors under retryOnTimeout', async () => {
+    const s = await startServer(async (req, res) => { await sleep(80); res.end('late'); });
+    try {
+      const c = new WasmClient({ responseTimeoutMs: 15 });
+      await check(c.get(s.url(), { retries: { maxRetries: 1, initialDelayMs: 0, retryOnTimeout: false, retryOnNetworkError: true } }), 'response', 15);
+      assert.equal(s.requests.length, 1);
+      await check(c.get(s.url(), { retries: { maxRetries: 1, initialDelayMs: 0, retryOnTimeout: true, retryOnNetworkError: false } }), 'response', 15);
+      assert.equal(s.requests.length, 3);
+    } finally { await s.close(); }
   });
 });
 

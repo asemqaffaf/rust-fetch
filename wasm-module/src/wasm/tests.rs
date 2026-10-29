@@ -1007,3 +1007,43 @@ fn urls_resolve_with_the_runtime_url_as_with_the_url_crate() {
         "https://a.com/"
     );
 }
+
+#[wasm_bindgen_test]
+async fn delays_chain_long_timers_and_round_up_fractional_milliseconds() {
+    js("(() => { globalThis.__timers = []; globalThis.__setTimeout = globalThis.setTimeout; globalThis.__clearTimeout = globalThis.clearTimeout; globalThis.setTimeout = (callback, ms) => { __timers.push(ms); callback(); return __timers.length; }; globalThis.clearTimeout = () => {}; return null; })()");
+    Delay::new(Duration::from_millis(i32::MAX as u64 + 10)).await;
+    Delay::new(Duration::from_micros(1)).await;
+    let timers = js("JSON.stringify(__timers)").as_string().unwrap();
+    js("(() => { globalThis.setTimeout = __setTimeout; globalThis.clearTimeout = __clearTimeout; delete globalThis.__setTimeout; delete globalThis.__clearTimeout; delete globalThis.__timers; return null; })()");
+    assert_eq!(timers, "[2147483647,10,1]");
+}
+
+#[wasm_bindgen_test]
+async fn promise_adapter_schedules_once_and_preserves_fulfillment_and_rejection() {
+    let polled = std::rc::Rc::new(std::cell::Cell::new(false));
+    let flag = std::rc::Rc::clone(&polled);
+    let success = super::futures::promise(async move {
+        flag.set(true);
+        Delay::new(Duration::from_millis(1)).await;
+        Ok(JsValue::from_str("ok"))
+    });
+    assert!(!polled.get(), "the request starts on the next microtask");
+    assert_eq!(
+        wasm_bindgen_futures::JsFuture::from(success)
+            .await
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "ok"
+    );
+    assert!(polled.get());
+    let failed = super::futures::promise(async { Err(JsValue::from_str("failure")) });
+    assert_eq!(
+        wasm_bindgen_futures::JsFuture::from(failed)
+            .await
+            .unwrap_err()
+            .as_string()
+            .unwrap(),
+        "failure"
+    );
+}

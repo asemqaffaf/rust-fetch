@@ -54,6 +54,7 @@ mod limiter;
 mod lines;
 mod runtime;
 mod sse;
+mod timeouts;
 mod url;
 mod wasm;
 
@@ -65,6 +66,7 @@ pub use circuit::{CircuitBreaker, CircuitCallback, CircuitChange, CircuitOpenErr
 pub use client::{Client, ClientBuilder, ProgressCallback, RequestBuilder, StreamingResponse};
 pub use error::{Error, Result};
 pub use limiter::RateLimit;
+pub use timeouts::{PhaseTimeouts, TimeoutDetails, TimeoutPhase};
 pub use types::{Headers, Method, Multipart, Progress, Redirect, Response, ResponseBody};
 
 // Re-export all public items from feature modules for backward compatibility

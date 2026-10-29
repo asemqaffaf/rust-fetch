@@ -252,6 +252,33 @@ impl Error {
         }
     }
 
+    /// Timeout phase and configured duration, including the original total timeout.
+    pub fn timeout_details(&self) -> Option<crate::TimeoutDetails> {
+        match self {
+            Self::Timeout { duration_ms } => Some(crate::TimeoutDetails {
+                phase: crate::TimeoutPhase::Total,
+                duration_ms: *duration_ms,
+            }),
+            Self::Network {
+                source: Some(source),
+                ..
+            } => source.downcast_ref::<crate::TimeoutDetails>().copied(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn phase_timeout(phase: crate::TimeoutPhase, duration: std::time::Duration) -> Self {
+        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        if phase == crate::TimeoutPhase::Total {
+            Self::Timeout { duration_ms }
+        } else {
+            Self::network(
+                "Request phase timed out",
+                crate::TimeoutDetails { phase, duration_ms },
+            )
+        }
+    }
+
     /// Details when an opt-in circuit breaker refused this request.
     pub fn circuit_open(&self) -> Option<&crate::CircuitOpenError> {
         match self {
@@ -267,6 +294,9 @@ impl Error {
     pub fn kind(&self) -> &'static str {
         if self.circuit_open().is_some() {
             return "CircuitOpenError";
+        }
+        if matches!(self, Self::Network { .. }) && self.timeout_details().is_some() {
+            return "TimeoutError";
         }
         match self {
             Error::Network { .. } => "NetworkError",

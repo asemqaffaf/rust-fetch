@@ -32,7 +32,7 @@ dlmalloc = "0.2"
 
 # Platform-specific dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
