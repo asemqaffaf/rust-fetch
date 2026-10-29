@@ -914,7 +914,9 @@ pub struct ClientBuilder {
     retry_budget: Option<RetryBudget>,
     limits: crate::limiter::Config,
     circuit: Option<crate::CircuitBreaker>,
-    circuit_hook: Option<Arc<dyn crate::CircuitCallback>>,
+    // The builder only stores this callback; it never invokes it. Preserve
+    // its existing panic-safety traits without restricting application hooks.
+    circuit_hook: Option<std::panic::AssertUnwindSafe<Arc<dyn crate::CircuitCallback>>>,
     max_line_bytes: Option<usize>,
     max_event_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
@@ -1138,7 +1140,7 @@ impl ClientBuilder {
 
     /// Observe circuit transitions. Called outside the circuit's lock.
     pub fn on_circuit_change(mut self, callback: impl crate::CircuitCallback + 'static) -> Self {
-        self.circuit_hook = Some(Arc::new(callback));
+        self.circuit_hook = Some(std::panic::AssertUnwindSafe(Arc::new(callback)));
         self
     }
 
@@ -1147,7 +1149,10 @@ impl ClientBuilder {
         self.limits.validate()?;
         let breaker = self
             .circuit
-            .map(|config| crate::circuit::Breaker::new(config, self.circuit_hook).map(Arc::new))
+            .map(|config| {
+                crate::circuit::Breaker::new(config, self.circuit_hook.map(|hook| hook.0))
+                    .map(Arc::new)
+            })
             .transpose()?;
         if let Some(name) = self.retry_budget.as_ref().and_then(RetryBudget::invalid) {
             return Err(Error::InvalidInput {
@@ -1649,6 +1654,12 @@ pub(crate) fn with_jitter(delay: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn client_builder_preserves_panic_safety() {
+        fn check<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>(_: T) {}
+        check(Client::builder().on_circuit_change(std::mem::drop::<crate::CircuitChange>));
+    }
+
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]
