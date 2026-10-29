@@ -283,3 +283,24 @@ jobs:
       # CONFORMANCE.md that doesn't match the results
       - name: Transport conformance
         run: npm run test:conformance
+
+  webkit-uploads:
+    name: WebKit uploads (macOS)
+    # WebKit's Linux Soup backend rejects upload streams. Exercise Cocoa too.
+    needs: wasm
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Install WebKit
+        run: npx playwright install webkit
+      - name: Download the built package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pkg
+          path: wasm-module/pkg
+      - name: WebKit streaming uploads over HTTP/2
+        run: node --test wasm-module/js/test/browser-uploads.test.mjs

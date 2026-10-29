@@ -528,7 +528,7 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
   }, async () => {
     const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
-    assert.equal(addon.TRANSPORT_VERSION, 2);
+    assert.equal(addon.TRANSPORT_VERSION, 3);
     const s = await startServer((req, res) => res.end('ok'));
     try {
       const attempts = [];

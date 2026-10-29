@@ -88,9 +88,10 @@ The body's type decides how it's sent. A `Content-Type` header you set yourself 
 | `Blob` / `File` | bytes | the blob's `type` |
 | `FormData` | `multipart/form-data`, including files | `multipart/form-data; boundary=…` |
 | `URLSearchParams` | form-encoded | `application/x-www-form-urlencoded;charset=UTF-8` |
+| `ReadableStream`, async iterable, Node `Readable`, or a source factory (2.7.0) | streamed with backpressure | `application/octet-stream` |
 | anything else (objects, arrays, numbers, booleans) | `JSON.stringify` | `application/json` |
 
-`null` and `undefined` mean no body. The `*_json` methods are the exception: they always send JSON, so `post_json(url, null)` sends `null`. `ReadableStream` request bodies aren't supported; send a `Blob` or bytes instead.
+`null` and `undefined` mean no body. The `*_json` methods are the exception: they always send JSON, so `post_json(url, null)` sends `null`. Streaming bodies and factories are available in unreleased 2.7.0; see [Streaming request bodies](/guide/uploads#streaming-request-bodies-270-unreleased) for replay and browser restrictions.
 
 ## Responses
 

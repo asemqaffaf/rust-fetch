@@ -393,6 +393,14 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         None if method == Method::Get => parse_reconnect(&JsValue::TRUE)?,
         None => None,
     };
+    if reconnect.is_some() {
+        if let Some(body) = prop(&options, "body") {
+            if super::upload::Upload::from_value(&body)?.is_some_and(|upload| !upload.replayable())
+            {
+                return Err(invalid("reconnect", "A one-shot streaming body cannot reconnect; use a body factory or reconnect: false"));
+            }
+        }
+    }
     let json = match prop(&options, "messageType").map(|value| value.as_string()) {
         None => false,
         Some(Some(name)) if name == "auto" => false,
