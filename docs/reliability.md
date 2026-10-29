@@ -6,15 +6,15 @@ Versions: Node v22.23.3; axios 1.20.0; ky 2.2.0; got 15.1.0; undici 7.30.1. rust
 
 | Fault | rust-fetch/native | rust-fetch/node:http | fetch | undici | axios | ky | got |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| success | ok (1 ms) | ok (1 ms) | ok (2 ms) | ok (2 ms) | ok (1 ms) | ok (2 ms) | ok (1 ms) |
-| reset | network (1 ms) | network (1 ms) | network (1 ms) | network (1 ms) | network (1 ms) | network (1 ms) | network (1 ms) |
-| truncated | network (1 ms) | network (1 ms) | network (1 ms) | network (2 ms) | network (2 ms) | network (2 ms) | network (1 ms) |
-| oversizedHeaders | network (2 ms) | network (2 ms) | network (3 ms) | network (3 ms) | network (2 ms) | network (3 ms) | network (2 ms) |
-| stalledHeaders | timeout (153 ms) | timeout (153 ms) | timeout (153 ms) | timeout (152 ms) | timeout (153 ms) | timeout (154 ms) | timeout (156 ms) |
-| stalledBody | timeout (154 ms) | timeout (153 ms) | timeout (153 ms) | timeout (154 ms) | network (155 ms) | timeout (156 ms) | timeout (156 ms) |
-| trickleBody | timeout (154 ms) | timeout (152 ms) | timeout (154 ms) | timeout (153 ms) | watchdog (1004 ms) | timeout (155 ms) | timeout (156 ms) |
-| redirectLoop | network (6 ms) | network (9 ms) | network (10 ms) | network (7 ms) | network (12 ms) | network (9 ms) | network (11 ms) |
-| rateLimited | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) |
+| success | ok (1 ms) | ok (1 ms) | ok (4 ms) | ok (3 ms) | ok (5 ms) | ok (2 ms) | ok (1 ms) |
+| reset | network (1 ms) | network (1 ms) | network (5 ms) | network (3 ms) | network (1 ms) | network (1 ms) | network (1 ms) |
+| truncated | network (1 ms) | network (1 ms) | network (4 ms) | network (3 ms) | network (2 ms) | network (2 ms) | network (1 ms) |
+| oversizedHeaders | network (5 ms) | network (3 ms) | network (4 ms) | network (35 ms) | network (3 ms) | network (3 ms) | network (2 ms) |
+| stalledHeaders | timeout (153 ms) | timeout (152 ms) | timeout (152 ms) | timeout (151 ms) | timeout (151 ms) | timeout (154 ms) | timeout (155 ms) |
+| stalledBody | timeout (152 ms) | timeout (152 ms) | timeout (152 ms) | timeout (151 ms) | network (152 ms) | timeout (154 ms) | timeout (156 ms) |
+| trickleBody | timeout (152 ms) | timeout (152 ms) | timeout (152 ms) | timeout (151 ms) | watchdog (1001 ms) | timeout (151 ms) | timeout (155 ms) |
+| redirectLoop | network (6 ms) | network (11 ms) | network (22 ms) | network (8 ms) | network (12 ms) | network (7 ms) | network (8 ms) |
+| rateLimited | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (0 ms) | http:429 (1 ms) | http:429 (1 ms) | http:429 (1 ms) |
 | unavailable | http:503 (1 ms) | http:503 (1 ms) | http:503 (1 ms) | http:503 (0 ms) | http:503 (1 ms) | http:503 (1 ms) | http:503 (1 ms) |
 
 The table measures these configurations and faults, not a general reliability ranking. Network error names differ. Some clients reject oversized headers sooner; lower failure latency is not necessarily better error handling. Axios uses an inactivity timeout, so a peer that keeps sending bytes can outlive its timeout. A total deadline or AbortSignal is needed for that case. The fault server and raw results are committed under benchmarks/reliability/.
