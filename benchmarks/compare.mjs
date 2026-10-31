@@ -157,7 +157,6 @@ const sides = Object.keys(builds);
 for (let round = 0; round < rounds; round++) {
   // Rotate which build goes first, to cancel drift
   const order = sides.map((_, i) => sides[(i + round) % sides.length]);
-  if (round % 2) order.reverse();
   for (const side of order) {
     const { value } = await measure(builds[side], 'overhead', {});
     record('overhead|client', side, value); // negative: lower is better
