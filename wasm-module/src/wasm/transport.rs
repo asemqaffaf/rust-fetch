@@ -556,18 +556,14 @@ async fn send_fetch_streaming(
             })
     };
     crate::client::observe_text(observer, "transport", "fetch");
-    let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
-        Some(duration) => {
-            crate::runtime::timeout_phase(
-                duration,
-                crate::TimeoutPhase::Response,
-                duration,
-                receive,
-            )
-            .await?
-        }
-        None => receive.await?,
-    }
+    let response_timeout = phases.and_then(|phases| phases.response);
+    let response: web_sys::Response = crate::runtime::timeout_phase_optional(
+        response_timeout,
+        crate::TimeoutPhase::Response,
+        response_timeout.unwrap_or_default(),
+        receive,
+    )
+    .await?
     .unchecked_into();
     crate::client::observe(observer, "headers", &JsValue::UNDEFINED);
     let status = response.status();
@@ -1143,18 +1139,14 @@ async fn send_fetch(
             })
     };
     crate::client::observe_text(progress.observer.as_ref(), "transport", "fetch");
-    let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
-        Some(duration) => {
-            crate::runtime::timeout_phase(
-                duration,
-                crate::TimeoutPhase::Response,
-                duration,
-                receive,
-            )
-            .await?
-        }
-        None => receive.await?,
-    }
+    let response_timeout = phases.and_then(|phases| phases.response);
+    let response: web_sys::Response = crate::runtime::timeout_phase_optional(
+        response_timeout,
+        crate::TimeoutPhase::Response,
+        response_timeout.unwrap_or_default(),
+        receive,
+    )
+    .await?
     .unchecked_into();
     let status = response.status();
     crate::client::observe(progress.observer.as_ref(), "headers", &JsValue::UNDEFINED);

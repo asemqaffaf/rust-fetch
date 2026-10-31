@@ -122,30 +122,35 @@ impl Deadline {
     }
 }
 
-/// Keep the optional timer/future out of the default request's inline state.
+/// Bound `future` by an optional deadline. With and without one it is the
+/// same future type, so `future` is compiled into a single poll function.
 pub(crate) fn with_deadline<T, F: Future<Output = Result<T>>>(
     deadline: Option<Deadline>,
     future: F,
 ) -> impl Future<Output = Result<T>> {
-    match deadline {
-        None => Either::Left(future),
-        Some(deadline) => {
-            let remaining = deadline.remaining();
-            let timed = if remaining.is_zero() {
-                Either::Left(std::future::ready(Err(Error::phase_timeout(
-                    TimeoutPhase::Total,
-                    deadline.duration,
-                ))))
-            } else {
-                Either::Right(runtime::timeout_phase(
-                    remaining,
-                    TimeoutPhase::Total,
-                    deadline.duration,
-                    future,
-                ))
-            };
-            Either::Right(Box::pin(timed))
+    let configured = deadline.map_or(Duration::ZERO, |deadline| deadline.duration);
+    let remaining = deadline.map(Deadline::remaining);
+    let expired = move || Error::phase_timeout(TimeoutPhase::Total, configured);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match remaining {
+            None => Either::Left(future),
+            Some(remaining) if remaining.is_zero() => {
+                Either::Right(Either::Left(std::future::ready(Err(expired()))))
+            }
+            Some(remaining) => Either::Right(Either::Right(Box::pin(runtime::timeout_phase(
+                remaining,
+                TimeoutPhase::Total,
+                configured,
+                future,
+            )))),
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use futures_util::FutureExt;
+        crate::wasm::futures::Deadline::until(future, remaining)
+            .map(move |result| result.unwrap_or_else(|()| Err(expired())))
     }
 }
 

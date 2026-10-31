@@ -48,6 +48,14 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] 
 opt-level = "z"
 lto = true
 
+# wasm-opt's default -O inlines every single-caller function, merging the
+# request futures into a few very large functions. V8 compiles each function
+# in full on its first call, so the first request compiled code for options it
+# never used. Capping that inlining keeps first-request compilation smaller
+# (and the module slightly smaller) without measurable per-request cost (#180).
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--one-caller-inline-max-function-size=500"]
+
 [profile.dev]
 opt-level = 0
 

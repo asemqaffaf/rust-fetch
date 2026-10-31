@@ -942,9 +942,11 @@ impl WasmClient {
                 .map_err(JsValue::from)
             };
             use futures_util::FutureExt;
-            let result = crate::timeouts::with_deadline(absolute, result.map(Ok::<_, Error>))
-                .await
-                .unwrap_or_else(|error| Err(JsValue::from(error)));
+            // Boxed: the deadline wrapper then moves a pointer, not this state.
+            let result =
+                crate::timeouts::with_deadline(absolute, Box::pin(result.map(Ok::<_, Error>)))
+                    .await
+                    .unwrap_or_else(|error| Err(JsValue::from(error)));
 
             let mut result = result;
             for (_, on_fulfilled, on_rejected) in &response_interceptors {
@@ -1248,9 +1250,11 @@ pub(crate) fn send_request<'a>(
     }
     let deadline = builder.effective_deadline();
     builder.deadline = deadline.map(Box::new);
+    // Box the request's large state machine once, so the deadline, error and
+    // promise wrappers move a pointer instead of copying it on every request.
     Either::Right(crate::timeouts::with_deadline(
         deadline,
-        send_prepared(client, builder, body, options),
+        Box::pin(send_prepared(client, builder, body, options)),
     ))
 }
 
