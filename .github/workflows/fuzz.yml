@@ -1,0 +1,84 @@
+name: Parser and JS boundary fuzzing
+on:
+  schedule:
+    - cron: '17 18 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'wasm-module/src/**'
+      - 'wasm-module/fuzz/**'
+      - 'wasm-module/js/**'
+      - 'scripts/fuzz-js-boundary.mjs'
+      - '.github/workflows/fuzz.yml'
+permissions:
+  contents: read
+jobs:
+  parsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [sse, lines, retry_after, urls, headers, multipart]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: nightly-2026-10-28
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: wasm-module/fuzz
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz actual parsers
+        working-directory: wasm-module
+        env:
+          TARGET: ${{ matrix.target }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          duration=15
+          if [ "$EVENT" != pull_request ]; then duration=180; fi
+          cargo fuzz run "$TARGET" -- -max_total_time="$duration" -max_len=65536 -rss_limit_mb=1024
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: wasm-module/fuzz/artifacts/
+          if-no-files-found: ignore
+  boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91
+        with:
+          tool: wasm-pack
+      - run: npm ci && npm run build
+      - run: node scripts/fuzz-js-boundary.mjs
+        env:
+          FUZZ_CASES: 10000
+  report:
+    needs: [parsers, boundary]
+    if: always() && github.event_name == 'schedule' && (needs.parsers.result == 'failure' || needs.boundary.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report scheduled failures without executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="Scheduled fuzzing failure"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
+          if [ "$existing" = 0 ]; then
+            report="$RUNNER_TEMP/fuzz-report.md"
+            printf 'Scheduled parser or JS/Wasm boundary fuzzing failed.\n\nRun and reproducer artifacts: %s/%s/actions/runs/%s\n\nMinimize the failing seed and add a regression test before closing.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$report"
+            gh issue create --title "$title" --body-file "$report"
+          fi

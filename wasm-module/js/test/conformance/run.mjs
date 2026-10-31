@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { cases, HELPERS } from './cases.mjs';
 import { startServers } from './server.mjs';
+import { startWebSocketServer } from '../helpers.mjs';
 
 const root = new URL('../../../../', import.meta.url);
 const pkg = new URL('wasm-module/pkg/', root);
@@ -80,7 +81,17 @@ const closed = await new Promise((resolve) => {
     probe.close(() => resolve(`http://127.0.0.1:${port}/`));
   });
 });
-const ctx = { a: servers.a, b: servers.b, closed };
+const websocketAttempts = new Map();
+const websocket = await startWebSocketServer((peer, req) => {
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname !== '/fault/reconnect-storm') return;
+  const id = url.searchParams.get('id');
+  const attempt = (websocketAttempts.get(id) ?? 0) + 1;
+  websocketAttempts.set(id, attempt);
+  if (attempt <= 2) setTimeout(() => peer.drop(), 5);
+  else peer.send('recovered');
+});
+const ctx = { a: servers.a, b: servers.b, closed, websocket: websocket.url() };
 
 const nativeAddon = new URL(`rust-fetch-native.${process.platform}-${process.arch}.node`, pkg);
 
@@ -137,6 +148,7 @@ for (const adapter of only) {
   runs[adapter] = ['chromium', 'firefox', 'webkit'].includes(adapter) ? await runBrowser(adapter) : await runNode(adapter);
 }
 servers.close();
+await websocket.close();
 
 // --- Compare, and the matrix ----------------------------------------------------------
 const failures = [];

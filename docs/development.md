@@ -28,7 +28,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | Browser transport tests | `wasm-module/js/test/browser-transport.test.mjs` | The browser entry without the Node.js transport: `fetch()`, and `XMLHttpRequest` (simulated over `node:http`) for upload progress |
 | WebSocket tests | `wasm-module/js/test/websocket.test.mjs` | `websocket()` against a local WebSocket server: URLs, headers, messages, timeouts, reconnection, closing |
 | Real-browser tests | `wasm-module/js/test/browsers.test.mjs` | The browser entry in Chromium, Firefox and WebKit (Playwright): requests and typed errors, timeouts, retries, cancellation, streaming, Server-Sent Events and NDJSON, download progress, upload progress with a cross-origin preflight, WebSockets, and the same client in a dedicated worker and a module service worker. `npm run test:browsers` after `npx playwright install` |
-| Conformance suite | `wasm-module/js/test/conformance/` | The same 52 behaviours on every transport and browser, written to [CONFORMANCE.md](/conformance). `npm run test:conformance` |
+| Conformance suite | `wasm-module/js/test/conformance/` | The same 69 behaviours on every transport and browser, written to [CONFORMANCE.md](/conformance). `npm run test:conformance` |
 | Security and hardened configurations | `wasm-module/js/test/security.test.mjs`, `hardened.test.mjs` | A test per advisory class, and each [hardened configuration](/security#hardened-configurations) read from the docs and exercised |
 | Resource tests | `wasm-module/js/test/memory.test.mjs`, `v8-crash.test.mjs`, `events.test.mjs` | Memory per pending request under a budget, the V8 crash on Node.js 20 and 22, and Server-Sent Events backpressure and limits |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
@@ -47,3 +47,13 @@ git worktree add ../rust-fetch-main main
 npm run build && npm run build:native
 npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg
 ```
+
+## Parser and boundary fuzzing
+
+The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line parsers, Retry-After, URL/base/redirect resolution, header validation and multipart encoding. Chunked parser results must match whole-input results under 4 KiB line and 16 KiB event limits. The `fuzzing` feature exposes harness entry points and is disabled in published Wasm builds.
+
+Run `cargo +nightly-2026-10-28 fuzz run sse -- -max_total_time=180` from `wasm-module` (replace `sse` with `lines`, `retry_after`, `urls`, `headers` or `multipart`). cargo-fuzz 0.13.2 and lockfiles are pinned in CI. `FUZZ_SEED` and `FUZZ_CASES` control `npm run fuzz:js`; fetch is stubbed so generated values cannot contact the network. Failures print a reproducible seed/case.
+
+The scheduled fuzz workflow runs each target for three minutes, with short pull-request smoke runs. Crashes are uploaded as artifacts and scheduled failures open a deduplicated issue. Minimize a reproducer, fix it and add a unit/JS regression before closing. Keep intentional seeds under `corpus/<target>/seed` or `regression-*`; generated mutation corpora and artifacts are ignored.
+
+The reliability comparison uses loopback fault fixtures, pinned development-only client dependencies, three rounds, full body consumption and a separate abort watchdog. Run npm run reliability:compare to regenerate its raw JSON and report. Transport conformance includes the same fault classes in native, node:http, fetch and real Chromium/Firefox/WebKit.

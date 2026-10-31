@@ -23,6 +23,7 @@ use crate::{
     },
 };
 use futures_util::StreamExt;
+use std::cell::OnceCell;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -47,30 +48,45 @@ extern "C" {
     fn decode(this: &NativeTextDecoder, bytes: &JsValue) -> std::result::Result<JsValue, JsValue>;
 }
 
+struct NodeBindings {
+    transport: js_sys::Function,
+    websocket_guard: js_sys::Function,
+}
+
 thread_local! {
     static TEXT_DECODER: NativeTextDecoder = NativeTextDecoder::new();
-    /// The Node.js transport, registered by the Node entry point before any
-    /// request is made. See `nodeTransport` in `js/node.js` for its contract.
-    static NODE_TRANSPORT: Option<js_sys::Function> = js_sys::Reflect::get(
-        &js_sys::global(),
-        &js_sys::Symbol::for_("rust-fetch.transport"),
-    )
-    .ok()
-    .and_then(|transport| transport.dyn_into().ok());
-    /// The Node.js entry's check for `websocket()` with `allowPrivateNetwork: false`;
-    /// see `websocketGuard` in `js/node.js`
-    static WEBSOCKET_GUARD: Option<js_sys::Function> = js_sys::Reflect::get(
-        &js_sys::global(),
-        &js_sys::Symbol::for_("rust-fetch.websocketGuard"),
-    )
-    .ok()
-    .and_then(|guard| guard.dyn_into().ok());
+    /// Owned by this Wasm instance, never discovered through another copy's globals.
+    static NODE_BINDINGS: OnceCell<NodeBindings> = const { OnceCell::new() };
+}
+
+/// Private adapter handshake, called synchronously by the Node entry point.
+#[wasm_bindgen(js_name = __bindNodeTransport, skip_typescript)]
+pub fn bind_node_transport(
+    transport: js_sys::Function,
+    websocket_guard: js_sys::Function,
+) -> std::result::Result<(), JsValue> {
+    NODE_BINDINGS
+        .with(|bindings| {
+            bindings.set(NodeBindings {
+                transport,
+                websocket_guard,
+            })
+        })
+        .map_err(|_| JsValue::from_str("The Node.js transport is already bound"))
+}
+
+fn node_transport() -> Option<js_sys::Function> {
+    NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.transport.clone()))
+}
+
+fn node_websocket_guard() -> Option<js_sys::Function> {
+    NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.websocket_guard.clone()))
 }
 
 /// Node.js: why the last WebSocket connection to `url`'s host was blocked,
 /// if it was (undici reports only a generic error)
 pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
-    let guard = WEBSOCKET_GUARD.with(Clone::clone)?;
+    let guard = node_websocket_guard()?;
     let blocked: js_sys::Function = js_sys::Reflect::get(&guard, &"blocked".into())
         .ok()?
         .dyn_into()
@@ -84,7 +100,7 @@ pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
 /// Node.js: check a WebSocket URL for `allowPrivateNetwork: false` and return
 /// the dispatcher that checks where it connects
 pub(crate) fn websocket_guard(url: &str) -> Result<JsValue> {
-    let guard = WEBSOCKET_GUARD.with(Clone::clone).ok_or_else(|| {
+    let guard = node_websocket_guard().ok_or_else(|| {
         super::invalid(
             "allowPrivateNetwork",
             "needs the package's Node.js entry point to check WebSocket connections",
@@ -114,6 +130,8 @@ pub(crate) fn websocket_guard(url: &str) -> Result<JsValue> {
 pub(crate) struct ProgressCallbacks {
     pub(crate) upload: Option<js_sys::Function>,
     pub(crate) download: Option<js_sys::Function>,
+    pub(crate) observer: Option<js_sys::Function>,
+    pub(crate) request_state: Option<std::sync::Arc<super::RequestState>>,
 }
 
 /// Per-request settings for the transports, beyond the `RequestConfig`
@@ -133,6 +151,8 @@ pub(crate) struct TransportOptions<'a> {
     pub(crate) allow_insecure_redirects: bool,
     pub(crate) phases: &'a crate::PhaseTimeouts,
     pub(crate) upload: Option<&'a super::upload::Upload>,
+    pub(crate) observer: Option<&'a js_sys::Function>,
+    pub(crate) request_state: Option<&'a std::sync::Arc<super::RequestState>>,
 }
 
 pub(crate) enum PreparedRequest {
@@ -164,6 +184,7 @@ pub(crate) enum PreparedRequest {
     },
     Node {
         transport: js_sys::Function,
+        request_state: Option<std::sync::Arc<super::RequestState>>,
         /// `{ method, url, headers, body?, timeout?, bodyType, redirect?,
         /// maxRedirects?, proxy? }`, reused for every attempt
         request: js_sys::Object,
@@ -203,7 +224,7 @@ impl PreparedRequest {
         let method = config.method.to_reqwest();
         let redirect = redirect_mode(config);
 
-        if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
+        if let Some(transport) = node_transport() {
             let request = node_request(
                 url,
                 method.as_str(),
@@ -229,6 +250,7 @@ impl PreparedRequest {
             }
             return Ok(Self::Node {
                 transport,
+                request_state: options.request_state.cloned(),
                 request,
                 timeout_ms,
                 manual: redirect == Redirect::Manual,
@@ -347,10 +369,20 @@ impl PreparedRequest {
             }
             Self::Node {
                 transport,
+                request_state,
                 request,
                 timeout_ms,
                 manual,
-            } => send_node(transport, request, *timeout_ms, *manual).await,
+            } => {
+                send_node(
+                    transport,
+                    request,
+                    *timeout_ms,
+                    *manual,
+                    request_state.as_deref(),
+                )
+                .await
+            }
         }
     }
 }
@@ -361,6 +393,8 @@ impl PreparedRequest {
 pub(crate) enum StreamingRequest {
     Fetch {
         upload: Option<super::upload::Upload>,
+        observer: Option<js_sys::Function>,
+        request_state: Option<std::sync::Arc<super::RequestState>>,
         phases: Option<Box<crate::PhaseTimeouts>>,
         url: String,
         init: web_sys::RequestInit,
@@ -371,6 +405,7 @@ pub(crate) enum StreamingRequest {
     /// covers the attempt until the headers arrive.
     Node {
         transport: js_sys::Function,
+        request_state: Option<std::sync::Arc<super::RequestState>>,
         request: js_sys::Object,
         manual: bool,
     },
@@ -410,7 +445,7 @@ impl StreamingRequest {
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let redirect = redirect_mode(config);
         let method = config.method.to_reqwest();
-        if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
+        if let Some(transport) = node_transport() {
             let request = node_request(
                 url,
                 method.as_str(),
@@ -423,6 +458,7 @@ impl StreamingRequest {
             set(&request, "stream", &JsValue::TRUE)?;
             return Ok(Self::Node {
                 transport,
+                request_state: options.request_state.cloned(),
                 request,
                 manual: redirect == Redirect::Manual,
             });
@@ -443,6 +479,8 @@ impl StreamingRequest {
         }
         Ok(Self::Fetch {
             upload: options.upload.cloned(),
+            observer: options.observer.cloned(),
+            request_state: options.request_state.cloned(),
             phases: (options.phases.response.is_some() || options.phases.idle.is_some())
                 .then(|| Box::new(*options.phases)),
             url: url.to_string(),
@@ -458,6 +496,8 @@ impl StreamingRequest {
         match self {
             Self::Fetch {
                 upload,
+                observer,
+                request_state,
                 phases,
                 url,
                 init,
@@ -471,14 +511,17 @@ impl StreamingRequest {
                     *limit,
                     phases.as_deref(),
                     upload.as_ref(),
+                    observer.as_ref(),
+                    request_state.as_deref(),
                 )
                 .await
             }
             Self::Node {
                 transport,
+                request_state,
                 request,
                 manual,
-            } => send_node_streaming(transport, request, *manual).await,
+            } => send_node_streaming(transport, request, *manual, request_state.as_deref()).await,
         }
     }
 }
@@ -490,6 +533,8 @@ async fn send_fetch_streaming(
     limit: Option<u64>,
     phases: Option<&crate::PhaseTimeouts>,
     upload: Option<&super::upload::Upload>,
+    observer: Option<&js_sys::Function>,
+    request_state: Option<&super::RequestState>,
 ) -> Result<Attempt<StreamedResponse>> {
     let controller = web_sys::AbortController::new().map_err(network_error)?;
     init.set_signal(Some(&controller.signal()));
@@ -502,8 +547,15 @@ async fn send_fetch_streaming(
     let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(|error| upload_error(session.as_ref(), error))
+            .map_err(|error| {
+                crate::client::observe(observer, "cause", &error);
+                if let Some(state) = request_state {
+                    state.remember_cause(&error);
+                }
+                upload_error(session.as_ref(), error)
+            })
     };
+    crate::client::observe_text(observer, "transport", "fetch");
     let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
         Some(duration) => {
             crate::runtime::timeout_phase(
@@ -517,7 +569,13 @@ async fn send_fetch_streaming(
         None => receive.await?,
     }
     .unchecked_into();
+    crate::client::observe(observer, "headers", &JsValue::UNDEFINED);
     let status = response.status();
+    if !(200..300).contains(&status) {
+        if let Some(state) = request_state {
+            *state.url.borrow_mut() = Some(response.url());
+        }
+    }
     let headers = response.headers();
     let redirected = check_redirect(&response, &headers, redirect)?;
     if !(200..300).contains(&status) && !redirected {
@@ -535,12 +593,17 @@ async fn send_fetch_streaming(
                     None,
                     limit,
                     phases.and_then(|phases| phases.idle),
+                    request_state,
                 )
                 .await?
             }
-            _ => JsFuture::from(response.array_buffer().map_err(network_error)?)
-                .await
-                .map_err(network_error)?,
+            _ => JsFuture::from(
+                response
+                    .array_buffer()
+                    .map_err(|error| captured_network_error(error, request_state))?,
+            )
+            .await
+            .map_err(|error| captured_network_error(error, request_state))?,
         };
         guard.disarm();
         let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
@@ -575,6 +638,7 @@ async fn send_node_streaming(
     transport: &js_sys::Function,
     request: &js_sys::Object,
     manual: bool,
+    request_state: Option<&super::RequestState>,
 ) -> Result<Attempt<StreamedResponse>> {
     let pending = transport
         .call1(&JsValue::UNDEFINED, request)
@@ -586,7 +650,13 @@ async fn send_node_streaming(
     });
     let response = JsFuture::from(js_sys::Promise::from(pending))
         .await
-        .map_err(|error| node_error(&error, 0))?;
+        .map_err(|error| {
+            destination(request_state, &error);
+            if let Some(state) = request_state {
+                state.remember_cause(&error);
+            }
+            node_error(&error, 0)
+        })?;
     guard.disarm();
 
     let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
@@ -595,6 +665,7 @@ async fn send_node_streaming(
     let js_headers = get(&response, "headers")?;
     let body = get(&response, "body")?;
     if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
+        destination(request_state, &response);
         let retry_after = get(&js_headers, "retry-after")?.as_string();
         return Ok(http_error(status, body.as_string(), retry_after.as_deref()));
     }
@@ -694,6 +765,9 @@ fn node_request(
     }
     if let Some(upload) = options.upload {
         set(&request, "upload", upload.value())?;
+    }
+    if let Some(observer) = options.observer {
+        set(&request, "__observe", observer)?;
     }
     Ok(request)
 }
@@ -995,10 +1069,11 @@ async fn read_chunks(
     total: Option<f64>,
     limit: Option<u64>,
     idle: Option<std::time::Duration>,
+    state: Option<&super::RequestState>,
 ) -> Result<JsValue> {
     let chunks = wasm_streams::ReadableStream::from_raw(body)
         .into_stream()
-        .map(|chunk| chunk.map_err(network_error));
+        .map(|chunk| chunk.map_err(|error| captured_network_error(error, state)));
     let mut chunks = std::pin::pin!(crate::timeouts::idle(chunks, idle));
     let mut parts = Vec::new();
     let mut loaded = 0u32;
@@ -1059,8 +1134,15 @@ async fn send_fetch(
     let receive = async {
         JsFuture::from(fetch_native(&request).map_err(network_error)?)
             .await
-            .map_err(|error| upload_error(session.as_ref(), error))
+            .map_err(|error| {
+                crate::client::observe(progress.observer.as_ref(), "cause", &error);
+                if let Some(state) = &progress.request_state {
+                    state.remember_cause(&error);
+                }
+                upload_error(session.as_ref(), error)
+            })
     };
+    crate::client::observe_text(progress.observer.as_ref(), "transport", "fetch");
     let response: web_sys::Response = match phases.and_then(|phases| phases.response) {
         Some(duration) => {
             crate::runtime::timeout_phase(
@@ -1075,6 +1157,7 @@ async fn send_fetch(
     }
     .unchecked_into();
     let status = response.status();
+    crate::client::observe(progress.observer.as_ref(), "headers", &JsValue::UNDEFINED);
     let headers = response.headers();
     if let (Some(callback), true) = (&progress.upload, body_length > 0) {
         let length = f64::from(body_length);
@@ -1104,14 +1187,17 @@ async fn send_fetch(
                 total,
                 limit,
                 phases.and_then(|phases| phases.idle),
+                progress.request_state.as_deref(),
             )
             .await?,
             download.is_some(),
         ),
         _ => {
-            let buffer = JsFuture::from(response.array_buffer().map_err(network_error)?)
-                .await
-                .map_err(network_error)?;
+            let buffer = JsFuture::from(response.array_buffer().map_err(|error| {
+                captured_network_error(error, progress.request_state.as_deref())
+            })?)
+            .await
+            .map_err(|error| captured_network_error(error, progress.request_state.as_deref()))?;
             (buffer, false)
         }
     };
@@ -1119,6 +1205,9 @@ async fn send_fetch(
     let length = buffer.unchecked_ref::<js_sys::ArrayBuffer>().byte_length();
 
     if !(200..300).contains(&status) && !redirected {
+        if let Some(state) = &progress.request_state {
+            *state.url.borrow_mut() = Some(response.url());
+        }
         let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
         let retry_after = headers.get("retry-after")?;
         return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
@@ -1129,7 +1218,12 @@ async fn send_fetch(
         report_progress(callback, f64::from(length), total);
     }
     let content_type = headers.get("content-type")?.unwrap_or_default();
-    let body = decode_body(&buffer, length, &content_type, body_type)?;
+    let body = decode_body(&buffer, length, &content_type, body_type).map_err(|error| {
+        if let Some(state) = &progress.request_state {
+            *state.url.borrow_mut() = Some(response.url());
+        }
+        error
+    })?;
     let response_headers = js_sys::Object::from_entries(headers.as_ref())?;
     // Node's Headers iterator can yield separate Set-Cookie entries.
     // Preserve the existing API's comma-joined repeated header values.
@@ -1204,6 +1298,20 @@ async fn send_xhr(
             }
         })
     });
+    crate::client::observe_text(progress.observer.as_ref(), "transport", "XMLHttpRequest");
+    let on_headers = progress.observer.clone().map(|observer| {
+        let xhr = xhr.clone();
+        let mut reported = false;
+        Closure::<dyn FnMut()>::new(move || {
+            if !reported && xhr.ready_state() >= 2 {
+                reported = true;
+                crate::client::observe(Some(&observer), "headers", &JsValue::UNDEFINED);
+            }
+        })
+    });
+    if let Some(listener) = &on_headers {
+        xhr.set_onreadystatechange(Some(listener.as_ref().unchecked_ref()));
+    }
     let upload = xhr.upload().map_err(network_error)?;
     if let Some(listener) = &on_upload {
         upload.set_onprogress(Some(listener.as_ref().unchecked_ref()));
@@ -1267,6 +1375,7 @@ struct XhrGuard {
 
 impl Drop for XhrGuard {
     fn drop(&mut self) {
+        self.xhr.set_onreadystatechange(None);
         self.xhr.set_onload(None);
         self.xhr.set_onerror(None);
         self.xhr.set_onprogress(None);
@@ -1307,9 +1416,9 @@ fn report_progress(callback: &js_sys::Function, loaded: f64, total: Option<f64>)
     let _ = callback.call1(&JsValue::UNDEFINED, &event);
 }
 
-/// Whether this is the Node.js entry, which registers its own transport
+/// Whether this Wasm instance has been bound to its Node.js entry's transport.
 pub(crate) fn is_node() -> bool {
-    NODE_TRANSPORT.with(Option::is_some)
+    NODE_BINDINGS.with(|bindings| bindings.get().is_some())
 }
 
 /// Whether `globalThis[name]` exists
@@ -1322,6 +1431,7 @@ async fn send_node(
     request: &js_sys::Object,
     timeout_ms: u64,
     manual: bool,
+    request_state: Option<&super::RequestState>,
 ) -> Result<Attempt<JsValue>> {
     let pending = transport
         .call1(&JsValue::UNDEFINED, request)
@@ -1334,13 +1444,20 @@ async fn send_node(
     // Resolves to the finished `{ status, statusText, ok, url, headers, body }`
     let response = JsFuture::from(js_sys::Promise::from(pending))
         .await
-        .map_err(|error| node_error(&error, timeout_ms))?;
+        .map_err(|error| {
+            destination(request_state, &error);
+            if let Some(state) = request_state {
+                state.remember_cause(&error);
+            }
+            node_error(&error, timeout_ms)
+        })?;
     guard.disarm();
 
     let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let status = get(&response, "status")?.as_f64().unwrap_or(0.0) as u16;
     if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
+        destination(request_state, &response);
         // For error statuses the transport decodes the body as text
         let body = get(&response, "body")?.as_string();
         let retry_after = get(&get(&response, "headers")?, "retry-after")?.as_string();
@@ -1490,5 +1607,27 @@ fn network_error(error: JsValue) -> Error {
     Error::Network {
         message: js_error_message(&error),
         source: None,
+    }
+}
+
+fn captured_network_error(error: JsValue, state: Option<&super::RequestState>) -> Error {
+    if let Some(state) = state {
+        state.remember_cause(&error);
+    }
+    network_error(error)
+}
+
+fn destination(state: Option<&super::RequestState>, value: &JsValue) {
+    if let Some(state) = state {
+        if !value.is_object()
+            || !js_sys::Object::has_own(value.unchecked_ref::<js_sys::Object>(), &"url".into())
+        {
+            return;
+        }
+        if let Ok(url) = js_sys::Reflect::get(value, &"url".into()) {
+            if let Some(url) = url.as_string().filter(|url| !url.is_empty()) {
+                *state.url.borrow_mut() = Some(url);
+            }
+        }
     }
 }

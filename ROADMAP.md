@@ -17,7 +17,7 @@ Dates aren't promised; the order is.
 | [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
-| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Next |
+| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Implemented; release pending |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
@@ -128,21 +128,25 @@ Performance carried over from 2.4.0:
 
 *Goal: protect both the client and the APIs it calls, keep untrusted servers from exhausting memory or reaching internal networks, and show where the time goes.*
 
-| | |
-| --- | --- |
-| Safe POST retries with idempotency keys | [#39](https://github.com/asemqaffaf/rust-fetch/issues/39) |
-| Concurrency limits and client-side rate limiting | [#40](https://github.com/asemqaffaf/rust-fetch/issues/40) |
-| Circuit breaker per origin | [#41](https://github.com/asemqaffaf/rust-fetch/issues/41) |
-| Request timings, lifecycle hooks and W3C trace propagation | [#42](https://github.com/asemqaffaf/rust-fetch/issues/42) |
-| Per-request retry options | [#64](https://github.com/asemqaffaf/rust-fetch/issues/64) |
-| Request method, URL and attempts on errors | [#65](https://github.com/asemqaffaf/rust-fetch/issues/65) |
-| Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) |
-| Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) |
-| Separate connect, response and idle timeouts | [#79](https://github.com/asemqaffaf/rust-fetch/issues/79) |
-| Streaming request bodies (`ReadableStream` uploads) | [#112](https://github.com/asemqaffaf/rust-fetch/issues/112) |
-| Connection-pool and latency metrics | [#113](https://github.com/asemqaffaf/rust-fetch/issues/113) |
-| Security requirements audited and enforced on every adapter | [#119](https://github.com/asemqaffaf/rust-fetch/issues/119) |
-| Reliability: a fault-injection suite, a comparison with other clients, and the gaps it finds | [#157](https://github.com/asemqaffaf/rust-fetch/issues/157) |
+All 13 items are implemented. The npm package remains at 2.6.1 until the separate release is prepared and published. New controls are opt-in; the guides document transport limitations and compatibility details.
+
+| Implemented feature | Issue | Guide or verification |
+| --- | --- | --- |
+| Safe POST retries with idempotency keys | [#39](https://github.com/asemqaffaf/rust-fetch/issues/39) | [Retries and idempotency](docs/guide/timeouts-and-retries.md) |
+| Concurrency limits and client-side rate limiting | [#40](https://github.com/asemqaffaf/rust-fetch/issues/40) | [Load limits](docs/guide/load-limits.md) |
+| Circuit breaker per origin | [#41](https://github.com/asemqaffaf/rust-fetch/issues/41) | [Circuit breakers](docs/guide/circuit-breakers.md) |
+| Request timings, lifecycle hooks and W3C trace propagation | [#42](https://github.com/asemqaffaf/rust-fetch/issues/42) | [Observability and OpenTelemetry recipes](docs/guide/observability.md) |
+| Per-request retry options | [#64](https://github.com/asemqaffaf/rust-fetch/issues/64) | [Timeouts and retries](docs/guide/timeouts-and-retries.md) |
+| Request method, URL and attempts on errors | [#65](https://github.com/asemqaffaf/rust-fetch/issues/65) | [Errors](docs/guide/errors.md) |
+| Debug logging | [#66](https://github.com/asemqaffaf/rust-fetch/issues/66) | [Redaction and logging](docs/guide/observability.md#redaction-and-logging) |
+| Fuzzing the parsers and request validation | [#67](https://github.com/asemqaffaf/rust-fetch/issues/67) | [Six parser targets](wasm-module/fuzz/), [offline JS boundary fuzzing](scripts/fuzz-js-boundary.mjs), [scheduled CI](.github/workflows/fuzz.yml) |
+| Separate connect, response and idle timeouts | [#79](https://github.com/asemqaffaf/rust-fetch/issues/79) | [Timeouts and retries](docs/guide/timeouts-and-retries.md) |
+| Streaming request bodies (`ReadableStream` uploads) | [#112](https://github.com/asemqaffaf/rust-fetch/issues/112) | [Uploads and browser support](docs/guide/uploads.md); [bounded 3 GiB upload tests](wasm-module/js/test/uploads.test.mjs) on both Node transports |
+| Connection-pool and latency metrics | [#113](https://github.com/asemqaffaf/rust-fetch/issues/113) | [Metrics](docs/guide/observability.md#metrics) |
+| Security requirements audited and enforced on every adapter | [#119](https://github.com/asemqaffaf/rust-fetch/issues/119) | [Security](docs/security.md), [six-adapter conformance matrix](CONFORMANCE.md); repository secret scanning and Dependabot security updates enabled |
+| Reliability: fault injection, comparison and gap decisions | [#157](https://github.com/asemqaffaf/rust-fetch/issues/157) | [Reproducible comparison and gap decisions](docs/reliability.md), [raw results](benchmarks/reliability/results.json) |
+
+The conformance suite checks 69 behaviors across six adapters (414 observations). Dedicated tests cover phase timeouts, cancellation, overload, SSE/WebSocket stalls and reconnect storms. CI also checks Rust and Node transport coverage, API compatibility, dependencies and package size. Performance results include the measured observability startup and bundle costs; they do not establish zero overhead. See [development and verification](docs/development.md) and the [changelog](CHANGELOG.md#unreleased).
 
 ## 2.8.0: data and developer experience
 

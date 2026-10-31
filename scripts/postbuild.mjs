@@ -47,7 +47,8 @@ if (!glue.includes(iterable)) {
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
-writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}\n${upload.trimEnd()}\n`);
+const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
+writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}\n${upload.trimEnd()}\n${observability.trimEnd()}\n`);
 types = types.replace(
   /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
   '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',

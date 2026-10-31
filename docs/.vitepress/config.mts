@@ -73,6 +73,7 @@ export default defineConfig({
               { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
               { text: 'Concurrency and rate limits', link: '/guide/load-limits' },
               { text: 'Circuit breakers', link: '/guide/circuit-breakers' },
+              { text: 'Observability', link: '/guide/observability' },
               { text: 'Interceptors', link: '/guide/interceptors' },
             ],
           },
@@ -95,6 +96,7 @@ export default defineConfig({
         items: [
           { text: 'Security', link: '/security' },
           { text: 'Performance', link: '/performance' },
+          { text: 'Reliability under faults', link: '/reliability' },
           { text: 'Transport conformance', link: '/conformance' },
         ],
       },

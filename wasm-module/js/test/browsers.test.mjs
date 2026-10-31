@@ -675,6 +675,51 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       assert.equal(result.ws, 1000);
     });
 
+    it('preserves security defaults, redaction and lifecycle validation under diagnostics', async () => {
+      const result = await inPage(page, async ({ WasmClient }, { origin, wsBase }) => {
+        const errors = [], lifecycle = [];
+        for (const name of ['events', 'websocket']) {
+          const baseUrl = name === 'events' ? origin : wsBase;
+          const path = name === 'events' ? '/sse' : '/live';
+          const client = new WasmClient({ baseUrl });
+          const invalid = (options) => {
+            try { const connection = client[name](baseUrl + path, options); connection.close(); errors.push('accepted'); }
+            catch (error) { errors.push(error.kind + ':' + error.parameter); }
+          };
+          for (const hook of ['onOpen', 'onError', 'onClose', 'onReconnect']) {
+            invalid({ [hook]: 0 });
+            invalid(Object.create({ [hook]: 0 }));
+          }
+          invalid(Object.create({ allowAbsoluteUrls: false }));
+          const options = JSON.parse('{"__proto__":{"allowAbsoluteUrls":true}}');
+          Object.setPrototypeOf(options, { allowAbsoluteUrls: false });
+          invalid(options);
+          let opens = 0, closes = 0;
+          const defaults = Object.freeze({ reconnect: false, onOpen: () => opens++, onClose: () => closes++ });
+          const connection = client[name](path, Object.create(defaults));
+          await connection.opened;
+          if (name === 'websocket') connection.close();
+          await connection.closed;
+          lifecycle.push([opens, closes]);
+        }
+        const redacted = [];
+        for (const placement of ['client', 'request']) {
+          const entries = [];
+          const options = Object.assign(Object.create({ sensitiveHeaders: ['x-api-key'] }), { headers: [['X-Api-Key', 'browser-secret']] });
+          const config = { baseUrl: origin, debug: (entry) => entries.push(entry) };
+          const client = new WasmClient(placement === 'client' ? Object.assign(options, config) : config);
+          await client.get('/echo', placement === 'request' ? options : undefined);
+          redacted.push(entries.find((entry) => entry.type === 'request').headers['x-api-key'] === '[REDACTED]' && !JSON.stringify(entries).includes('browser-secret'));
+        }
+        return { errors, lifecycle, redacted };
+      });
+      const expected = ['onOpen', 'onError', 'onClose', 'onReconnect'].flatMap((hook) => ['InvalidInputError:' + hook, 'InvalidInputError:' + hook]);
+      expected.push('InvalidInputError:url', 'InvalidInputError:url');
+      assert.deepEqual(result.errors, [...expected, ...expected]);
+      assert.deepEqual(result.lifecycle, [[1, 1], [1, 1]]);
+      assert.deepEqual(result.redacted, [true, true]);
+    });
+
     it('opens WebSockets, exchanges messages, reconnects and closes', async () => {
       const result = await inPage(page, async ({ WasmClient }, { wsBase }) => {
         const client = new WasmClient({ baseUrl: `${wsBase}/v1` });

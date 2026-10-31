@@ -197,8 +197,21 @@ const stream = llm.events('/v1/chat/completions', {
 
 Each native Node adapter module owns its connection pool, TLS configuration and request cancellation scope. Worker environments cannot change one another's verification policy or cancel requests with the same numeric ID. Leaving a worker closes its pending native requests, including calls with `timeoutMs: 0`. Within a scope, an active ID cannot be overwritten and a cancelled request's late completion cannot remove its replacement.
 
+Each Wasm instance is bound to its own Node adapter and WebSocket guard during entry-point initialization. Loading another package copy before constructing a client cannot change the first copy's transport or native TLS policy. The global discovery hooks do not select an instance's adapter.
+
 Node response processing uses actual raw header pairs. Inherited `Object.prototype` properties cannot supply framing, decompression, a MIME type or a redirect location; response header objects keep their usual plain-object shape. A response header named `__proto__` is preserved as data.
 
 The Rust client's alternative reqwest pools for per-request connect/redirect settings are capped at 32. Eviction drops only the cached handle; active requests keep their own clones.
 
 Secret scanning and Dependabot security updates are enabled for the GitHub repository. Dependency advisory checks and release provenance remain enforced in CI.
+
+## 2.7.0 audit
+
+- Native TLS policy, pending IDs and cancellation are scoped to an adapter; each Wasm instance explicitly binds its HTTP transport and WebSocket guard. A later package import or replacement of global discovery hooks cannot change that binding.
+- Native idle-origin caches retain at most 256 idle entries during admission/cleanup, while active origin handles keep their semaphore and pool. The Rust client's alternative transport cache remains capped at 32.
+- Optional logs and lifecycle hooks redact URL user info, query strings, credential headers and sensitiveHeaders, and never export bodies/error messages. Trace context requires an explicit destination allowlist and is stripped on cross-origin redirects. Browser automatic tracing refuses redirects.
+- Scheduled parser and JavaScript/Wasm boundary fuzzing runs offline against the actual validation paths. Crashes retain reproducers; a separate scheduled-report job can open an issue without giving pull-request test jobs write permissions.
+- Fault-injection rows run on every adapter in the conformance matrix. Header-buffer limits remain controlled by each runtime: macOS WebKit accepts the tested 1 MiB header, while Linux WebKit rejects it as a `NetworkError`. The matrix records both platform outcomes.
+- Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
+
+See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
