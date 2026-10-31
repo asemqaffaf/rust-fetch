@@ -58,7 +58,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91
         with:
-          tool: wasm-pack
+          tool: wasm-pack@0.15.0 # pinned: wasm-opt, and so the published Wasm, depends on it
       - run: npm ci && npm run build
       - run: node scripts/fuzz-js-boundary.mjs
         env:

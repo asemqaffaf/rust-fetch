@@ -555,11 +555,9 @@ impl Client {
                 state.url.borrow_mut().take();
                 state.attempts.fetch_add(1, Ordering::Relaxed);
             }
-            let once = send();
-            let outcome = match timeout {
-                Some(timeout) => runtime::timeout(timeout, once).await,
-                None => once.await,
-            };
+            // One future type with or without a timeout: two `await`s would
+            // inline the whole attempt into this loop twice.
+            let outcome = runtime::timeout_optional(timeout, send()).await;
 
             #[cfg(target_arch = "wasm32")]
             if retry.observer.is_some() {
@@ -1468,15 +1466,16 @@ impl RequestBuilder {
         } else {
             self.config.timeout
         };
+        // Boxed so the deadline wrapper moves a pointer, not the retry loop.
         crate::timeouts::with_deadline(
             self.effective_deadline(),
-            self.client.execute_retrying(
+            Box::pin(self.client.execute_retrying(
                 url.as_str(),
                 timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref().map(|state| &state.refused),
                 || request.send(),
-            ),
+            )),
         )
         .await
         .map(|(response, _permit)| response)

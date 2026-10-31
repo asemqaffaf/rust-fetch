@@ -14,7 +14,7 @@
 // requests go through it instead: the same rules, implemented in Rust on
 // Tokio threads, so the JS thread only builds requests and decodes bodies.
 import dns from 'node:dns';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
@@ -40,7 +40,12 @@ if (Number(process.versions.v8?.split('.')[0]) < 13 && !process.execArgv.include
  */
 let nativeScope;
 function loadNative() {
-  const path = process.env.RUST_FETCH_NATIVE ?? `./rust-fetch-native.${process.platform}-${process.arch}.node`;
+  const override = process.env.RUST_FETCH_NATIVE;
+  // `0` needs no module lookup, and a missing bundled addon (the npm package
+  // has none) costs a stat rather than a failed require at every import.
+  if (override === '0' || override === '') return undefined;
+  const path = override ?? `./rust-fetch-native.${process.platform}-${process.arch}.node`;
+  if (override === undefined && !existsSync(new URL(path, import.meta.url))) return undefined;
   try {
     const addon = createRequire(import.meta.url)(path);
     // Older local binaries do not understand the current transport contract.

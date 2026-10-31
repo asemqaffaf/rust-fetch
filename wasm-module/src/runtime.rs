@@ -52,6 +52,52 @@ pub(crate) async fn timeout<T>(
     }
 }
 
+/// [`timeout_phase`] when `duration` is set; otherwise just `fut`, as one
+/// future type so that `fut` is compiled into a single poll function.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn timeout_phase_optional<
+    T,
+    E: From<Error>,
+    F: Future<Output = std::result::Result<T, E>>,
+>(
+    duration: Option<Duration>,
+    phase: crate::TimeoutPhase,
+    configured: Duration,
+    fut: F,
+) -> impl Future<Output = std::result::Result<T, E>> {
+    use futures_util::FutureExt;
+    crate::wasm::futures::Deadline::optional(fut, duration).map(move |result| {
+        result.unwrap_or_else(|()| Err(Error::phase_timeout(phase, configured).into()))
+    })
+}
+
+/// [`timeout`] when `duration` is set; otherwise just `fut`, as one future type.
+pub(crate) async fn timeout_optional<T>(
+    duration: Option<Duration>,
+    fut: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match duration {
+            Some(duration) => timeout(duration, fut).await,
+            None => fut.await,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::wasm::futures::Deadline::optional(fut, duration)
+            .await
+            .unwrap_or_else(|()| {
+                Err(Error::Timeout {
+                    duration_ms: duration.map_or(u64::MAX, |d| {
+                        u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+                    }),
+                })
+            })
+    }
+}
+
 /// Milliseconds on an interval clock for budgets and deadlines.
 pub(crate) fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]

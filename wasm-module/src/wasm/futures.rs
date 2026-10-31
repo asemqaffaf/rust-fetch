@@ -179,15 +179,34 @@ pin_project_lite::pin_project! {
     pub(crate) struct Deadline<F> {
         #[pin]
         fut: F,
-        delay: Delay,
+        delay: Option<Delay>,
+        expired: bool,
     }
 }
 
 impl<F> Deadline<F> {
     pub(crate) fn new(fut: F, duration: Duration) -> Self {
+        Self::optional(fut, Some(duration))
+    }
+
+    /// Without a duration this only runs `fut`. Callers that may or may not
+    /// time out use one future type, so `fut` is compiled into one poll path.
+    pub(crate) fn optional(fut: F, duration: Option<Duration>) -> Self {
         Self {
             fut,
-            delay: Delay::new(duration),
+            delay: duration.map(Delay::new),
+            expired: false,
+        }
+    }
+
+    /// Like `optional`, but a zero duration fails at once without polling `fut`
+    /// (a total deadline that already passed must not start the request).
+    pub(crate) fn until(fut: F, remaining: Option<Duration>) -> Self {
+        let expired = remaining.is_some_and(|remaining| remaining.is_zero());
+        Self {
+            fut,
+            delay: remaining.filter(|_| !expired).map(Delay::new),
+            expired,
         }
     }
 }
@@ -197,13 +216,16 @@ impl<F: Future> Future for Deadline<F> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
+        if *this.expired {
+            return Poll::Ready(Err(()));
+        }
         // The work first, as `select` did: a result that's ready wins
         if let Poll::Ready(output) = this.fut.poll(cx) {
             return Poll::Ready(Ok(output));
         }
-        match Pin::new(this.delay).poll(cx) {
-            Poll::Ready(()) => Poll::Ready(Err(())),
-            Poll::Pending => Poll::Pending,
+        match this.delay {
+            Some(delay) => Pin::new(delay).poll(cx).map(Err),
+            None => Poll::Pending,
         }
     }
 }
