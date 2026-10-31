@@ -11,6 +11,7 @@ import { chromium, firefox, webkit } from 'playwright';
 let server, origin, http1, http1Origin;
 const sessions = new Set();
 const requests = new Map();
+const received = new Map(); // upload bytes per URL, counted as they arrive
 before(async () => {
   const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-upload-tls-'));
   const key = join(directory, 'key.pem');
@@ -25,7 +26,7 @@ before(async () => {
     }
     if (req.url === '/redirect') { res.writeHead(307, { location: '/upload' }); res.end(); return; }
     let size = 0;
-    req.on('data', (chunk) => { size += chunk.length; });
+    req.on('data', (chunk) => { size += chunk.length; received.set(req.url, (received.get(req.url) ?? 0) + chunk.length); });
     req.on('end', () => {
       const count = (requests.get(req.url) ?? 0) + 1; requests.set(req.url, count);
       res.writeHead(req.url.startsWith('/retry?') && count === 1 ? 503 : 200, { 'content-type': 'application/json' });
@@ -52,21 +53,28 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
     before(async () => { browser = await engine.launch(); page = await browser.newPage({ ignoreHTTPSErrors: true }); await page.goto(origin); });
     after(async () => browser?.close());
     it('sends incrementally where supported, otherwise rejects explicitly', async () => {
-      const result = await page.evaluate(async () => {
+      const path = `/upload?engine=${name}`;
+      const result = await page.evaluate(async (path) => {
         const { default: init, WasmClient } = await import('/rust_fetch.js'); await init();
         const c = new WasmClient({ retries: 0, timeoutMs: 5000 });
         const control = (await c.get('/protocol')).body.protocol;
         let pulls = 0;
+        let cancelled = false;
         const progress = [];
         try {
-          const response = await c.post('/upload', { body: new ReadableStream({ async pull(controller) {
+          const response = await c.post(path, { body: new ReadableStream({ async pull(controller) {
             await new Promise((r) => setTimeout(r, 1));
             if (pulls++ === 64) controller.close(); else controller.enqueue(new Uint8Array(65536));
-          } }, { highWaterMark: 0 }), onUploadProgress: (p) => progress.push(p) });
+          }, cancel() { cancelled = true; } }, { highWaterMark: 0 }), onUploadProgress: (p) => progress.push(p) });
           return { ok: true, body: response.body, progress, pulls, control };
-        } catch (error) { return { ok: false, kind: error.kind, parameter: error.parameter, message: error.message, pulls, control }; }
+        } catch (error) {
+          const pullsAtRejection = pulls;
+          // A rejected upload must stop the producer, not keep draining it
+          await new Promise((r) => setTimeout(r, 50));
+          return { ok: false, kind: error.kind, parameter: error.parameter, message: error.message, pulls, pullsAtRejection, cancelled, control };
+        }
         finally { c.free(); }
-      });
+      }, path);
       if (name === 'firefox') {
         assert.equal(result.kind, 'InvalidInputError', JSON.stringify(result));
         assert.equal(result.parameter, 'body');
@@ -74,7 +82,13 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       } else if (!networkStreams) {
         assert.equal(result.control, 2, 'ordinary fetch still uses the HTTP/2 server');
         assert.equal(result.kind, 'NetworkError', JSON.stringify(result));
-        assert.equal(result.pulls, 0, 'Soup rejects streaming uploads before reading the producer');
+        // Soup rejects the body in the network process; WebKit may read the
+        // first chunk before that rejection arrives, so that is timing, not
+        // behaviour. What must hold: nothing is sent, and the producer stops.
+        assert.ok(result.pulls <= 1, `at most the chunk WebKit reads before rejecting: ${JSON.stringify(result)}`);
+        assert.equal(result.pulls, result.pullsAtRejection, 'no pulls after the rejection');
+        assert.equal(result.cancelled, true, 'the producer is cancelled');
+        assert.equal(received.get(path) ?? 0, 0, 'no upload bytes reach the server');
       } else {
         assert.equal(result.ok, true, JSON.stringify(result));
         assert.equal(result.body.size, 64 * 65536);
