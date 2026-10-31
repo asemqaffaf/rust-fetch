@@ -2007,6 +2007,9 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
 (() => {
   const Original = WasmClient, states = new WeakMap(), now = () => performance.now();
   const own = (o, k) => o != null && Object.hasOwn(Object(o), k) ? o[k] : undefined;
+  const prop = (o, k) => { try { return o?.[k]; } catch {} };
+  const option = (o, k) => o != null && Object.getPrototypeOf(o) !== Object.prototype ? prop(o, k) : own(o, k);
+  const copy = (o) => ({ __proto__: Object.getPrototypeOf(o ?? {}), ...o });
   const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
   const call = (fn, value) => { try { fn?.(value)?.catch?.(() => {}); } catch {} };
   const origin = (value) => { try { return new URL(value).origin; } catch { return ''; } };
@@ -2017,11 +2020,18 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   function safeHeaders(value, names) {
     const result = Object.create(null);
     if (value == null) return result;
-    const entries = typeof value.entries === 'function' ? value.entries() : Array.isArray(value) ? value : Object.entries(value);
-    for (const [key, v] of entries) {
-      const name = String(key).toLowerCase();
-      result[name] = (names === null || names.has(name)) ? '[REDACTED]' : ['location', 'referer'].includes(name) ? safeUrl(v) : String(v);
-    }
+    try {
+      // Iterate pairs directly so arrays redact by header name.
+      const entries = typeof value[Symbol.iterator] === 'function' ? value : Object.entries(value);
+      for (const pair of entries) {
+        if (!Array.isArray(pair)) continue;
+        const [key, v] = pair;
+        if (typeof key !== 'string' || v == null) continue;
+        const name = key.toLowerCase();
+        if (names === null || names.has(name)) result[name] = '[REDACTED]';
+        else if (['string', 'number', 'boolean'].includes(typeof v)) result[name] = ['location', 'referer'].includes(name) ? safeUrl(v) : String(v);
+      }
+    } catch { return Object.create(null); } // The core validates malformed headers.
     return result;
   }
   const metrics = () => ({ started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
@@ -2102,13 +2112,14 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       const promise = raw.apply(client, args);
       return c.redactUrl ? promise.catch((e) => { throw context(e, method, inputUrl, 0, c.redactUrl); }) : promise;
     }
-    const options = input && typeof input === 'object' ? Object.assign(Object.create(Object.getPrototypeOf(input)), input) : input == null ? {} : input;
+    const options = input && typeof input === 'object' ? copy(input) : input == null ? {} : input;
     let url = resolve(state.options, inputUrl, own(options, 'params'));
     const start = now(), timings = { queuedMs: 0, retryDelayMs: 0, attempts: [], totalMs: 0 };
     let queue, last, ended = false, cause;
     const summary = (type, extra = {}) => ({ type, method: typeof method === 'string' && /^[A-Za-z]{1,16}$/.test(method) ? method.toUpperCase() : 'UNKNOWN', url: safeUrl(url, c.redactUrl), ...extra });
-    const sensitive = new Set(['authorization', 'cookie', 'proxy-authorization', 'set-cookie', ...(Array.isArray(own(state.options, 'sensitiveHeaders')) ? own(state.options, 'sensitiveHeaders') : []), ...(Array.isArray(own(options, 'sensitiveHeaders')) ? own(options, 'sensitiveHeaders') : [])].map((n) => String(n).toLowerCase()));
-    const hideAllHeaders = own(options, 'sensitiveHeaders') != null && !Array.isArray(own(options, 'sensitiveHeaders'));
+    const requested = option(options, 'sensitiveHeaders');
+    const sensitive = new Set(['authorization', 'cookie', 'proxy-authorization', 'set-cookie', ...(state.options.sensitiveHeaders ?? []), ...(Array.isArray(requested) ? requested.filter((n) => typeof n === 'string') : [])].map((n) => n.toLowerCase()));
+    const hideAllHeaders = requested != null && (!Array.isArray(requested) || requested.some((n) => typeof n !== 'string'));
     const m = state.metrics;
     let bucket;
     if (m) {
@@ -2118,7 +2129,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       bucket = m.origins.get(key); if (bucket) { bucket.started++; bucket.active++; }
     }
     call(c.onRequestStart, summary('requestStart'));
-    log(c, summary('request', { headers: { ...safeHeaders(own(state.options, 'headers'), hideAllHeaders ? null : sensitive), ...safeHeaders(name === 'request' ? args[2] : undefined, hideAllHeaders ? null : sensitive), ...safeHeaders(own(options, 'headers'), hideAllHeaders ? null : sensitive) } }));
+    log(c, summary('request', { headers: { ...safeHeaders(state.options.headers, hideAllHeaders ? null : sensitive), ...safeHeaders(name === 'request' ? args[2] : undefined, hideAllHeaders ? null : sensitive), ...safeHeaders(option(options, 'headers'), hideAllHeaders ? null : sensitive) } }));
     const observe = (type, value) => {
       if (ended) return;
       const t = now();
@@ -2192,10 +2203,11 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       super(options);
       // Match the core's configuration snapshot without retaining unknown
       // client options (which may contain large application objects).
+      const sensitiveHeaders = option(options, 'sensitiveHeaders');
       state.options = {
-        baseUrl: own(options, 'baseUrl'),
-        headers: state.config.debug ? safeHeaders(own(options, 'headers'), new Set()) : undefined,
-        sensitiveHeaders: Array.isArray(own(options, 'sensitiveHeaders')) ? [...options.sensitiveHeaders] : undefined,
+        baseUrl: option(options, 'baseUrl'),
+        headers: state.config.debug ? safeHeaders(option(options, 'headers'), new Set()) : undefined,
+        sensitiveHeaders: Array.isArray(sensitiveHeaders) ? [...sensitiveHeaders] : undefined,
       };
       states.set(this, state);
     }
@@ -2232,16 +2244,17 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       if (name === 'websocket') target = target.replace(/^http(s?):/, 'ws$1:');
       const method = name === 'websocket' ? 'GET' : own(options, 'method') ?? 'GET';
       let attempts = 0;
-      const init = { ...options };
+      const init = copy(options);
       if (name === 'events' && c.propagateTrace) init.__trace = (target) => c.traceOrigins.has(origin(target)) ? trace(c) : undefined;
       for (const hook of ['onOpen', 'onError', 'onClose', 'onReconnect']) {
-        const app = own(options, hook);
-        init[hook] = (event) => {
+        const app = prop(init, hook);
+        if (app != null && typeof app !== 'function') continue;
+        Object.defineProperty(init, hook, { value: (event) => {
           if (hook === 'onReconnect') attempts++;
           if (hook === 'onError') context(event, method, target, Math.max(1, attempts), c.redactUrl);
           log(c, { type: name + ':' + hook.slice(2).toLowerCase(), method, url: safeUrl(target, c.redactUrl), error: hook === 'onError' ? { kind: event?.kind } : undefined });
           return app?.(event);
-        };
+        }, enumerable: true });
       }
       try {
         const connection = raw.call(this, url, init);

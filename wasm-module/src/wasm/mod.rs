@@ -2326,6 +2326,11 @@ impl Headers {
         };
 
         for pair in pairs {
+            if !js_sys::Array::is_array(&pair) {
+                return Err(JsValue::from_str(
+                    "headers must contain [name, value] pairs",
+                ));
+            }
             let pair = js_sys::Array::from(&pair);
             let name = pair
                 .get(0)

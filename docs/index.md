@@ -33,7 +33,7 @@ features:
     details: ReadableStream bodies, newline-delimited JSON and Server-Sent Events for LLM APIs, upload and download progress, and WebSockets with reconnection on the same client.
     link: /guide/streaming
   - title: One core, held to the same results
-    details: The request policy is Rust compiled to WebAssembly. A conformance suite runs the same 52 behaviours on node:http, the native addon, fetch() and real browsers, and CI fails on any undocumented difference.
+    details: The request policy is Rust compiled to WebAssembly. A conformance suite runs the same 69 behaviours on node:http, the native addon, fetch() and real browsers, and CI fails on any undocumented difference.
     link: /conformance
 ---
 

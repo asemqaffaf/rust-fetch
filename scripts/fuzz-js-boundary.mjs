@@ -6,7 +6,7 @@ let seed = Number(process.env.FUZZ_SEED ?? 270067) >>> 0;
 const initial = seed, count = Number(process.env.FUZZ_CASES ?? 2000);
 const random = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
 const pick = (xs) => xs[Math.floor(random() * xs.length)];
-const values = [undefined, null, false, true, -1, 0, 1, NaN, Infinity, '', '\0\r\n', '__proto__', {}, [], ['x', 'y'], { nested: {} }, 1n];
+const values = [undefined, null, false, true, -1, 0, 1, NaN, Infinity, '', '\0\r\n', '__proto__', {}, [], ['x', 'y'], [null], [undefined], [42], [[1, 'x']], { nested: {} }, 1n];
 const previous = globalThis.fetch;
 globalThis.fetch = () => Promise.reject(new TypeError('offline fuzz transport'));
 try {

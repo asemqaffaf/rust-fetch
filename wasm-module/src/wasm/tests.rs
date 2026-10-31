@@ -83,6 +83,10 @@ fn invalid_headers_are_rejected_not_dropped() {
         r#""x-a: 1""#,
         r#"{ "x-a": { nested: 1 } }"#,
         r#"[[1, "x"]]"#,
+        "[null]",
+        "[undefined]",
+        r#"["x-a"]"#,
+        "[42]",
         "42",
     ] {
         assert_eq!(
