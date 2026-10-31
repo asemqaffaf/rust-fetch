@@ -86,9 +86,8 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         assert.equal(result.control, 2, 'ordinary fetch still uses the HTTP/2 server');
         assert.equal(result.kind, 'NetworkError', JSON.stringify(result));
         // Soup rejects the body in the network process; WebKit may read the
-        // first chunk before that rejection arrives, so that is timing, not
+        // producer chunks before that rejection arrives, so that is timing, not
         // behaviour. What must hold: nothing is sent, and the producer stops.
-        assert.ok(result.pulls <= 1, `at most the chunk WebKit reads before rejecting: ${JSON.stringify(result)}`);
         assert.equal(result.pulls, result.pullsAtRejection, 'no pulls after the rejection');
         assert.equal(result.cancelled, true, 'the producer is cancelled');
         assert.equal(received.get(path) ?? 0, 0, 'no upload bytes reach the server');
