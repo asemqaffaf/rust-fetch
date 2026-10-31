@@ -33,6 +33,7 @@ Early Node.js 20 releases (20.11 tested) fail to connect when offered more than 
 | `headers` | Handshake headers, merged over the client's. Node.js only: browsers don't allow WebSocket headers, so passing them there throws an `InvalidInputError`, and the client's headers aren't sent |
 | `dispatcher` | Node.js only: an [undici](https://undici.nodejs.org) dispatcher for the connection, e.g. `new ProxyAgent('http://proxy:3128')` to connect through a proxy (see below). Browsers use the system's proxy settings, so passing one there throws an `InvalidInputError` |
 | `timeoutMs` | Time allowed for each connection attempt; defaults to the client's `timeoutMs`, `0` disables it |
+| `idleTimeoutMs` | Maximum silence after opening or between received messages; inherits the client's `idleTimeoutMs`, `0` disables it. Expiry reports `TimeoutError` with `phase: 'idle'` and follows `reconnect`. No heartbeat messages are sent |
 | `reconnect` | `true`, a maximum number of attempts in a row, or `{ maxRetries, initialDelayMs, maxDelayMs, multiplier }` (defaults: unlimited, 1000, 30000, 2). Off by default |
 | `messageType` | `'auto'` (default: text as strings, binary as `Uint8Array`) or `'json'` |
 | `maxQueuedMessages`, `maxQueuedBytes` | Limits on what `send()` queues before the connection opens or while it reconnects (see above). Default: no limit |

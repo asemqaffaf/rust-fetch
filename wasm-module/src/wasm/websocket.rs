@@ -57,6 +57,8 @@ export interface WebSocketReconnectInfo {
 }
 
 export interface WebSocketOptions {
+  /** Maximum silence after open/between received messages. 0 disables; defaults to the client's idleTimeoutMs. No heartbeat messages are sent. */
+  idleTimeoutMs?: number;
   /** Subprotocols to offer */
   protocols?: string | string[];
   params?: QueryParams;
@@ -206,6 +208,7 @@ struct Settings {
     /// headers) `{ protocols, headers }`
     protocols: JsValue,
     timeout: Option<Duration>,
+    idle_timeout: Option<Duration>,
     reconnect: Option<RetryConfig>,
     json: bool,
     /// Node.js: `allowPrivateNetwork: false`
@@ -276,6 +279,7 @@ struct Inner {
     attempt: Option<Attempt>,
     /// The connect timeout, or the delay before reconnecting
     timer: Option<Timer>,
+    idle_timer: Option<Timer>,
     /// Messages sent before the connection opened
     queue: Vec<JsValue>,
     /// Their total size, as `data_length` counts it
@@ -440,6 +444,7 @@ impl WasmClient {
                 state: State::Connecting,
                 attempt: None,
                 timer: None,
+                idle_timer: None,
                 queue: Vec::new(),
                 queued_bytes: 0.0,
                 failures: 0,
@@ -609,6 +614,10 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         url,
         protocols,
         timeout,
+        idle_timeout: match prop(options, "idleTimeoutMs") {
+            Some(value) => super::parse_phase_duration(&value, "idleTimeoutMs")?,
+            None => config.phases.idle,
+        },
         reconnect,
         json,
         block_private_network: block_private_network && super::transport::is_node(),
@@ -790,10 +799,12 @@ fn opened(shared: &Rc<Shared>) {
     if let Some(resolve) = resolve {
         let _ = resolve.call0(&JsValue::UNDEFINED);
     }
+    arm_idle(shared);
     call(shared.settings.on_open.as_ref(), None);
 }
 
 fn message(shared: &Rc<Shared>, data: &JsValue) {
+    arm_idle(shared);
     let data = if let Some(buffer) = data.dyn_ref::<js_sys::ArrayBuffer>() {
         js_sys::Uint8Array::new(buffer).into()
     } else if shared.settings.json && data.is_string() {
@@ -812,6 +823,27 @@ fn message(shared: &Rc<Shared>, data: &JsValue) {
         data.clone()
     };
     call(shared.settings.on_message.as_ref(), Some(&data));
+}
+
+/// Detect a silent connection without sending application-protocol messages.
+fn arm_idle(shared: &Rc<Shared>) {
+    let Some(duration) = shared.settings.idle_timeout else {
+        return;
+    };
+    let weak = Rc::downgrade(shared);
+    let timer = Timer::new(duration, move || {
+        if let Some(shared) = weak.upgrade() {
+            if shared.inner.borrow().state == State::Open {
+                failed(
+                    &shared,
+                    Error::phase_timeout(crate::TimeoutPhase::Idle, duration),
+                    1006,
+                    "WebSocket idle timeout".into(),
+                );
+            }
+        }
+    });
+    shared.inner.borrow_mut().idle_timer = Some(timer);
 }
 
 /// The socket closed
@@ -856,6 +888,7 @@ fn failed(shared: &Rc<Shared>, error: Error, code: u16, reason: String) {
         let mut inner = shared.inner.borrow_mut();
         let attempt = inner.attempt.take();
         inner.timer = None;
+        inner.idle_timer = None;
         match &shared.settings.reconnect {
             Some(config) if inner.failures < config.max_retries => {
                 inner.failures += 1;
@@ -901,6 +934,7 @@ fn close(shared: &Rc<Shared>, code: u16, reason: String) {
     let mut connecting = None;
     let open_socket = {
         let mut inner = shared.inner.borrow_mut();
+        inner.idle_timer = None;
         match inner.state {
             State::Closing | State::Closed => return,
             State::Open => {
@@ -949,6 +983,7 @@ fn finish_with(
             return;
         }
         inner.state = State::Closed;
+        inner.idle_timer = None;
         inner.queue.clear();
         inner.queued_bytes = 0.0;
         inner.resolve_opened = None;

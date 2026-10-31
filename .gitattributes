@@ -1,0 +1,2 @@
+# Fuzz seeds contain arbitrary bytes; preserve CRLF and other parser inputs.
+wasm-module/fuzz/corpus/** binary

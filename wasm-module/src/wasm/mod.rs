@@ -170,7 +170,81 @@ export interface CircuitChange {
   to: CircuitState;
 }
 
+export interface AttemptTimings {
+  startMs: number;
+  /** null when the runtime cannot observe headers separately. */
+  ttfbMs: number | null;
+  totalMs: number;
+  status?: number;
+  error?: RustFetchErrorKind;
+  transport?: 'native' | 'node:http' | 'fetch' | 'XMLHttpRequest';
+  connectMs?: number | null;
+  tlsMs?: number | null;
+  connectionReused?: boolean | null;
+}
+export interface RequestTimings {
+  queuedMs: number;
+  retryDelayMs: number;
+  attempts: AttemptTimings[];
+  totalMs: number;
+}
+export interface RequestLifecycle {
+  type: string;
+  method: string;
+  /** Credentials, fragment and query are removed before hooks/loggers see it. */
+  url: string;
+  status?: number;
+  error?: { kind?: RustFetchErrorKind; status?: number; phase?: string };
+  timings?: RequestTimings;
+}
+export interface DebugEntry extends RequestLifecycle {
+  headers?: Record<string, string>;
+  attempt?: number;
+  delayMs?: number;
+  reason?: RustFetchErrorKind;
+  retryAfterMs?: number;
+  location?: string;
+  totalMs?: number;
+}
+export interface TraceContext { traceparent: string; tracestate?: string }
+export interface PoolStats {
+  origin: string;
+  opened: number;
+  closed: number;
+  idle: number;
+  busy: number;
+  queued?: number;
+}
+export interface ClientStats {
+  requests: { started: number; completed: number; failed: number; active: number };
+  attempts: number;
+  retries: number;
+  latency: { count: number; minMs: number | null; maxMs: number | null; meanMs: number | null; p50Ms: number | null; p95Ms: number | null; p99Ms: number | null; sampleCount: number };
+  origins: Record<string, { started: number; completed: number; failed: number; active: number }>;
+  /** Node pools are shared by clients in this adapter module. null in browsers. */
+  pools: { queued: number; native: PoolStats[] | null; http: PoolStats[] } | null;
+}
+export interface WasmClient {
+  /** Enable collection from this call onward (or configure metrics: true); returns a detached snapshot. */
+  stats(): ClientStats;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
+  /** Collect attempt and logical-request timings. Off by default. */
+  timings?: boolean;
+  /** Collect bounded per-client latency/count samples from construction. Off by default. */
+  metrics?: boolean;
+  onRequestStart?: (entry: RequestLifecycle) => void;
+  onRequestEnd?: (entry: RequestLifecycle) => void;
+  /** Structured, redacted logging; Node also supports DEBUG=rust-fetch. */
+  debug?: boolean | ((entry: DebugEntry) => void);
+  /** Apply a custom redactor to error URLs and already-sanitized hook/log URLs. */
+  redactUrl?: (url: string) => string;
+  /** Automatic W3C propagation is off unless explicitly enabled with an origin allowlist. */
+  propagateTrace?: boolean;
+  traceOrigins?: string[];
+  traceContext?: () => TraceContext | undefined;
+
   /** Base URL that relative request URLs are appended to, e.g. `https://api.example.com/v1` */
   baseUrl?: string;
   /** Headers sent with every request; per-request headers with the same name replace them */
@@ -357,6 +431,8 @@ export type ResponseFulfilledInterceptor = (response: HttpResponse) => HttpRespo
 export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpResponse | Promise<HttpResponse>;
 
 export interface HttpResponse<T = any> {
+  /** Enabled by timings/hooks; streamed totals finalize at EOF/cancel. */
+  timings?: RequestTimings;
   status: number;
   statusText: string;
   /** `true` for 2xx responses (other statuses reject with an `HttpError`); `false` for a redirect resolved with `redirect: 'manual'` */
@@ -380,6 +456,11 @@ export type RustFetchErrorKind =
   | 'CancelledError';
 
 export interface RustFetchError extends Error {
+  method?: string;
+  url?: string;
+  attempts?: number;
+  cause?: unknown;
+  timings?: RequestTimings;
   name: RustFetchErrorKind;
   kind: RustFetchErrorKind;
   /** HttpError: response status */
@@ -775,7 +856,8 @@ impl WasmClient {
                 BodyMode::Auto(into_js(body)),
                 into_js(options),
             ),
-            Err(error) => rejected(error),
+            Err(error) => js_sys::Promise::reject(&error_context(error.into(), &method, &url, 0))
+                .unchecked_into(),
         }
     }
 
@@ -791,7 +873,15 @@ impl WasmClient {
         };
         match method {
             Ok(method) => self.perform_init(method, url, init),
-            Err(error) => rejected(error),
+            Err(error) => js_sys::Promise::reject(&error_context(
+                error.into(),
+                &prop(&init, "method")
+                    .and_then(|v| v.as_string())
+                    .unwrap_or_default(),
+                &url,
+                0,
+            ))
+            .unchecked_into(),
         }
     }
 }
@@ -811,9 +901,19 @@ impl WasmClient {
         options: JsValue,
     ) -> ResponsePromise {
         let client = self.inner.clone();
+        let context_url = url.clone();
+        let context_method = method.to_reqwest();
         let deadline = match request_deadline(&options, client.config.phases.deadline) {
             Ok(deadline) => deadline.map(Box::new),
-            Err(error) => return rejected(error),
+            Err(error) => {
+                return js_sys::Promise::reject(&error_context(
+                    error.into(),
+                    context_method.as_str(),
+                    &context_url,
+                    0,
+                ))
+                .unchecked_into()
+            }
         };
         // Snapshot, so interceptors added while a request is in flight don't affect it
         let (request_interceptors, response_interceptors) = {
@@ -828,9 +928,18 @@ impl WasmClient {
                     request = request.intercept(interceptor).await?;
                 }
                 request.deadline = deadline;
-                send(&client, request, &options)
-                    .await
-                    .map_err(JsValue::from)
+                // Without interceptors the outer error fallback already owns
+                // this URL. Copy only when an interceptor could have changed it.
+                let intercepted_url =
+                    (!request_interceptors.is_empty()).then(|| request.url.clone());
+                send(
+                    &client,
+                    request,
+                    &options,
+                    intercepted_url.as_deref().unwrap_or(&context_url),
+                )
+                .await
+                .map_err(JsValue::from)
             };
             use futures_util::FutureExt;
             let result = crate::timeouts::with_deadline(absolute, result.map(Ok::<_, Error>))
@@ -845,7 +954,7 @@ impl WasmClient {
                     (unhandled, _, _) => unhandled,
                 };
             }
-            result
+            result.map_err(|error| error_context(error, context_method.as_str(), &context_url, 0))
         })
         .unchecked_into()
     }
@@ -1040,21 +1149,83 @@ impl<'a> Options<'a> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct RequestState {
+    pub(crate) refused: std::sync::atomic::AtomicBool,
+    pub(crate) attempts: std::sync::atomic::AtomicU32,
+    pub(crate) url: RefCell<Option<String>>,
+    pub(crate) cause: RefCell<Option<JsValue>>,
+}
+
+impl RequestState {
+    pub(crate) fn remember_cause(&self, error: &JsValue) {
+        *self.cause.borrow_mut() = Some(error.clone());
+    }
+
+    pub(crate) fn with_cause(&self, error: JsValue) -> JsValue {
+        if let Some(cause) = self.cause.borrow().as_ref() {
+            let _ = js_sys::Reflect::set(&error, &"cause".into(), cause);
+        }
+        error
+    }
+}
+
+pub(crate) struct DestinationGuard<'a> {
+    pub(crate) state: Option<&'a RequestState>,
+    pub(crate) url: &'a str,
+    pub(crate) success: bool,
+}
+impl Drop for DestinationGuard<'_> {
+    fn drop(&mut self) {
+        if !self.success {
+            if let Some(state) = self.state {
+                let mut url = state.url.borrow_mut();
+                if url.is_none() {
+                    *url = Some(self.url.to_owned());
+                }
+            }
+        }
+    }
+}
+
+fn error_context(error: JsValue, method: &str, url: &str, attempts: u32) -> JsValue {
+    if error.is_object() {
+        for (name, value) in [
+            ("method", method.into()),
+            ("url", url.into()),
+            ("attempts", attempts.into()),
+        ] {
+            if !js_sys::Object::has_own(error.unchecked_ref::<js_sys::Object>(), &name.into()) {
+                let _ = js_sys::Reflect::set(&error, &name.into(), &value);
+            }
+        }
+    }
+    error
+}
+
 /// Build, send and convert a request coming from JavaScript; an error says
 /// whether the retry budget refused to retry it (`retryBudgetExhausted`)
 pub(crate) fn send<'a>(
     client: &'a Client,
     request: JsRequest,
     options: &'a JsValue,
+    original_url: &'a str,
 ) -> impl std::future::Future<Output = std::result::Result<JsValue, JsValue>> + 'a {
     use futures_util::TryFutureExt;
-    let refused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let refused = std::sync::Arc::new(RequestState::default());
+    let method = request.method.to_reqwest();
     send_request(client, request, options, &refused).map_err(move |error| {
-        let error = JsValue::from(error);
-        if refused.load(std::sync::atomic::Ordering::Relaxed) {
+        let error = refused.with_cause(JsValue::from(error));
+        if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
         }
-        error
+        let resolved = refused.url.borrow();
+        error_context(
+            error,
+            method.as_str(),
+            resolved.as_deref().unwrap_or(original_url),
+            refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
+        )
     })
 }
 
@@ -1062,7 +1233,7 @@ pub(crate) fn send_request<'a>(
     client: &'a Client,
     request: JsRequest,
     options: &'a JsValue,
-    #[allow(unused_variables)] refused: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[allow(unused_variables)] refused: &std::sync::Arc<RequestState>,
 ) -> impl std::future::Future<Output = Result<JsValue>> + 'a {
     use futures_util::future::Either;
     let options = Options::new(options);
@@ -1073,6 +1244,7 @@ pub(crate) fn send_request<'a>(
     #[cfg(target_arch = "wasm32")]
     {
         builder.retry_refused = Some(std::sync::Arc::clone(refused));
+        builder.observer = options.get("__observe").and_then(|v| v.dyn_into().ok());
     }
     let deadline = builder.effective_deadline();
     builder.deadline = deadline.map(Box::new);
@@ -1112,6 +1284,14 @@ async fn send_prepared(
     }
 
     builder = apply_body(builder, body).await?;
+    #[cfg(target_arch = "wasm32")]
+    builder.apply_trace(options.get("__trace").and_then(|v| v.dyn_into().ok()))?;
+    #[cfg(target_arch = "wasm32")]
+    crate::client::observe_text(
+        builder.observer.as_ref(),
+        "method",
+        builder.config.method.to_reqwest().as_str(),
+    );
     if let BodyType::Stream | BodyType::Ndjson = body_type {
         #[cfg(target_arch = "wasm32")]
         let has_upload = builder.upload.is_some();
@@ -1145,6 +1325,8 @@ async fn send_prepared(
         let callbacks = transport::ProgressCallbacks {
             upload: upload_progress,
             download: progress,
+            observer: builder.observer.clone(),
+            request_state: builder.retry_refused.clone(),
         };
         abortable(signal, builder.send_js(body_type, callbacks)).await
     }
@@ -1242,7 +1424,7 @@ pub(crate) fn request_builder(
         deadline,
     } = request;
     let mut builder = client
-        .request(method, &url)
+        .request_owned(method, url)
         // Decode here rather than in Rust, so JSON is parsed by the JS engine
         .response_format(ResponseFormat::Binary)
         .headers(headers);
@@ -1769,7 +1951,7 @@ pub(crate) fn parse_method(method: &str) -> Result<Method> {
     }
 }
 
-fn parse_headers(value: &JsValue) -> Result<Headers> {
+pub(crate) fn parse_headers(value: &JsValue) -> Result<Headers> {
     Headers::from_js(value).map_err(|e| invalid("headers", &js_error_message(&e)))
 }
 
@@ -2144,6 +2326,11 @@ impl Headers {
         };
 
         for pair in pairs {
+            if !js_sys::Array::is_array(&pair) {
+                return Err(JsValue::from_str(
+                    "headers must contain [name, value] pairs",
+                ));
+            }
             let pair = js_sys::Array::from(&pair);
             let name = pair
                 .get(0)

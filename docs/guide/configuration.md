@@ -42,6 +42,11 @@ Every client option:
 | `maxConcurrent`, `rateLimit`, `limitsPerOrigin` | off, off, `false` | Limit attempts in flight and their rate, globally or per origin; see [Load limits](/guide/load-limits) |
 | `maxPendingRequests` | no limit | Refuse requests beyond this many unfinished ones; see [Load shedding](/security#limiting-pending-requests-load-shedding) |
 | `maxLineBytes`, `maxEventBytes` | no limit | Longest NDJSON or SSE line, and largest SSE event; see [Limiting line length](/security#limiting-line-length) |
+| `timings`, `metrics` | `false` | Request/attempt timings and bounded client statistics; see [Observability](/guide/observability) |
+| `onRequestStart`, `onRequestEnd` | none | Isolated logical-request lifecycle observers, with sanitized destinations |
+| `debug` | `false`, or Node's `DEBUG=rust-fetch` | Redacted structured diagnostics; `true` uses `console.debug`, or supply a callback |
+| `redactUrl` | none | Synchronous URL redactor for errors and sanitized diagnostic URLs |
+| `propagateTrace`, `traceOrigins`, `traceContext` | `false`, none, none | Automatic W3C tracing requires an exact HTTP origin allowlist and a synchronous context provider; see [Trace context](/guide/observability#w3c-trace-context) |
 | `proxy` | none | Node.js; see [Proxies](#proxies) |
 | `credentials`, `mode`, `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity` | as in `fetch()` | Browsers; see [Browser request options](/guide/requests#browser-request-options) |
 

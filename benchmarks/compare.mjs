@@ -43,9 +43,12 @@ if (process.env.BENCH_WORKER) {
     // rust-fetch's own cost per request, with a transport that answers at
     // once: no network, server or decoding, so it's steady on a busy runner
     const response = { status: 200, statusText: 'OK', ok: true, url: 'http://x/', headers: {}, body: { ok: true } };
-    globalThis[Symbol.for('rust-fetch.transport')] = () => Object.assign(Promise.resolve(response), { cancel() {} });
+    const transport = () => Object.assign(Promise.resolve(response), { cancel() {} });
+    globalThis[Symbol.for('rust-fetch.transport')] = transport;
     const m = await import(pathToFileURL(resolve(pkg, 'rust_fetch.js')).href);
     m.initSync({ module: readFileSync(resolve(pkg, 'rust_fetch_bg.wasm')) });
+    // Current builds bind per instance; the global is only for older baselines.
+    m.__bindNodeTransport?.(transport, () => undefined);
     const client = new m.WasmClient();
     for (let i = 0; i < 20_000; i++) await client.get('http://x/');
     const start = performance.now();

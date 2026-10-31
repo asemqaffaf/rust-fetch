@@ -13,6 +13,10 @@ categories = ["wasm", "web-programming", "web-programming::http-client"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Private harness entry points; never enabled in the published Wasm build.
+fuzzing = []
+
 [dependencies]
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }

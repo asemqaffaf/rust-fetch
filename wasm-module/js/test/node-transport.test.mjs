@@ -5,7 +5,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import dns from 'node:dns';
@@ -13,7 +13,7 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import zlib from 'node:zlib';
 import { Worker } from 'node:worker_threads';
@@ -169,11 +169,51 @@ async function withEnv(vars, fn) {
 const addon = new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url);
 const nativeExpected = process.env.RUST_FETCH_NATIVE !== '0' && existsSync(addon);
 
+function packageCopy(dir, name) {
+  const copy = join(dir, name);
+  mkdirSync(copy);
+  for (const file of ['node.js', 'rust_fetch.js', 'rust_fetch_bg.wasm', 'package.json']) {
+    copyFileSync(new URL(`../../pkg/${file}`, import.meta.url), join(copy, file));
+  }
+  return pathToFileURL(join(copy, 'node.js')).href;
+}
+
 describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () => {
   it(nativeExpected ? 'uses the native addon' : 'uses node:http without the native addon', async () => {
     // node:http adds `connection: keep-alive`; the native transport doesn't need to
     const { headers } = (await client().get(server.url('/echo'))).body;
     assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
+  });
+
+  it('keeps package adapters bound when global discovery hooks change', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-copies-'));
+    try {
+      const copies = [packageCopy(directory, 'first'), packageCopy(directory, 'second')];
+      const source = `
+        import assert from 'node:assert/strict';
+        const modules = [];
+        for (const copy of ${JSON.stringify(copies)}) modules.push(await import(copy));
+        const foreign = () => { throw new Error('foreign adapter'); };
+        globalThis[Symbol.for('rust-fetch.transport')] = foreign;
+        globalThis[Symbol.for('rust-fetch.websocketGuard')] = foreign;
+        const glue = await import(new URL('./rust_fetch.js', ${JSON.stringify(copies[0])}));
+        assert.throws(() => glue.__bindNodeTransport(foreign, foreign), /already bound/);
+        for (const { WasmClient } of modules) {
+          const client = new WasmClient({ retries: 0 });
+          if (typeof WebSocket === 'function') {
+            assert.throws(() => client.websocket('ws://127.0.0.1:59999/', { allowPrivateNetwork: false }),
+              e => e.kind === 'NetworkError' && /^Network error: Blocked: /.test(e.message));
+          }
+          const response = await client.get(${JSON.stringify(server.url('/echo'))});
+          assert.equal(response.body.method, 'GET');
+          assert.equal(response.body.headers['user-agent'], 'rust-fetch');
+        }
+      `;
+      await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], {
+        env: { ...process.env, RUST_FETCH_NATIVE: nativeExpected ? fileURLToPath(addon) : '0' },
+        timeout: 10000,
+      });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
   it('falls back when a locally built addon has an older wire protocol', async () => {
@@ -370,6 +410,16 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(error.kind, 'NetworkError');
     });
 
+    it('measures TLS setup and reuse on observed node:https requests', async () => {
+      await withEnv({ NODE_TLS_REJECT_UNAUTHORIZED: '0' }, async () => {
+        const c = new WasmClient({ timings: true });
+        const first = await c.get(url(), { onDownloadProgress() {} });
+        assert.ok(first.timings.attempts[0].tlsMs >= 0);
+        const next = await c.get(url(), { onDownloadProgress() {} });
+        assert.equal(next.timings.attempts[0].connectionReused, true);
+      });
+    });
+
     it('keeps insecure native TLS configuration out of other scopes', { skip: !nativeExpected }, async () => {
       const source = `
         const native = require(${JSON.stringify(fileURLToPath(addon))});
@@ -383,6 +433,35 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       const [insecure, secure] = JSON.parse(stdout);
       assert.equal(insecure.status, 200);
       assert.ok(secure.error, 'loading an insecure scope first must not disable verification in a secure scope');
+    });
+
+    it('keeps native TLS policies isolated across package copies in either import order', { skip: !nativeExpected }, async () => {
+      const copies = { secure: packageCopy(dir, 'secure'), insecure: packageCopy(dir, 'insecure') };
+      for (const order of [['secure', 'insecure'], ['insecure', 'secure']]) {
+        const source = `
+          const copies = ${JSON.stringify(copies)}, modules = {};
+          for (const name of ${JSON.stringify(order)}) {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = name === 'secure' ? '1' : '0';
+            modules[name] = await import(copies[name]);
+          }
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1';
+          // Construct neither client until both adapters have registered.
+          const results = [];
+          for (const name of ['secure', 'insecure']) {
+            const client = new modules[name].WasmClient({ timeoutMs: 2000, retries: 0 });
+            results.push(await client.get(${JSON.stringify(url())}).then(
+              r => ({ status: r.status, native: r.body.headers.connection === undefined }),
+              e => ({ error: e.kind }),
+            ));
+          }
+          console.log(JSON.stringify(results));
+        `;
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], {
+          env: { ...process.env, RUST_FETCH_NATIVE: fileURLToPath(addon) },
+          timeout: 10000,
+        });
+        assert.deepEqual(JSON.parse(stdout), [{ error: 'NetworkError' }, { status: 200, native: true }], order.join(' then '));
+      }
     });
 
     it('trusts certificates from NODE_EXTRA_CA_CERTS', async () => {
@@ -956,4 +1035,19 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       }
     });
   });
+});
+
+it('bounds cached idle native origins after destination churn', { skip: !nativeExpected }, async () => {
+  const native = createRequire(import.meta.url)(fileURLToPath(addon));
+  const scope = native.configure({ zstd: false, rejectUnauthorized: true });
+  for (let id = 0; id < 300; id++) {
+    const port = await new Promise((resolve) => {
+      const probe = net.createServer().listen(0, '127.0.0.1', () => {
+        const port = probe.address().port;
+        probe.close(() => resolve(port));
+      });
+    });
+    await native.send({ id, method: 'GET', url: 'http://127.0.0.1:' + port + '/', headers: [], timeout: 100 }, scope);
+  }
+  assert.ok(native.stats(scope).length <= 256);
 });

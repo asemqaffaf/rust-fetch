@@ -1,3 +1,4 @@
+import { reliabilityCases } from './reliability-cases.mjs';
 // The conformance cases: one behaviour each, run unchanged on every adapter
 // (node:http, native, fetch() in Node.js, real browsers). A case's `run` is
 // serialized and evaluated with `HELPERS` in front of it, so it may use only
@@ -526,3 +527,5 @@ export const cases = [
     expect: { error: 'HttpError', status: 503, retryBudgetExhausted: true },
   },
 ];
+
+cases.push(...reliabilityCases);

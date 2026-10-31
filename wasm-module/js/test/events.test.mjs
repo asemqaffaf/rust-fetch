@@ -298,6 +298,47 @@ describe('events', () => {
     assert.equal((await rejection(refused.opened)).kind, 'NetworkError');
   });
 
+  it('recovers 16 streams after a listener restart, with resume IDs and jittered backoff', { timeout: 5000 }, async (t) => {
+    const aborted = new Promise((_, reject) => t.signal.addEventListener('abort', () => reject(t.signal.reason), { once: true }));
+    let restored = false;
+    const resumed = [], delays = [], streams = [];
+    const local = await startServer((req, res) => {
+      sse(res);
+      if (restored) resumed.push(req.headers['last-event-id']);
+      res.write(restored ? 'id: 2\ndata: after\n\n' : 'id: 1\ndata: before\n\n');
+    });
+    try {
+      const received = Array.from({ length: 16 }, () => {
+        let stream, first;
+        const initial = new Promise((resolve) => { first = resolve; });
+        const recovered = new Promise((resolve) => {
+          stream = new WasmClient({ retries: 0 }).events(local.url(), {
+            reconnect: { maxRetries: 10, initialDelayMs: 20, maxDelayMs: 40 },
+            onReconnect: ({ delayMs }) => delays.push(delayMs),
+            onEvent: ({ data }) => {
+              if (data === 'before') first();
+              else if (data === 'after') { stream.close(); resolve(); }
+            },
+          });
+        });
+        streams.push(stream);
+        return { initial, recovered };
+      });
+      await Promise.race([Promise.all(received.map((item) => item.initial)), aborted]);
+      restored = true;
+      await local.restart();
+      await Promise.race([Promise.all(received.map((item) => item.recovered)), aborted]);
+      assert.equal(resumed.length, 16);
+      assert.ok(resumed.every((id) => id === '1'));
+      assert.ok(delays.length >= 16);
+      assert.ok(delays.every((delay) => delay >= 10 && delay <= 40));
+      assert.ok(new Set(delays).size > 1);
+    } finally {
+      for (const stream of streams) stream.close();
+      await local.close();
+    }
+  });
+
   it('reports bad JSON to onError and continues, but ends an iterator with it', async () => {
     const errors = [];
     const { events, all, onEvent } = collector(2);

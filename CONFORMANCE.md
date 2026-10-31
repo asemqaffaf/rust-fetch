@@ -94,6 +94,28 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | maxPendingRequests refuses one more, without sending it | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | retryBudget refuses a retry, keeping the attempt’s error | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+## Reliability and observability
+
+| Behaviour | node:http | native | fetch() in Node.js | Chromium | Firefox | WebKit |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| Sixteen SSE streams recover from repeated immediate closes with jittered backoff | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Sixteen WebSockets recover from repeated immediate drops with jittered backoff | differs (7) | differs (7) | differs (7) | ✓ | ✓ | ✓ |
+| A reset response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A truncated response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A headers response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | differs (8) |
+| A idle connection is bounded by a timer | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A half-open connection is bounded by a timer | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Retry-After recovery returns the successful retry | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A burst of 64 cancellations settles every request | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A burst queued in the core completes without losing requests | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Opt-in attempt timings and lifecycle hooks work on every adapter | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Errors identify the final request and retry count | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Trace context reaches only allowlisted origins | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A silent SSE connection ends with a typed idle timeout | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| A silent WebSocket closes with a typed idle timeout | differs (7) | differs (7) | differs (7) | ✓ | ✓ | ✓ |
+| Ordinary errors retain the final URL after a redirect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Upload-progress attempts report the transport actually used | ✓ | ✓ | differs (9) | differs (9) | differs (9) | differs (9) |
+
 ## Documented differences
 
 1. fetch() follows redirects itself, so sensitiveHeaders can't apply (documented)
@@ -102,3 +124,6 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 4. WebKit decodes responses itself: on macOS a corrupt gzip body fails, but on Linux (libsoup) it's passed through as it arrived, which rust-fetch can't detect
 5. browsers read a response ahead of the page themselves, however slowly it's consumed: their own fetch() took 59–64 MB of 64 in this test, as rust-fetch did; how far varies by browser and machine
 6. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)
+7. Node.js 20 requires --experimental-websocket; without it WebSocket cases are unavailable.
+8. WebKit's network stack controls header-buffer limits: macOS accepts the tested 1 MiB header, while Linux rejects it as a NetworkError. Neither limit is configurable by the JavaScript adapter.
+9. Upload progress uses XMLHttpRequest in browsers, fetch in a runtime without XHR, and node:http in Node (including when the native addon is installed).

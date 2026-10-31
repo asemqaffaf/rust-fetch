@@ -492,3 +492,63 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     }
   });
 });
+
+describe('WebSocket silent stalls', { skip: !supported }, () => {
+  it('recovers 16 sockets after a listener restart with jittered backoff', { timeout: 5000 }, async (t) => {
+    const aborted = new Promise((_, reject) => t.signal.addEventListener('abort', () => reject(t.signal.reason), { once: true }));
+    const local = await startWebSocketServer();
+    const sockets = [], opens = Array(16).fill(0), delays = [];
+    try {
+      for (let i = 0; i < opens.length; i++) {
+        const socket = new WasmClient().websocket(local.url(), {
+          reconnect: { maxRetries: 10, initialDelayMs: 20, maxDelayMs: 40 },
+          onOpen: () => { if (++opens[i] === 2) socket.close(); },
+          onReconnect: ({ delayMs }) => delays.push(delayMs),
+        });
+        sockets.push(socket);
+      }
+      await Promise.race([Promise.all(sockets.map((socket) => socket.opened)), aborted]);
+      await local.restart();
+      await Promise.race([Promise.all(sockets.map((socket) => socket.closed)), aborted]);
+      assert.deepEqual(opens, Array(16).fill(2));
+      assert.ok(delays.length >= 16);
+      assert.ok(delays.every((delay) => delay >= 10 && delay <= 40));
+      assert.ok(new Set(delays).size > 1);
+    } finally {
+      for (const socket of sockets) socket.close();
+      await local.close();
+    }
+  });
+  it('detects silence as an idle timeout and closes the connection', async () => {
+    const local = await startWebSocketServer();
+    const errors = [];
+    try {
+      const socket = new WasmClient({ idleTimeoutMs: 30 }).websocket(local.url(), { onError: (error) => errors.push(error) });
+      await socket.opened;
+      await socket.closed;
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0].kind, 'TimeoutError');
+      assert.equal(errors[0].phase, 'idle');
+      assert.equal(errors[0].method, 'GET');
+    } finally { await local.close(); }
+  });
+  it('resets the idle clock on incoming messages and reconnects after a silent stall', async () => {
+    let connections = 0;
+    const local = await startWebSocketServer((peer) => {
+      connections++;
+      if (connections === 1) {
+        let count = 0;
+        const interval = setInterval(() => { peer.send('alive'); if (++count === 5) clearInterval(interval); }, 10);
+      }
+    });
+    const errors = [];
+    let socket;
+    try {
+      socket = new WasmClient().websocket(local.url(), { idleTimeoutMs: 40, reconnect: { maxRetries: 1, initialDelayMs: 1 }, onError: (e) => errors.push(e), onOpen: () => { if (connections === 2) socket.close(); } });
+      await socket.opened;
+      await socket.closed;
+      assert.equal(connections, 2);
+      assert.equal(errors[0].phase, 'idle');
+    } finally { socket?.close(); await local.close(); }
+  });
+});

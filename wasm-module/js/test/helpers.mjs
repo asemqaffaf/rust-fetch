@@ -33,11 +33,18 @@ export async function startServer(handler) {
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
+  const port = server.address().port;
   return {
     base,
     url: (path = '/') => base + path,
     requests,
     connections: () => connections,
+    restart: async (downtimeMs = 50) => {
+      for (const s of sockets) s.destroy();
+      await new Promise((resolve) => server.close(resolve));
+      await sleep(downtimeMs);
+      await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+    },
     close: () => {
       for (const s of sockets) s.destroy();
       return new Promise((resolve) => server.close(resolve));
@@ -96,6 +103,12 @@ export async function startWebSocketServer(onConnection = () => {}) {
     url: (path = '/') => `ws://127.0.0.1:${port}${path}`,
     httpUrl: (path = '/') => `http://127.0.0.1:${port}${path}`,
     handshakes,
+    restart: async (downtimeMs = 50) => {
+      for (const s of sockets) s.destroy();
+      await new Promise((resolve) => server.close(resolve));
+      await sleep(downtimeMs);
+      await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+    },
     close: () => {
       for (const s of sockets) s.destroy();
       return new Promise((resolve) => server.close(resolve));
