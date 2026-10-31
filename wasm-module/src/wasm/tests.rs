@@ -490,6 +490,7 @@ fn response_heads_become_plain_objects() {
     headers.insert("content-type", "application/json");
     headers.insert("set-thing", "a");
     headers.insert("set-thing", "b");
+    headers.insert("__proto__", "header-data");
 
     let value: JsValue = response_head_to_js(201, "Created", "https://example.com/x", &headers)
         .unwrap()
@@ -506,6 +507,15 @@ fn response_heads_become_plain_objects() {
             .as_string()
             .unwrap(),
         "a, b"
+    );
+    let response_headers = get(&value, "headers");
+    assert!(js_sys::Object::has_own(
+        response_headers.unchecked_ref::<js_sys::Object>(),
+        &"__proto__".into()
+    ));
+    assert_eq!(
+        get(&response_headers, "__proto__").as_string().unwrap(),
+        "header-data"
     );
     let redirect: JsValue = response_head_to_js(302, "Found", "", &Headers::new())
         .unwrap()

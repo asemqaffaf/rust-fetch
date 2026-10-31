@@ -35,7 +35,7 @@ use pool::{Connection, Pool};
 const MAX_REDIRECTS: u32 = 20;
 /// Private wire protocol understood by the JavaScript adapter.
 #[napi]
-pub const TRANSPORT_VERSION: u32 = 4;
+pub const TRANSPORT_VERSION: u32 = 5;
 
 /// How errors for bodies over `max_response_bytes` start; `send` reports them
 /// with the code `RUST_FETCH_TOO_LARGE`
@@ -109,26 +109,13 @@ pub fn configure(env: &napi::Env, options: Options) -> napi::Result<External<Sco
 pub struct Request {
     /// Identifies the request for `cancel`
     pub id: u32,
-    pub observe: Option<bool>,
     pub method: String,
     pub url: String,
     /// Header names and values, alternating; repeated names are sent once each
     pub headers: Vec<String>,
     pub body: Option<Uint8Array>,
-    /// Optional pull callbacks, used only by streaming uploads.
-    pub upload_next: Option<upload::Next>,
-    pub upload_cancel: Option<upload::Control>,
-    pub upload_restart: Option<upload::Control>,
     /// Timeout for the whole attempt, in ms
     pub timeout: Option<f64>,
-    /// Time to acquire/establish a connection, including TLS, in ms.
-    pub connect_timeout: Option<f64>,
-    /// Remaining first-connection allowance after the JavaScript queue wait.
-    pub connect_timeout_remaining: Option<f64>,
-    /// Time until final response headers, in ms.
-    pub response_timeout: Option<f64>,
-    /// Maximum gap between incoming body chunks, in ms.
-    pub idle_timeout: Option<f64>,
     /// Return redirects instead of following them (`redirect: 'manual'`)
     pub manual: Option<bool>,
     /// Redirects to follow before failing (default 20); `0` fails on any redirect
@@ -139,6 +126,8 @@ pub struct Request {
     pub sensitive_headers: Option<Vec<String>>,
     /// `false` refuses redirects from `https:` to `http:`
     pub allow_insecure_redirects: Option<bool>,
+    /// Options most requests leave unset, grouped into one object (#181)
+    pub extra: Option<Extra>,
 }
 
 /// The finished response, or `error` (with `code` for timeouts)
@@ -316,7 +305,28 @@ impl Response {
     }
 }
 
-impl Request {
+/// Request options that ordinary requests don't set. Grouped, they cost
+/// one property lookup when absent instead of one per field.
+#[napi(object, object_to_js = false)]
+#[derive(Default)]
+pub struct Extra {
+    /// Report connection timings and redirects
+    pub observe: Option<bool>,
+    /// Optional pull callbacks, used only by streaming uploads.
+    pub upload_next: Option<upload::Next>,
+    pub upload_cancel: Option<upload::Control>,
+    pub upload_restart: Option<upload::Control>,
+    /// Time to acquire/establish a connection, including TLS, in ms.
+    pub connect_timeout: Option<f64>,
+    /// Remaining first-connection allowance after the JavaScript queue wait.
+    pub connect_timeout_remaining: Option<f64>,
+    /// Time until final response headers, in ms.
+    pub response_timeout: Option<f64>,
+    /// Maximum gap between incoming body chunks, in ms.
+    pub idle_timeout: Option<f64>,
+}
+
+impl Extra {
     fn take_upload(&mut self) -> Option<upload::Upload> {
         self.upload_next
             .take()
@@ -329,20 +339,21 @@ impl Transport {
     // Redirect rewriting and the final URL share one attempt state.
     #[allow(clippy::too_many_lines)]
     async fn send(&self, mut request: Request) -> Result<Response, String> {
-        let observe = request.observe.unwrap_or(false);
+        let mut extra = request.extra.take().unwrap_or_default();
+        let observe = extra.observe.unwrap_or(false);
         let started = observe.then(std::time::Instant::now);
         let mut history = Vec::new();
-        let connect_timeout = timeouts::duration(request.connect_timeout);
-        let mut first_connect_timeout = timeouts::duration(request.connect_timeout_remaining);
-        let response_timeout = timeouts::duration(request.response_timeout);
-        let idle_timeout = timeouts::duration(request.idle_timeout);
+        let connect_timeout = timeouts::duration(extra.connect_timeout);
+        let mut first_connect_timeout = timeouts::duration(extra.connect_timeout_remaining);
+        let response_timeout = timeouts::duration(extra.response_timeout);
+        let idle_timeout = timeouts::duration(extra.idle_timeout);
         let response_deadline =
             response_timeout.and_then(|duration| tokio::time::Instant::now().checked_add(duration));
         let mut url = Url::parse(&request.url).map_err(|e| e.to_string())?;
         let mut method =
             Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
         let mut headers = header_map(&request.headers)?;
-        let mut upload = request.take_upload();
+        let mut upload = extra.take_upload();
         let mut body = request.body.map(|body| Bytes::copy_from_slice(&body));
         let mut redirects = 0;
         let manual = request.manual.unwrap_or(false);
