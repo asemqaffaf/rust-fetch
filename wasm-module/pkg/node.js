@@ -49,7 +49,7 @@ function loadNative() {
   try {
     const addon = createRequire(import.meta.url)(path);
     // Older local binaries do not understand the current transport contract.
-    if (addon.TRANSPORT_VERSION !== 4) return undefined;
+    if (addon.TRANSPORT_VERSION !== 5) return undefined;
     const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
     nativeScope = addon.configure({
       zstd: typeof zlib.zstdDecompressSync === 'function',
@@ -626,6 +626,18 @@ function firstTimeout(options) {
 // Compressed bodies may be this much larger than the decompressed limit before reading stops
 const COMPRESSED_SLACK = 1024 * 1024;
 
+/** Own data properties from the addon's lowercase pairs. */
+function ownHeaders(raw) {
+  const headers = {};
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i];
+    if (Object.hasOwn(headers, name)) headers[name] = `${headers[name]}, ${raw[i + 1]}`;
+    else if (name in headers) Object.defineProperty(headers, name, { value: raw[i + 1], writable: true, enumerable: true, configurable: true });
+    else headers[name] = raw[i + 1];
+  }
+  return headers;
+}
+
 /** Response headers as one string per name; repeated headers joined with ", " */
 function flattenHeaders(raw) {
   // Parse raw pairs ourselves: IncomingMessage's lazy header map can join or
@@ -727,6 +739,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     const status = response.statusCode;
     state.observe?.('headers', { status, url: url.href });
     const receivedHeaders = flattenHeaders(response.rawHeaders);
+    // The keep-alive agent must use the safe map too.
+    response.headers = receivedHeaders;
     const location = receivedHeaders.location;
     const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
     state.phases?.headers(REDIRECT_STATUSES.has(status) && location && !state.manual, state.stream && success);
@@ -1018,7 +1032,7 @@ function nativeTransport(request, upload) {
   if (nativeTlsWarning && request.url.startsWith('https:')) { nativeTlsWarning = false; process.emitWarning(TLS_WARNING); }
   const id = (nextNativeId = (nextNativeId + 1) >>> 0);
   const headers = withDefaultHeaders(request);
-  // Names and values alternating; a repeated header is sent once per value
+  // Alternating names/values, preserving repeats.
   const pairs = [];
   for (const name in headers) {
     const value = headers[name];
@@ -1028,7 +1042,7 @@ function nativeTransport(request, upload) {
   const bodyType = request.bodyType ?? AUTO;
   const manual = request.redirect === 'manual';
   const options = {
-    observe: !!request.__observe,
+    extra: undefined,
     id,
     method: request.method,
     url: request.url,
@@ -1041,13 +1055,18 @@ function nativeTransport(request, upload) {
     sensitiveHeaders: request.sensitiveHeaders,
     allowInsecureRedirects: request.allowInsecureRedirects,
   };
-  if (request.connectTimeout > 0) options.connectTimeout = request.connectTimeout;
-  if (request.responseTimeout > 0) options.responseTimeout = request.responseTimeout;
-  if (request.idleTimeout > 0) options.idleTimeout = request.idleTimeout;
-  if (upload) {
-    options.uploadNext = upload.nativeNext;
-    options.uploadCancel = upload.cancel;
-    options.uploadRestart = upload.restart;
+  let extra;
+  if (request.__observe || request.connectTimeout > 0 || request.responseTimeout > 0 || request.idleTimeout > 0 || upload) {
+    extra = options.extra = {
+      observe: !!request.__observe,
+      connectTimeout: request.connectTimeout,
+      connectTimeoutRemaining: undefined,
+      responseTimeout: request.responseTimeout,
+      idleTimeout: request.idleTimeout,
+      uploadNext: upload?.nativeNext,
+      uploadCancel: upload?.cancel,
+      uploadRestart: upload?.restart,
+    };
   }
   let dispatched = false;
   let giveUp;
@@ -1062,15 +1081,17 @@ function nativeTransport(request, upload) {
       // The timeout covers the wait here too
       const elapsed = performance.now() - queuedAt;
       let pending = options;
-      if (options.connectTimeout > 0 || options.responseTimeout > 0) {
-        for (const [phase, field] of [['total', 'timeout'], ['connect', 'connectTimeout'], ['response', 'responseTimeout']]) {
-          if (options[field] > 0) {
-            if (elapsed >= options[field]) {
+      if (extra?.connectTimeout > 0 || extra?.responseTimeout > 0) {
+        for (const [phase, ms] of [['total', options.timeout], ['connect', extra.connectTimeout], ['response', extra.responseTimeout]]) {
+          if (ms > 0) {
+            if (elapsed >= ms) {
               release();
-              return resolve({ error: timeoutError(phase, options[field]).message, code: 'RUST_FETCH_TIMEOUT', phase });
+              return resolve({ error: timeoutError(phase, ms).message, code: 'RUST_FETCH_TIMEOUT', phase });
             }
-            if (pending === options) pending = { ...options };
-            pending[field === 'connectTimeout' ? 'connectTimeoutRemaining' : field] = options[field] - elapsed;
+            if (pending === options) pending = { ...options, extra: { ...extra } };
+            if (phase === 'total') pending.timeout = ms - elapsed;
+            else if (phase === 'connect') pending.extra.connectTimeoutRemaining = ms - elapsed;
+            else pending.extra.responseTimeout = ms - elapsed;
           }
         }
       } else if (options.timeout > 0) {
@@ -1082,14 +1103,14 @@ function nativeTransport(request, upload) {
       });
     });
     if (!entry) return;
-    // Still waiting here: a timeout or cancellation drops it without involving the addon
+    // Drop queued calls without involving the addon.
     giveUp = (response) => {
       if (entry.cancelled) return;
       entry.cancelled = true;
       clearTimeout(timer);
       resolve(response);
     };
-    const first = firstTimeout(options);
+    const first = firstTimeout(request);
     if (first) {
       timer = setTimeout(() => giveUp({ error: timeoutError(first.phase, first.ms).message, code: 'RUST_FETCH_TIMEOUT', phase: first.phase }), first.ms);
     }
@@ -1110,7 +1131,7 @@ function nativeTransport(request, upload) {
       request.__observe('connection', { connectMs: response.connectMs ?? null, tlsMs: response.tlsMs ?? null, connectionReused: response.connectionReused ?? null, ttfbMs: response.ttfbMs ?? null });
       for (const redirect of response.redirects ?? []) request.__observe('redirect', redirect);
     }
-    const headers = Object.setPrototypeOf(flattenHeaders(response.headers), Object.prototype);
+    const headers = ownHeaders(response.headers);
     return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
   });
   finished.cancel = () => {

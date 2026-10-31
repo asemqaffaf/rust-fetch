@@ -23,7 +23,7 @@ before(async () => {
   if (process.env.RUST_FETCH_NATIVE !== '0' && existsSync(binary)) {
     addon = createRequire(import.meta.url)(binary.pathname);
     originalSend = addon.send;
-    addon.send = (...args) => { if (args[0].uploadNext) nativeSends++; return originalSend(...args); };
+    addon.send = (...args) => { if (args[0].extra?.uploadNext) nativeSends++; return originalSend(...args); };
   }
   server = http.createServer((req, res) => {
     req.on('error', () => {});

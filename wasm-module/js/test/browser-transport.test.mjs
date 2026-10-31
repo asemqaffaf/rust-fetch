@@ -99,6 +99,7 @@ before(async () => {
     switch (url.pathname) {
       case '/echo': {
         const body = JSON.stringify({ method: req.method, headers: req.headers, length: req.body.length });
+        res.setHeader('__proto__', 'header-data');
         res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-twice': ['a', 'b'] });
         return res.end(body);
       }
@@ -150,6 +151,8 @@ describe('upload progress without XMLHttpRequest (fetch())', () => {
     });
     assert.equal(res.body.length, 1000);
     assert.equal(res.headers['x-twice'], 'a, b');
+    assert.equal(res.headers['__proto__'], 'header-data');
+    assert.equal(Object.hasOwn(res.headers, '__proto__'), true);
     assert.deepEqual(uploads, [{ loaded: 1000, total: 1000 }]);
     assert.equal(downloads.length, 1);
     assert.equal(downloads[0].loaded, downloads[0].total);
@@ -305,6 +308,8 @@ describe('upload progress with XMLHttpRequest', () => {
     assert.equal(res.body.headers['x-client'], '1');
     assert.equal(res.body.headers['content-type'], 'application/octet-stream');
     assert.equal(res.headers['x-twice'], 'a, b');
+    assert.equal(res.headers['__proto__'], 'header-data');
+    assert.equal(Object.hasOwn(res.headers, '__proto__'), true);
     assert.ok(uploads.length > 1);
     assert.deepEqual(uploads.at(-1), { loaded: size, total: size });
     assert.equal(downloads.at(-1).loaded, downloads.at(-1).total);
