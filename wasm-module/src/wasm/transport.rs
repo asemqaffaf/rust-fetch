@@ -699,7 +699,7 @@ fn node_request(
     config: &RequestConfig,
     options: &TransportOptions,
 ) -> Result<js_sys::Object> {
-    let js_headers = js_sys::Object::new();
+    let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
     for &(name, value) in headers {
         // Repeated headers are sent as an array, one line each
         let existing = js_sys::Reflect::get(&js_headers, &name.into())?;
@@ -1380,20 +1380,16 @@ impl Drop for XhrGuard {
 
 /// `getAllResponseHeaders()` as an object with lower-cased names
 fn parse_header_block(block: &str) -> Result<js_sys::Object> {
-    let headers = js_sys::Object::new();
+    let mut headers = Headers::new();
     for line in block.split("\r\n") {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
-        let value = match js_sys::Reflect::get(&headers, &name.as_str().into())?.as_string() {
-            Some(existing) => format!("{existing}, {value}"),
-            None => value.to_string(),
-        };
-        set(&headers, &name, &value.into())?;
+        headers.insert(name, value);
     }
-    Ok(headers)
+    super::headers_to_js(&headers)
 }
 
 /// Call a progress callback with `{ loaded, total }`, ignoring its exceptions

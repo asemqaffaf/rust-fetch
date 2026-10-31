@@ -286,6 +286,8 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         if (req.url === '/gzip') res.setHeader('content-encoding', 'gzip');
         res.setHeader('__proto__', 'server-value');
         res.setHeader('x-repeat', ['a', 'b']);
+        res.setHeader('x-accessor', 'actual-value');
+        res.setHeader('x-readonly', 'actual-value');
         res.writeHead(200);
         res.write(body.subarray(0, 3));
         setImmediate(() => res.end(body.subarray(3)));
@@ -295,6 +297,8 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     const port = await new Promise((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject); });
     const polluted = { 'content-length': '1', 'content-type': 'application/json', 'content-encoding': 'gzip', location: 'http://does-not-exist.invalid/', 'x-inherited': 'secret' };
     for (const [name, value] of Object.entries(polluted)) Object.prototype[name] = value;
+    Object.defineProperty(Object.prototype, 'x-accessor', { configurable: true, get() { throw new Error('inherited header getter'); }, set() { throw new Error('inherited header setter'); } });
+    Object.defineProperty(Object.prototype, 'x-readonly', { configurable: true, value: 'inherited-value', writable: false });
     const c = client();
     try {
       for (const path of ['/plain', '/gzip']) {
@@ -302,18 +306,27 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal(response.body.intact, true);
         assert.equal(response.headers['__proto__'], 'server-value');
         assert.equal(response.headers['x-repeat'], 'a, b');
+        assert.equal(response.headers['x-accessor'], 'actual-value');
+        assert.equal(response.headers['x-readonly'], 'actual-value');
+        assert.equal(Object.hasOwn(response.headers, 'x-accessor'), true);
+        assert.equal(Object.hasOwn(response.headers, 'x-readonly'), true);
         assert.equal(Object.hasOwn(response.headers, 'x-inherited'), false);
         assert.equal(Object.getPrototypeOf(response.headers), Object.prototype);
       }
       const binary = await c.get(`http://127.0.0.1:${port}/no-type`);
       assert.ok(binary.body instanceof Uint8Array, 'an inherited MIME type must not select JSON decoding');
       const streamed = await c.get(`http://127.0.0.1:${port}/plain`, { responseType: 'stream' });
+      assert.equal(streamed.headers['__proto__'], 'server-value');
+      assert.equal(streamed.headers['x-accessor'], 'actual-value');
+      assert.equal(streamed.headers['x-readonly'], 'actual-value');
       const text = await new Response(streamed.body).text();
       assert.deepEqual(JSON.parse(text), { intact: true });
       const error = await rejection(c.get(`http://127.0.0.1:${port}/missing-location`));
       assert.equal(error.kind, 'HttpError'); assert.equal(error.status, 302);
     } finally {
       for (const name of Object.keys(polluted)) delete Object.prototype[name];
+      delete Object.prototype['x-accessor'];
+      delete Object.prototype['x-readonly'];
       await worker.terminate();
     }
   });
@@ -693,7 +706,7 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
   }, async () => {
     const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
-    assert.equal(addon.TRANSPORT_VERSION, 4);
+    assert.equal(addon.TRANSPORT_VERSION, 5);
     const scope = addon.configure({ zstd: false, rejectUnauthorized: true });
     const s = await startServer((req, res) => res.end('ok'));
     try {

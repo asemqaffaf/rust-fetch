@@ -1010,10 +1010,7 @@ impl JsRequest {
     /// Let a request interceptor inspect and change the request
     async fn intercept(self, interceptor: &js_sys::Function) -> std::result::Result<Self, JsValue> {
         let info = js_sys::Object::new();
-        let headers = js_sys::Object::new();
-        for (name, values) in self.headers.iter() {
-            set(&headers, name, &values.join(", ").into())?;
-        }
+        let headers = headers_to_js(&self.headers)?;
         set(&info, "method", &self.method.to_reqwest().as_str().into())?;
         set(&info, "url", &self.url.as_str().into())?;
         set(&info, "headers", &headers)?;
@@ -1738,10 +1735,7 @@ fn response_head_to_js(
     set(&obj, "ok", &(200..300).contains(&status).into())?;
     set(&obj, "url", &url.into())?;
 
-    let headers = js_sys::Object::new();
-    for (name, values) in response_headers.iter() {
-        set(&headers, name, &values.join(", ").into())?;
-    }
+    let headers = headers_to_js(response_headers)?;
     set(&obj, "headers", &headers)?;
     Ok(obj)
 }
@@ -2250,6 +2244,16 @@ fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     js_sys::Reflect::get(target, &name.into())
         .ok()
         .filter(|v| !v.is_undefined() && !v.is_null())
+}
+
+/// Own data properties, including `__proto__`, without invoking inherited
+/// setters or losing headers to non-writable prototype properties.
+fn headers_to_js(headers: &Headers) -> Result<js_sys::Object> {
+    let entries: js_sys::Array = headers
+        .iter()
+        .map(|(name, values)| js_sys::Array::of2(&name.as_str().into(), &values.join(", ").into()))
+        .collect();
+    Ok(js_sys::Object::from_entries(&entries)?)
 }
 
 fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {
