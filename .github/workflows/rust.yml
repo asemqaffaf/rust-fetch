@@ -202,7 +202,7 @@ jobs:
         run: npm run api:check
 
   benchmarks:
-    name: Benchmarks (PR against base, informational)
+    name: Benchmarks (PR against base and npm release, informational)
     if: github.event_name == 'pull_request'
     needs: wasm
     runs-on: ubuntu-latest
@@ -236,8 +236,19 @@ jobs:
       - name: Build the base package
         working-directory: base
         run: npm ci && npm run build && npm run build:native
+      # The release workflow gates on the version published on npm, so show the
+      # cumulative change against it too, not only against the PR's base (#182)
+      - name: Install the published release
+        run: |
+          mkdir -p "$RUNNER_TEMP/published" && cd "$RUNNER_TEMP/published"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --ignore-scripts rust-fetch@latest
+          echo "PUBLISHED=$RUNNER_TEMP/published/node_modules/rust-fetch" >> "$GITHUB_ENV"
+          echo "PUBLISHED_VERSION=$(node -p "require('./node_modules/rust-fetch/package.json').version")" >> "$GITHUB_ENV"
       - name: Compare (results in the job summary)
-        run: node benchmarks/compare.mjs base/wasm-module/pkg head-pkg
+        run: >
+          node benchmarks/compare.mjs base/wasm-module/pkg head-pkg
+          --also "Benchmarks: this PR against rust-fetch@$PUBLISHED_VERSION from npm (what the release gate compares; no native addon)=$PUBLISHED"
 
   package:
     name: Packed package (contents, security suite, against npm)
