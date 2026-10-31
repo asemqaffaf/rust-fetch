@@ -192,3 +192,13 @@ const stream = llm.events('/v1/chat/completions', {
 ```
 
 `for await` over the stream holds the server back when your loop is slow. Left out on purpose: `maxResponseBytes`, which would also end a long stream.
+
+## Transport isolation (2.7.0)
+
+Each native Node adapter module owns its connection pool, TLS configuration and request cancellation scope. Worker environments cannot change one another's verification policy or cancel requests with the same numeric ID. Leaving a worker closes its pending native requests, including calls with `timeoutMs: 0`. Within a scope, an active ID cannot be overwritten and a cancelled request's late completion cannot remove its replacement.
+
+Node response processing uses actual raw header pairs. Inherited `Object.prototype` properties cannot supply framing, decompression, a MIME type or a redirect location; response header objects keep their usual plain-object shape. A response header named `__proto__` is preserved as data.
+
+The Rust client's alternative reqwest pools for per-request connect/redirect settings are capped at 32. Eviction drops only the cached handle; active requests keep their own clones.
+
+Secret scanning and Dependabot security updates are enabled for the GitHub repository. Dependency advisory checks and release provenance remain enforced in CI.
