@@ -185,6 +185,32 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
   });
 
+  it('uses node:http when no addon is bundled or the configured one does not load', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-no-addon-'));
+    try {
+      const connection = async (entry, override) => {
+        const env = { ...process.env };
+        if (override === undefined) delete env.RUST_FETCH_NATIVE;
+        else env.RUST_FETCH_NATIVE = override;
+        const source = `
+          const { WasmClient } = await import(${JSON.stringify(entry)});
+          const { body } = await new WasmClient({ retries: 0 }).get(${JSON.stringify(server.url('/echo'))});
+          console.log(JSON.stringify(body.headers.connection));
+        `;
+        const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], { env, timeout: 10000 });
+        return JSON.parse(stdout);
+      };
+      // The npm package has no addon next to node.js: no require() is attempted
+      assert.equal(await connection(packageCopy(directory, 'package')), 'keep-alive');
+      const entry = new URL('../../pkg/node.js', import.meta.url).href;
+      // A path that fails to load, and a module that isn't an addon
+      assert.equal(await connection(entry, join(directory, 'missing.node')), 'keep-alive');
+      assert.equal(await connection(entry, fileURLToPath(new URL('../../pkg/package.json', import.meta.url))), 'keep-alive');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('keeps package adapters bound when global discovery hooks change', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-copies-'));
     try {
