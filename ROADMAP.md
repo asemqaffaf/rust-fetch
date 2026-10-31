@@ -130,6 +130,15 @@ Performance carried over from 2.4.0:
 
 All 13 items are implemented. The npm package remains at 2.6.1 until the separate release is prepared and published. New controls are opt-in; the guides document transport limitations and compatibility details.
 
+**Before release: performance.** A release audit against 2.6.1 found that the 2.7 work, measured cumulatively rather than PR by PR, fails the release workflow's benchmark gate. These are 2.7.0 items:
+
+| Performance item | Issue |
+| --- | --- |
+| Per-request client overhead +11% against 2.6.1 (release gate) | [#179](https://github.com/asemqaffaf/rust-fetch/issues/179) |
+| Import and first-request startup 10–15% slower (release gate on node:http) | [#180](https://github.com/asemqaffaf/rust-fetch/issues/180) |
+| Native transport concurrent throughput 15% below 2.6.1 | [#181](https://github.com/asemqaffaf/rust-fetch/issues/181) |
+| Benchmark pull requests against the published release, not only their base | [#182](https://github.com/asemqaffaf/rust-fetch/issues/182) |
+
 | Implemented feature | Issue | Guide or verification |
 | --- | --- | --- |
 | Safe POST retries with idempotency keys | [#39](https://github.com/asemqaffaf/rust-fetch/issues/39) | [Retries and idempotency](docs/guide/timeouts-and-retries.md) |
