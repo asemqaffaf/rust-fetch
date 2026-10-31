@@ -176,6 +176,81 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
     assert.equal(retry.retryAfterMs, 1000);
     assert.equal(retry.delayMs, 5);
   });
+  it('redacts credentials in every supported header shape and request entry point', async () => {
+    const pairs = [
+      ['Authorization', 'auth-secret'], ['Cookie', 'cookie-secret'],
+      ['Proxy-Authorization', 'proxy-secret'], ['Set-Cookie', 'set-cookie-secret'],
+      ['X-Api-Key', 'custom-secret'], ['X-Visible', 'visible'],
+    ];
+    for (const headers of [Object.fromEntries(pairs), new Headers(pairs), new Map(pairs), pairs]) {
+      for (const placement of ['client', 'options', 'argument']) {
+        const entries = [];
+        const client = new WasmClient({ debug: (entry) => entries.push(entry), sensitiveHeaders: ['x-api-key'], ...(placement === 'client' ? { headers } : {}) });
+        const response = placement === 'argument'
+          ? await client.request('GET', server.url(), headers)
+          : await client.get(server.url(), placement === 'options' ? { headers } : undefined);
+        assert.equal(response.body.headers.authorization, 'auth-secret');
+        const logged = entries.find((entry) => entry.type === 'request').headers;
+        for (const [name, value] of pairs) {
+          assert.equal(logged[name.toLowerCase()], name === 'X-Visible' ? value : '[REDACTED]', placement);
+          if (name !== 'X-Visible') assert.ok(!JSON.stringify(entries).includes(value), placement);
+        }
+      }
+    }
+  });
+  it('preserves header validation errors and finishes metrics when debug formatting fails', { timeout: 5000 }, async () => {
+    for (const headers of [
+      [null], [undefined], [42], ['x-a'], [[1, 'invalid-name-secret']],
+      { 'x-invalid': { toString() { throw Error('invalid-value-secret'); } } },
+      { entries() { throw Error('invalid-method-secret'); } },
+      { [Symbol.iterator]() { throw Error('invalid-iterator-secret'); } },
+    ]) {
+      const entries = [];
+      const client = new WasmClient({ metrics: true, debug: (entry) => entries.push(entry) });
+      const error = await rejection(client.get(server.url(), { headers }));
+      assert.equal(error.kind, 'InvalidInputError');
+      assert.equal(error.parameter, 'headers');
+      assert.deepEqual(client.stats().requests, { started: 1, completed: 1, failed: 1, active: 0 });
+      assert.deepEqual(Object.keys(entries.find((entry) => entry.type === 'request').headers), []);
+      assert.equal(entries.filter((entry) => entry.type === 'requestEnd').length, 1);
+      assert.ok(!JSON.stringify(entries).includes('-secret'));
+    }
+  });
+  it('redacts inherited custom sensitive headers on clients and requests', async () => {
+    for (const placement of ['client', 'request']) {
+      const entries = [];
+      const options = Object.assign(Object.create({ sensitiveHeaders: ['x-api-key'] }), { headers: { 'x-api-key': 'inherited-secret' } });
+      const client = new WasmClient(placement === 'client' ? Object.assign(options, { debug: (entry) => entries.push(entry) }) : { debug: (entry) => entries.push(entry) });
+      assert.equal((await client.get(server.url(), placement === 'request' ? options : undefined)).body.headers['x-api-key'], 'inherited-secret');
+      assert.equal(entries.find((entry) => entry.type === 'request').headers['x-api-key'], '[REDACTED]');
+      assert.ok(!JSON.stringify(entries).includes('inherited-secret'));
+    }
+  });
+  it('lets the core reject invalid sensitive header names without formatting their values', async () => {
+    const entries = [];
+    const client = new WasmClient({ debug: (entry) => entries.push(entry), metrics: true });
+    const error = await rejection(client.get(server.url(), {
+      sensitiveHeaders: [{ toString() { throw Error('invalid-name-secret'); } }],
+      headers: { 'x-api-key': 'header-secret' },
+    }));
+    assert.equal(error.kind, 'InvalidInputError');
+    assert.equal(error.parameter, 'sensitiveHeaders');
+    assert.deepEqual(client.stats().requests, { started: 1, completed: 1, failed: 1, active: 0 });
+    assert.ok(!JSON.stringify(entries).includes('-secret'));
+  });
+  it('ignores Object.prototype defaults on plain HTTP options like the core', async () => {
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, 'sensitiveHeaders');
+    const entries = [];
+    try {
+      Object.defineProperty(Object.prototype, 'sensitiveHeaders', { value: ['x-visible'], configurable: true });
+      const client = new WasmClient({ debug: (entry) => entries.push(entry) });
+      await client.get(server.url(), { headers: { 'x-visible': 'visible' } });
+      assert.equal(entries.find((entry) => entry.type === 'request').headers['x-visible'], 'visible');
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, 'sensitiveHeaders', previous);
+      else delete Object.prototype.sensitiveHeaders;
+    }
+  });
   it('isolates failures thrown or rejected by lifecycle hooks', async () => {
     const client = new WasmClient({ onRequestStart: async () => { throw Error('ignored'); }, onRequestEnd: () => { throw Error('ignored'); } });
     assert.equal((await client.get(server.url())).status, 200);
@@ -262,6 +337,61 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
     assert.equal(error.method, 'GET'); assert.equal(error.url, server.url('/sse-error')); assert.equal(error.attempts, 2);
     if (!browser && typeof WebSocket === 'function') {
       assert.throws(() => client.websocket('ws://127.0.0.1:59999/', { allowPrivateNetwork: false }), (e) => e.method === 'GET' && e.url.startsWith('ws://'));
+    }
+  });
+  it('preserves validation of connection lifecycle callbacks', () => {
+    for (const name of ['events', ...(!browser && typeof WebSocket === 'function' ? ['websocket'] : [])]) {
+      const client = new WasmClient();
+      for (const hook of ['onOpen', 'onError', 'onClose', 'onReconnect']) {
+        for (const value of [false, 0, 'invalid', {}]) {
+          for (const inherited of [false, true]) {
+            const callbacks = { [hook]: value };
+            const options = Object.assign(inherited ? Object.create(callbacks) : { ...callbacks }, { signal: AbortSignal.abort() });
+            assert.throws(() => {
+              const connection = client[name](server.url(), options);
+              connection.close();
+            }, (error) => error.kind === 'InvalidInputError' && error.parameter === hook && error.attempts === 0, name + ':' + hook);
+          }
+        }
+      }
+    }
+  });
+  it('preserves inherited connection security options and valid callbacks', async () => {
+    for (const name of ['events', ...(!browser && typeof WebSocket === 'function' ? ['websocket'] : [])]) {
+      const client = new WasmClient({ baseUrl: server.base });
+      const blocked = Object.assign(Object.create({ allowAbsoluteUrls: false }), { signal: AbortSignal.abort() });
+      assert.throws(() => {
+        const connection = client[name](other.url(), blocked);
+        connection.close();
+      }, (error) => error.kind === 'InvalidInputError' && error.parameter === 'url', name);
+      let closes = 0;
+      const options = Object.assign(Object.create(Object.freeze({ onClose: () => closes++ })), { signal: AbortSignal.abort() });
+      const connection = client[name](server.url(), options);
+      await rejection(connection.opened);
+      await connection.closed;
+      assert.equal(closes, 1, name);
+    }
+  });
+  it('preserves inherited private-network protection for WebSockets', { skip: browser || typeof WebSocket !== 'function' }, () => {
+    const client = new WasmClient();
+    const options = Object.assign(Object.create({ allowPrivateNetwork: false }), { signal: AbortSignal.abort() });
+    assert.throws(() => {
+      const socket = client.websocket(server.url(), options);
+      socket.close();
+    }, (error) => error.kind === 'NetworkError' && /Blocked/.test(error.message));
+  });
+  it('keeps __proto__ data from replacing inherited request and connection security options', async () => {
+    const client = new WasmClient({ baseUrl: server.base, timings: true });
+    for (const name of ['get', 'events', ...(!browser && typeof WebSocket === 'function' ? ['websocket'] : [])]) {
+      const options = JSON.parse('{"__proto__":{"allowAbsoluteUrls":true}}');
+      Object.setPrototypeOf(options, { allowAbsoluteUrls: false });
+      if (name !== 'get') options.signal = AbortSignal.abort();
+      const invalid = (error) => error.kind === 'InvalidInputError' && error.parameter === 'url';
+      if (name === 'get') assert.ok(invalid(await rejection(client.get(other.url(), options))));
+      else assert.throws(() => {
+        const connection = client[name](other.url(), options);
+        connection.close();
+      }, invalid, name);
     }
   });
   it('adds the resolved WebSocket URL to synchronous send and close errors', { skip: browser || typeof WebSocket !== 'function' }, async () => {

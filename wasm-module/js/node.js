@@ -34,8 +34,6 @@ const wasmInlining = 'turbo-inline-js-wasm-calls';
 // prettier-ignore
 if (Number(process.versions.v8?.split('.')[0]) < 13 && !process.execArgv.includes(`--${wasmInlining}`) && !process.execArgv.includes(`--no-${wasmInlining}`)) try { v8.setFlagsFromString(`--no-${wasmInlining}`); } catch {}
 
-initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
-
 /**
  * The native addon, or undefined. RUST_FETCH_NATIVE overrides its path;
  * anything that doesn't load (e.g. `0`) keeps the node:http transport.
@@ -60,6 +58,9 @@ function loadNative() {
 }
 
 const native = loadNative();
+
+// Let the native worker initialize while the main thread compiles Wasm.
+initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)) });
 
 // With NODE_TLS_REJECT_UNAUTHORIZED=0, Node warns on its first TLS connection,
 // but the addon verifies certificates itself (it honours the variable), so the

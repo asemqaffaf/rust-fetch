@@ -30,11 +30,15 @@ Errors identify method, url and attempts, including retries (redirects do not co
 
 Convenience functions and SSE/WebSocket errors carry the same request/connection context. Reconnection callbacks count connection attempts; SSE HTTP retries are included in its error count. Constructor errors have no request to identify. User-thrown primitive interceptor rejections are preserved as primitives.
 
+SSE and WebSocket diagnostics preserve options inherited from defaults, including security settings and lifecycle callbacks. Invalid callbacks reject before connecting, and wrapping a callback does not mutate its options or defaults.
+
 ## Redaction and logging
 
 debug: true writes structured entries to console.debug. debug: (entry) => logger.debug(entry) supplies a logger instead. In Node, DEBUG=rust-fetch enables the same logging; explicit debug: false wins.
 
 Entries describe the request, resolved destination, transport, attempts, retries/delays, redirects and SSE/WebSocket connection changes. Header values for Authorization, Cookie, Proxy-Authorization, Set-Cookie and sensitiveHeaders are replaced with [REDACTED]. Bodies and error messages are never emitted by the built-in diagnostics. URL user info, fragments and query strings are removed before a log or lifecycle hook receives them.
+
+Header redaction applies to objects, `Headers`, `Map` and arrays of `[name, value]` pairs, including client defaults and per-request headers. Inherited `sensitiveHeaders` are honored. Diagnostics omit malformed header values and leave rejection to the request validator; formatting them does not change the error or leave request metrics active.
 
 Retry entries include `reason` (the error kind), HTTP `status` where available, `delayMs` (the actual configured wait) and `retryAfterMs` when supplied by the server. The configured maximum delay can cap the wait below the server's value. Diagnostics preserve frozen application errors; attaching optional timing fields to them is best effort.
 
