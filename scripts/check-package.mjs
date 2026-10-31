@@ -92,7 +92,7 @@ try {
       env: {
         ...process.env,
         BENCH_STRICT: strict ? '1' : '0',
-        BENCH_TITLE: `Packed rust-fetch@${manifest.version} against rust-fetch@${version} from npm`,
+        BENCH_TITLE: `Packed rust-fetch@${manifest.version}${manifest.version === version ? ' (this build)' : ''} against rust-fetch@${version} from npm`,
       },
     });
   }
