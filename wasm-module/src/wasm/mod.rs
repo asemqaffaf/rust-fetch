@@ -556,127 +556,41 @@ impl WasmClient {
     #[wasm_bindgen(constructor)]
     pub fn new(options: Option<ClientOptions>) -> Result<WasmClient> {
         let mut builder = Client::builder();
-        #[cfg(target_arch = "wasm32")]
-        if let Some(options) = &options {
-            builder = builder.idempotency(idempotency::Defaults::parse(&Options::new(
-                options.as_ref(),
-            ))?);
-        }
-
         if let Some(options) = options {
             let options: &JsValue = options.as_ref();
-            if let Some(phases) =
-                parse_phase_options(&Options::new(options), &crate::PhaseTimeouts::default())?
+            // One view of the options: for plain objects, absent names are
+            // answered here instead of by a JavaScript call each.
+            let opts = Options::new(options);
+            #[cfg(target_arch = "wasm32")]
             {
+                builder = builder.idempotency(idempotency::Defaults::parse(&opts)?);
+            }
+            if let Some(phases) = parse_phase_options(&opts, &crate::PhaseTimeouts::default())? {
                 builder = builder.phase_timeouts(phases);
             }
-            if let Some(base_url) = prop(options, "baseUrl") {
+            if let Some(base_url) = opts.get("baseUrl") {
                 builder = builder.base_url(
                     base_url
                         .as_string()
                         .ok_or_else(|| invalid("baseUrl", "must be a string"))?,
                 );
             }
-            if let Some(headers) = prop(options, "headers") {
+            if let Some(headers) = opts.get("headers") {
                 builder = builder.default_headers(parse_headers(&headers)?);
             }
-            if let Some(timeout) = prop(options, "timeoutMs") {
+            if let Some(timeout) = opts.get("timeoutMs") {
                 builder = match parse_timeout(&timeout)? {
                     Some(timeout) => builder.timeout(timeout),
                     None => builder.no_timeout(),
                 };
             }
-            if let Some(retries) = prop(options, "retries") {
+            if let Some(retries) = opts.get("retries") {
                 builder = builder.retry_config(parse_retries(&retries)?);
             }
-            if let Some(budget) = prop(options, "retryBudget") {
-                if let Some(budget) = parse_retry_budget(&budget)? {
-                    builder = builder.retry_budget(budget);
-                }
-            }
-            if let Some(redirect) = prop(options, "redirect") {
-                builder = builder.redirect(parse_redirect(&redirect)?);
-            }
-            if let Some(max) = prop(options, "maxRedirects") {
-                builder = builder.max_redirects(parse_max_redirects(&max)?);
-            }
-            if let Some(circuit) = prop(options, "circuitBreaker") {
-                if !circuit.is_object() {
-                    return Err(invalid("circuitBreaker", "must be an options object"));
-                }
-                let threshold = prop(&circuit, "failureThreshold")
-                    .map(|value| positive_u32(&value, "circuitBreaker.failureThreshold"))
-                    .transpose()?
-                    .unwrap_or(5);
-                let reset = prop(&circuit, "resetAfterMs")
-                    .map(|value| parse_delay(&value, "circuitBreaker.resetAfterMs"))
-                    .transpose()?
-                    .unwrap_or(Duration::from_secs(30));
-                builder = builder.circuit_breaker(crate::CircuitBreaker::new(
-                    u32::try_from(threshold).unwrap(),
-                    reset,
-                ));
-            }
-            #[cfg(target_arch = "wasm32")]
-            if let Some(callback) = callback_option(options, "onCircuitChange")? {
-                builder = builder.on_circuit_change(move |change: crate::CircuitChange| {
-                    let value = js_sys::Object::new();
-                    let _ = set(&value, "origin", &change.origin.into());
-                    let _ = set(&value, "from", &change.from.as_str().into());
-                    let _ = set(&value, "to", &change.to.as_str().into());
-                    if let Err(error) = callback.call1(&JsValue::UNDEFINED, &value) {
-                        let _ = js_sys::Promise::reject(&error);
-                    }
-                });
-            }
-            if let Some(max) = prop(options, "maxConcurrent") {
-                builder = builder.max_concurrent(positive_u32(&max, "maxConcurrent")?);
-            }
-            if let Some(limit) = prop(options, "rateLimit") {
-                let requests = prop(&limit, "requests")
-                    .ok_or_else(|| invalid("rateLimit.requests", "is required"))?;
-                let per = prop(&limit, "perMs")
-                    .ok_or_else(|| invalid("rateLimit.perMs", "is required"))?;
-                builder = builder.rate_limit(crate::RateLimit::new(
-                    u32::try_from(positive_u32(&requests, "rateLimit.requests")?).unwrap(),
-                    parse_delay(&per, "rateLimit.perMs")?,
-                ));
-            }
-            if let Some(per_origin) = prop(options, "limitsPerOrigin") {
-                builder = builder.limits_per_origin(parse_bool(&per_origin, "limitsPerOrigin")?);
-            }
-            if let Some(max) = prop(options, "maxPendingRequests") {
-                builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
-            }
-            if let Some(max) = prop(options, "maxLineBytes") {
-                builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
-            }
-            if let Some(max) = prop(options, "maxEventBytes") {
-                builder = builder.max_event_bytes(positive_u32(&max, "maxEventBytes")?);
-            }
-            if let Some(names) = prop(options, "sensitiveHeaders") {
-                builder = builder.sensitive_headers(parse_header_names(&names)?);
-            }
-            if let Some(allow) = prop(options, "allowInsecureRedirects") {
-                builder =
-                    builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                builder = builder.fetch_options(parse_fetch_options(&Options::new(options), None)?);
-                if let Some(allow) = prop(options, "allowAbsoluteUrls") {
-                    builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
-                }
-                if let Some(limit) = prop(options, "maxResponseBytes") {
-                    builder = builder.max_response_bytes(parse_max_response_bytes(&limit)?);
-                }
-                if let Some(allow) = prop(options, "allowPrivateNetwork") {
-                    builder =
-                        builder.allow_private_network(parse_bool(&allow, "allowPrivateNetwork")?);
-                }
-                if let Some(proxy) = prop(options, "proxy") {
-                    builder = builder.proxy(Some(parse_proxy(&proxy)?));
-                }
+            // The rest are used by few clients. They sit in a function of
+            // their own, which the runtime compiles only when one is set.
+            if opts.has_any(&RARE_CLIENT_OPTIONS) {
+                builder = rare_client_options(builder, &opts)?;
             }
         }
 
@@ -1121,6 +1035,13 @@ impl<'a> Options<'a> {
             .map_or(true, |names| names.iter().any(|n| n == name))
     }
 
+    /// Whether any of `names` may be set
+    fn has_any(&self, names: &[&str]) -> bool {
+        self.names.as_ref().map_or(true, |own| {
+            names.iter().any(|name| own.iter().any(|n| n == name))
+        })
+    }
+
     /// The option, unless it's unset, `null` or `undefined`
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
@@ -1403,6 +1324,129 @@ pub(crate) fn request_deadline(
 }
 
 /// An optional callback option, which must be a function when set
+/// Client options most clients leave unset (see `WasmClient::new`).
+const RARE_CLIENT_OPTIONS: [&str; 25] = [
+    "retryBudget",
+    "redirect",
+    "maxRedirects",
+    "circuitBreaker",
+    "onCircuitChange",
+    "maxConcurrent",
+    "rateLimit",
+    "limitsPerOrigin",
+    "maxPendingRequests",
+    "maxLineBytes",
+    "maxEventBytes",
+    "sensitiveHeaders",
+    "allowInsecureRedirects",
+    "allowAbsoluteUrls",
+    "maxResponseBytes",
+    "allowPrivateNetwork",
+    "proxy",
+    "credentials",
+    "mode",
+    "cache",
+    "priority",
+    "referrerPolicy",
+    "referrer",
+    "integrity",
+    "keepalive",
+];
+
+#[inline(never)]
+fn rare_client_options(
+    mut builder: crate::client::ClientBuilder,
+    opts: &Options,
+) -> Result<crate::client::ClientBuilder> {
+    if let Some(budget) = opts.get("retryBudget") {
+        if let Some(budget) = parse_retry_budget(&budget)? {
+            builder = builder.retry_budget(budget);
+        }
+    }
+    if let Some(redirect) = opts.get("redirect") {
+        builder = builder.redirect(parse_redirect(&redirect)?);
+    }
+    if let Some(max) = opts.get("maxRedirects") {
+        builder = builder.max_redirects(parse_max_redirects(&max)?);
+    }
+    if let Some(circuit) = opts.get("circuitBreaker") {
+        if !circuit.is_object() {
+            return Err(invalid("circuitBreaker", "must be an options object"));
+        }
+        let threshold = prop(&circuit, "failureThreshold")
+            .map(|value| positive_u32(&value, "circuitBreaker.failureThreshold"))
+            .transpose()?
+            .unwrap_or(5);
+        let reset = prop(&circuit, "resetAfterMs")
+            .map(|value| parse_delay(&value, "circuitBreaker.resetAfterMs"))
+            .transpose()?
+            .unwrap_or(Duration::from_secs(30));
+        builder = builder.circuit_breaker(crate::CircuitBreaker::new(
+            u32::try_from(threshold).unwrap(),
+            reset,
+        ));
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(callback) = opts.callback("onCircuitChange")? {
+        builder = builder.on_circuit_change(move |change: crate::CircuitChange| {
+            let value = js_sys::Object::new();
+            let _ = set(&value, "origin", &change.origin.into());
+            let _ = set(&value, "from", &change.from.as_str().into());
+            let _ = set(&value, "to", &change.to.as_str().into());
+            if let Err(error) = callback.call1(&JsValue::UNDEFINED, &value) {
+                let _ = js_sys::Promise::reject(&error);
+            }
+        });
+    }
+    if let Some(max) = opts.get("maxConcurrent") {
+        builder = builder.max_concurrent(positive_u32(&max, "maxConcurrent")?);
+    }
+    if let Some(limit) = opts.get("rateLimit") {
+        let requests =
+            prop(&limit, "requests").ok_or_else(|| invalid("rateLimit.requests", "is required"))?;
+        let per = prop(&limit, "perMs").ok_or_else(|| invalid("rateLimit.perMs", "is required"))?;
+        builder = builder.rate_limit(crate::RateLimit::new(
+            u32::try_from(positive_u32(&requests, "rateLimit.requests")?).unwrap(),
+            parse_delay(&per, "rateLimit.perMs")?,
+        ));
+    }
+    if let Some(per_origin) = opts.get("limitsPerOrigin") {
+        builder = builder.limits_per_origin(parse_bool(&per_origin, "limitsPerOrigin")?);
+    }
+    if let Some(max) = opts.get("maxPendingRequests") {
+        builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
+    }
+    if let Some(max) = opts.get("maxLineBytes") {
+        builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
+    }
+    if let Some(max) = opts.get("maxEventBytes") {
+        builder = builder.max_event_bytes(positive_u32(&max, "maxEventBytes")?);
+    }
+    if let Some(names) = opts.get("sensitiveHeaders") {
+        builder = builder.sensitive_headers(parse_header_names(&names)?);
+    }
+    if let Some(allow) = opts.get("allowInsecureRedirects") {
+        builder = builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        builder = builder.fetch_options(parse_fetch_options(opts, None)?);
+        if let Some(allow) = opts.get("allowAbsoluteUrls") {
+            builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+        }
+        if let Some(limit) = opts.get("maxResponseBytes") {
+            builder = builder.max_response_bytes(parse_max_response_bytes(&limit)?);
+        }
+        if let Some(allow) = opts.get("allowPrivateNetwork") {
+            builder = builder.allow_private_network(parse_bool(&allow, "allowPrivateNetwork")?);
+        }
+        if let Some(proxy) = opts.get("proxy") {
+            builder = builder.proxy(Some(parse_proxy(&proxy)?));
+        }
+    }
+    Ok(builder)
+}
+
 fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Function>> {
     prop(options, name)
         .map(|callback| {

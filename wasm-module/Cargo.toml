@@ -45,8 +45,12 @@ wasm-bindgen-test = "0.3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
 
 [profile.release]
-opt-level = "z"
+# "s" with one codegen unit: per-request overhead back to 2.6.1's level with
+# a smaller module than "z" with the default 16 units; "z" with one unit is
+# smaller still but keeps the slower request path (#179).
+opt-level = "s"
 lto = true
+codegen-units = 1
 
 # wasm-opt's default -O inlines every single-caller function, merging the
 # request futures into a few very large functions. V8 compiles each function
