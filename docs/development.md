@@ -39,14 +39,17 @@ CI runs the Rust suites with a coverage gate that fails if line or function cove
 
 `npm run bench` compares rust-fetch with Node's `fetch()` on a local server, and `npm run bench:cold` measures [startup](/performance#startup) in Node.js and, when Playwright's browsers are installed, Chromium, Firefox and WebKit. It measures the native transport when it's built (`npm run build:native`); run it with `RUST_FETCH_NATIVE=0` to measure the node:http transport. For sustained load and overload, the [aakjp/stress-test](https://github.com/aakjp/stress-test) harness runs against any installed version of rust-fetch.
 
-Every pull request also compares itself with its base branch in CI: small JSON (sequential and 50 concurrent), an 8 MB body and startup, on both Node.js transports, plus the browser bundle size. Each measurement runs in a fresh process, alternating the two builds over 5 rounds; the table is in the *Benchmarks* job's summary. A change over 10% worse in the median and in most rounds shows as a warning, never a failure, since shared runners are noisy. To reproduce it locally against `main`:
+Every pull request also compares itself with its base branch in CI: small JSON (sequential and 50 concurrent), an 8 MB body and startup, on both Node.js transports, plus the browser bundle size. In the same interleaved rounds it is compared with the version published on npm, which is what the release workflow's gate uses, so changes that each stay small but add up across pull requests are visible before a release. The npm package has no native addon, so that table covers node:http and the instant-transport overhead only. Each measurement runs in a fresh process, rotating the builds over 5 rounds; the tables are in the *Benchmarks* job's summary. A change over 10% worse in the median and in most rounds shows as a warning, never a failure, since shared runners are noisy. To reproduce it locally against `main` and npm:
 
 ```sh
 git worktree add ../rust-fetch-main main
 (cd ../rust-fetch-main && npm ci && npm run build && npm run build:native)
+(mkdir -p ../published && cd ../published && npm init -y && npm install rust-fetch@latest)
 npm run build && npm run build:native
-npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg
+npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=../published/node_modules/rust-fetch"
 ```
+
+`node scripts/check-package.mjs --strict` runs the release's own check, against npm's `latest`.
 
 ## Parser and boundary fuzzing
 

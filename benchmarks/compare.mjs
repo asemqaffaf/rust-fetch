@@ -2,9 +2,12 @@
 // the same machine: throughput for small JSON (sequential and 50 concurrent)
 // and an 8 MB body, startup, for both Node.js transports, and bundle size.
 //
-// Usage: node benchmarks/compare.mjs <base pkg dir> [<head pkg dir>]
+// Usage: node benchmarks/compare.mjs <base pkg dir> [<head pkg dir>] [--also <title>=<pkg dir> ...]
 //   head defaults to wasm-module/pkg. BENCH_ROUNDS (default 5) and
-//   BENCH_SECONDS (per measurement, default 1.5) tune the run.
+//   BENCH_SECONDS (per measurement, default 1.5) tune the run. Each --also
+//   adds another baseline (e.g. the release on npm) measured in the same
+//   interleaved rounds and reported in its own table; native rows appear
+//   only where both builds include the native addon.
 //
 // Every measurement runs in a fresh process against a server in this one,
 // alternating base and head in each round to cancel drift on shared CI
@@ -22,15 +25,33 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
-const [baseArg, headArg] = process.argv.slice(2);
+const positional = [];
+const extra = []; // [title, dir] for each --also
+for (let i = 2; i < process.argv.length; i++) {
+  if (process.argv[i] === '--also') {
+    const [title, dir] = (process.argv[++i] ?? '').split(/=(.*)/s);
+    if (!title || !dir) {
+      console.error('--also needs <title>=<pkg dir>');
+      process.exit(2);
+    }
+    extra.push([title, resolve(dir)]);
+  } else positional.push(process.argv[i]);
+}
+const [baseArg, headArg] = positional;
 if (!baseArg) {
-  console.error('Usage: node benchmarks/compare.mjs <base pkg dir> [<head pkg dir>]');
+  console.error('Usage: node benchmarks/compare.mjs <base pkg dir> [<head pkg dir>] [--also <title>=<pkg dir> ...]');
   process.exit(2);
 }
 const builds = {
   base: resolve(baseArg),
   head: resolve(headArg ?? fileURLToPath(new URL('../wasm-module/pkg/', import.meta.url))),
 };
+// The head is compared with each baseline: the first one's title is BENCH_TITLE
+const baselines = [['base', process.env.BENCH_TITLE ?? 'Benchmarks: this PR against the base branch']];
+extra.forEach(([title, dir], i) => {
+  builds[`extra${i}`] = dir;
+  baselines.push([`extra${i}`, title]);
+});
 const rounds = Number(process.env.BENCH_ROUNDS ?? 5);
 const seconds = Number(process.env.BENCH_SECONDS ?? 1.5);
 const THRESHOLD = 0.1;
@@ -126,23 +147,25 @@ async function measure(pkg, scenario, env) {
   return JSON.parse(stdout);
 }
 
-const results = new Map(); // key -> { base: [], head: [] }
+const results = new Map(); // key -> { [side]: [] }
 const record = (key, side, value) => {
-  if (!results.has(key)) results.set(key, { base: [], head: [] });
-  results.get(key)[side].push(value);
+  if (!results.has(key)) results.set(key, {});
+  (results.get(key)[side] ??= []).push(value);
 };
 
+const sides = Object.keys(builds);
 for (let round = 0; round < rounds; round++) {
-  // Alternate which build goes first
-  const order = round % 2 ? ['head', 'base'] : ['base', 'head'];
+  // Rotate which build goes first, to cancel drift
+  const order = sides.map((_, i) => sides[(i + round) % sides.length]);
   for (const side of order) {
     const { value } = await measure(builds[side], 'overhead', {});
     record('overhead|client', side, value); // negative: lower is better
   }
   for (const [scenario] of scenarios) {
     for (const [transport, env] of transports) {
-      if (transport === 'native' && !(hasNative(builds.base) && hasNative(builds.head))) continue;
-      for (const side of order) {
+      const measured = transport === 'native' ? order.filter((side) => hasNative(builds[side])) : order;
+      if (!measured.includes('head') || measured.length < 2) continue;
+      for (const side of measured) {
         const { startup, value } = await measure(builds[side], scenario, env);
         record(`${scenario}|${transport}`, side, value);
         record(`startup|${transport}`, side, -startup); // negative: higher is better everywhere
@@ -159,29 +182,11 @@ const median = (values) => {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
-const rows = [];
-const warnings = [];
 const labels = Object.fromEntries(scenarios.map(([key, label, unit]) => [key, [label, unit]]));
 labels.startup = ['Startup: import + first request', 'ms'];
 labels.overhead = ['Client overhead per request (instant transport)', 'µs'];
 // Throughput first, startup last
 const ordered = [...results].sort(([a], [b]) => /^(startup|overhead)\|/.test(a) - /^(startup|overhead)\|/.test(b));
-for (const [key, { base, head }] of ordered) {
-  const [scenario, transport] = key.split('|');
-  const [label, unit] = labels[scenario];
-  const lowerIsBetter = scenario === 'startup' || scenario === 'overhead';
-  const sign = lowerIsBetter ? -1 : 1;
-  const [b, h] = [median(base) * sign, median(head) * sign];
-  // Relative change where positive is better
-  const change = lowerIsBetter ? (b - h) / b : (h - b) / b;
-  const losses = base.filter((value, i) => head[i] < value).length;
-  const regression = change < -THRESHOLD && losses > base.length / 2;
-  const name = scenario === 'overhead' ? label : `${label} (${transport})`;
-  if (regression) warnings.push(`${name}: ${(change * 100).toFixed(1)}%, worse in ${losses} of ${base.length} rounds`);
-  const format = (value) => (unit === 'ms' || unit === 'µs' ? value.toFixed(1) : Math.round(value).toLocaleString('en-US'));
-  rows.push(`| ${name} | ${format(b)} ${unit} | ${format(h)} ${unit} | ${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}% | ${regression ? '⚠️ regression' : ''} |`);
-}
-
 const size = (dir) => {
   const total = { raw: 0, gzip: 0, brotli: 0 };
   for (const file of ['rust_fetch_bg.wasm', 'rust_fetch.js']) {
@@ -192,24 +197,51 @@ const size = (dir) => {
   }
   return total;
 };
-const [baseSize, headSize] = [size(builds.base), size(builds.head)];
-for (const kind of ['brotli', 'gzip']) {
-  const [b, h] = [baseSize[kind] / 1000, headSize[kind] / 1000];
-  rows.push(`| Browser bundle, ${kind} (.wasm + JS glue) | ${b.toFixed(1)} kB | ${h.toFixed(1)} kB | ${h >= b ? '+' : ''}${(h - b).toFixed(1)} kB | |`);
-}
+const headSize = size(builds.head);
 
-const report = [
-  `## ${process.env.BENCH_TITLE ?? 'Benchmarks: this PR against the base branch'}`,
-  '',
-  `Median of ${rounds} interleaved rounds, ${seconds} s each, fresh process per measurement, Node.js ${process.versions.node} (${process.platform} ${process.arch}). Change: positive is better. Flagged when more than ${THRESHOLD * 100}% worse in the median *and* in most rounds.`,
-  '',
-  '| Benchmark | Base | This PR | Change | |',
-  '| --- | ---: | ---: | ---: | --- |',
-  ...rows,
-  '',
-  warnings.length ? `**Possible regressions:** ${warnings.join('; ')}. Shared runners are noisy: rerun the job, or reproduce locally (see README *Benchmarks*).` : 'No regressions above the threshold.',
-  '',
-].join('\n');
+const warnings = [];
+const reports = [];
+for (const [side, title] of baselines) {
+  const rows = [];
+  const found = [];
+  for (const [key, values] of ordered) {
+    const [base, head] = [values[side], values.head];
+    if (!base || !head) continue;
+    const [scenario, transport] = key.split('|');
+    const [label, unit] = labels[scenario];
+    const lowerIsBetter = scenario === 'startup' || scenario === 'overhead';
+    const sign = lowerIsBetter ? -1 : 1;
+    const [b, h] = [median(base) * sign, median(head) * sign];
+    // Relative change where positive is better
+    const change = lowerIsBetter ? (b - h) / b : (h - b) / b;
+    const losses = base.filter((value, i) => head[i] < value).length;
+    const regression = change < -THRESHOLD && losses > base.length / 2;
+    const name = scenario === 'overhead' ? label : `${label} (${transport})`;
+    if (regression) found.push(`${name}: ${(change * 100).toFixed(1)}%, worse in ${losses} of ${base.length} rounds`);
+    const format = (value) => (unit === 'ms' || unit === 'µs' ? value.toFixed(1) : Math.round(value).toLocaleString('en-US'));
+    rows.push(`| ${name} | ${format(b)} ${unit} | ${format(h)} ${unit} | ${change >= 0 ? '+' : ''}${(change * 100).toFixed(1)}% | ${regression ? '⚠️ regression' : ''} |`);
+  }
+  const baseSize = size(builds[side]);
+  for (const kind of ['brotli', 'gzip']) {
+    const [b, h] = [baseSize[kind] / 1000, headSize[kind] / 1000];
+    rows.push(`| Browser bundle, ${kind} (.wasm + JS glue) | ${b.toFixed(1)} kB | ${h.toFixed(1)} kB | ${h >= b ? '+' : ''}${(h - b).toFixed(1)} kB | |`);
+  }
+  const prefix = baselines.length > 1 ? `${title}: ` : '';
+  warnings.push(...found.map((warning) => prefix + warning));
+  reports.push([
+    `## ${title}`,
+    '',
+    `Median of ${rounds} interleaved rounds, ${seconds} s each, fresh process per measurement, Node.js ${process.versions.node} (${process.platform} ${process.arch}). Change: positive is better. Flagged when more than ${THRESHOLD * 100}% worse in the median *and* in most rounds.`,
+    '',
+    '| Benchmark | Base | This PR | Change | |',
+    '| --- | ---: | ---: | ---: | --- |',
+    ...rows,
+    '',
+    found.length ? `**Possible regressions:** ${found.join('; ')}. Shared runners are noisy: rerun the job, or reproduce locally (see README *Benchmarks*).` : 'No regressions above the threshold.',
+    '',
+  ].join('\n'));
+}
+const report = reports.join('\n');
 
 console.log(report);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
