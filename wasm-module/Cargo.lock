@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "rust-fetch"
-version = "2.6.1"
+version = "2.7.0"
 dependencies = [
  "dlmalloc",
  "futures-util",
