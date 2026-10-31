@@ -17,7 +17,7 @@ Dates aren't promised; the order is.
 | [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
-| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Implemented; release pending |
+| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Release prepared; publication pending |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
@@ -128,7 +128,7 @@ Performance carried over from 2.4.0:
 
 *Goal: protect both the client and the APIs it calls, keep untrusted servers from exhausting memory or reaching internal networks, and show where the time goes.*
 
-All 13 items are implemented. The npm package remains at 2.6.1 until the separate release is prepared and published. New controls are opt-in; the guides document transport limitations and compatibility details.
+All 13 items are implemented. The release is prepared as 2.7.0; the npm package stays at 2.6.1 until it is published. New controls are opt-in; the guides document transport limitations and compatibility details.
 
 **Before release: performance.** A release audit against 2.6.1 found that the 2.7 work, measured cumulatively rather than PR by PR, failed the release workflow's benchmark gate. Status:
 

@@ -72,7 +72,7 @@ try {
 More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-started), and configurations to copy for credentialed APIs, user-supplied URLs and streaming APIs in [Hardened configurations](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations).
 
 > **Release status**
-> - **On npm (2.6.1):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **On npm (2.7.0):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](https://asemqaffaf.github.io/rust-fetch/performance#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Compared with `fetch()` and axios

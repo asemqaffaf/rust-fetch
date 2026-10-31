@@ -13,7 +13,7 @@ await client.post('/upload', { body: form });
 
 A single `Blob` or `File` body is sent as raw bytes with the blob's type.
 
-## Streaming request bodies (2.7.0, unreleased)
+## Streaming request bodies (2.7.0)
 
 Pass a `ReadableStream` or async iterable of strings, `ArrayBuffer`s or byte views. Node.js `Readable` streams work directly. The transport pulls another chunk when it can accept more data; it does not collect the upload in WebAssembly memory. `GET` and `HEAD` cannot carry a streaming body.
 
