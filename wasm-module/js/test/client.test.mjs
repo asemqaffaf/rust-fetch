@@ -136,6 +136,32 @@ describe('initialization', () => {
     await init(); // repeated calls are no-ops
     assert.equal((await client().get(server.url('/json'))).status, 200);
   });
+
+  it('reads client options by the options inheritance rules', async () => {
+    // Plain options ignore names that Object.prototype has; options objects
+    // with their own prototype (for example shared defaults) still inherit.
+    const both = (c) => Promise.allSettled([c.get(server.url('/slow?ms=40')), c.get(server.url('/slow?ms=40'))]);
+    const polluted = { timeoutMs: 1, maxPendingRequests: 1, circuitBreaker: { failureThreshold: 1 } };
+    const saved = Object.fromEntries(Object.keys(polluted).map((name) => [name, Object.getOwnPropertyDescriptor(Object.prototype, name)]));
+    try {
+      for (const [name, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, value });
+      for (const options of [undefined, {}, { baseUrl: server.url('') }]) {
+        const c = new WasmClient(options);
+        assert.deepEqual((await both(c)).map((r) => r.status), ['fulfilled', 'fulfilled'], JSON.stringify(options));
+        c.free();
+      }
+    } finally {
+      for (const [name, descriptor] of Object.entries(saved)) {
+        if (descriptor) Object.defineProperty(Object.prototype, name, descriptor); else delete Object.prototype[name];
+      }
+    }
+    const limited = new WasmClient(Object.create({ maxPendingRequests: 1 }));
+    assert.deepEqual((await both(limited)).map((r) => r.status), ['fulfilled', 'rejected'], 'inherited defaults still apply');
+    limited.free();
+    const slow = new WasmClient(Object.create({ timeoutMs: 20 }));
+    assert.equal((await rejection(slow.get(server.url('/slow?ms=200')))).kind, 'TimeoutError');
+    slow.free();
+  });
 });
 
 describe('responses', () => {
