@@ -63,8 +63,11 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         const progress = [];
         try {
           const response = await c.post(path, { body: new ReadableStream({ async pull(controller) {
+            // Count when WebKit starts the pull: an already-started async
+            // producer may resume after cancellation without a new pull.
+            const index = pulls++;
             await new Promise((r) => setTimeout(r, 1));
-            if (pulls++ === 64) controller.close(); else controller.enqueue(new Uint8Array(65536));
+            if (index === 64) controller.close(); else controller.enqueue(new Uint8Array(65536));
           }, cancel() { cancelled = true; } }, { highWaterMark: 0 }), onUploadProgress: (p) => progress.push(p) });
           return { ok: true, body: response.body, progress, pulls, control };
         } catch (error) {
