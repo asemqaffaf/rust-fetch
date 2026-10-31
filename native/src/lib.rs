@@ -11,13 +11,13 @@
 // napi-rs functions take their arguments by value and report errors to JS
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)]
 
+mod pending;
 mod pool;
 mod timeouts;
 mod upload;
 
-use std::collections::HashMap;
 use std::io::Read;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -26,16 +26,16 @@ use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_ENCODING, HOST, LOCATION};
 use hyper::Method;
-use napi::bindgen_prelude::{Buffer, Uint8Array};
+use napi::bindgen_prelude::{Buffer, External, Uint8Array};
 use napi_derive::napi;
 use url::{Position, Url};
 
-use pool::{lock, Connection, Pool};
+use pool::{Connection, Pool};
 
 const MAX_REDIRECTS: u32 = 20;
 /// Private wire protocol understood by the JavaScript adapter.
 #[napi]
-pub const TRANSPORT_VERSION: u32 = 3;
+pub const TRANSPORT_VERSION: u32 = 4;
 
 /// How errors for bodies over `max_response_bytes` start; `send` reports them
 /// with the code `RUST_FETCH_TOO_LARGE`
@@ -51,10 +51,12 @@ const BLOCKING_DECOMPRESS: usize = 16 * 1024;
 struct Transport {
     pool: Pool,
     zstd: bool,
-    pending: Mutex<HashMap<u32, AbortHandle>>,
+    pending: pending::Pending,
 }
 
-static TRANSPORT: OnceLock<Transport> = OnceLock::new();
+/// Opaque configuration and cancellation scope for one JavaScript module.
+/// Its pool and TLS policy are never shared with another worker's scope.
+pub struct Scope(Arc<Transport>);
 
 /// One Tokio worker thread. Each request is a short burst of work between
 /// waits, so a second worker mostly adds cross-thread wake-ups: measured
@@ -84,19 +86,23 @@ pub struct Options {
 
 /// Configure the transport; called once when `node.js` loads the addon
 #[napi]
-pub fn configure(options: Options) -> napi::Result<()> {
+pub fn configure(env: &napi::Env, options: Options) -> napi::Result<External<Scope>> {
     let tls = pool::tls_config(
         options.reject_unauthorized,
         options.extra_ca_certs.as_deref(),
     )
     .map_err(napi::Error::from_reason)?;
-    // A second call (another copy of the module) keeps the first configuration
-    let _ = TRANSPORT.set(Transport {
+    let transport = Arc::new(Transport {
         pool: Pool::new(tls),
         zstd: options.zstd,
-        pending: Mutex::default(),
+        pending: pending::Pending::default(),
     });
-    Ok(())
+    env.add_env_cleanup_hook(Arc::downgrade(&transport), |scope| {
+        if let Some(transport) = scope.upgrade() {
+            transport.pending.close();
+        }
+    })?;
+    Ok(External::new(Scope(transport)))
 }
 
 #[napi(object, object_to_js = false)]
@@ -152,27 +158,28 @@ pub struct Response {
 
 /// Send one attempt. Failures resolve with `error` set rather than rejecting.
 #[napi]
-pub fn send(
-    env: &napi::Env,
+pub fn send<'env>(
+    env: &'env napi::Env,
     request: Request,
-) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'_, Response>> {
-    let Some(transport) = TRANSPORT.get() else {
-        return env.spawn_future(async {
-            Ok(Response::failed(
-                "rust-fetch native transport is not configured".into(),
-                None,
-            ))
-        });
-    };
+    scope: &External<Scope>,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Response>> {
+    let transport = Arc::clone(&scope.0);
     let id = request.id;
     let (handle, registration) = AbortHandle::new_pair();
-    // Register on the calling JS thread. With an async napi function, cancel
-    // could run before Tokio first polled send and silently miss the attempt.
-    lock(&transport.pending).insert(id, handle);
-    let promise =
-        env.spawn_future(async move { Ok(send_attempt(transport, request, registration).await) });
+    // Register synchronously before JS can cancel, and reject an occupied ID.
+    let generation = match transport.pending.register(id, handle) {
+        Ok(generation) => generation,
+        Err(error) => {
+            return env
+                .spawn_future(async { Ok(Response::failed(error, Some("RUST_FETCH_REQUEST_ID"))) })
+        }
+    };
+    let active = Arc::clone(&transport);
+    let promise = env.spawn_future(async move {
+        Ok(send_attempt(&active, request, registration, generation).await)
+    });
     if promise.is_err() {
-        lock(&transport.pending).remove(&id);
+        transport.pending.finish(id, generation);
     }
     promise
 }
@@ -181,6 +188,7 @@ async fn send_attempt(
     transport: &Transport,
     request: Request,
     registration: futures_util::future::AbortRegistration,
+    generation: u64,
 ) -> Response {
     let id = request.id;
     let timeout = timeouts::duration(request.timeout);
@@ -191,7 +199,7 @@ async fn send_attempt(
             .map_err(|_| duration),
         None => Ok(attempt.await),
     };
-    lock(&transport.pending).remove(&id);
+    transport.pending.finish(id, generation);
 
     match outcome {
         Ok(Ok(Ok(response))) => response,
@@ -218,12 +226,8 @@ async fn send_attempt(
 
 /// Abandon an attempt (the core does this on abort); its `send` resolves with an error
 #[napi]
-pub fn cancel(id: u32) {
-    if let Some(transport) = TRANSPORT.get() {
-        if let Some(handle) = lock(&transport.pending).remove(&id) {
-            handle.abort();
-        }
-    }
+pub fn cancel(id: u32, scope: &External<Scope>) {
+    scope.0.pending.cancel(id);
 }
 
 impl Response {

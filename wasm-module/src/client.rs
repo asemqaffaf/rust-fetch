@@ -384,6 +384,11 @@ impl Client {
             return Ok(client.clone());
         }
         let client = http_client(key)?;
+        // Varying redirect guards or connect timeouts must not retain an
+        // unlimited number of pools. Active requests keep their own clone.
+        if clients.len() == 32 {
+            clients.remove(0);
+        }
         clients.push((key, client.clone()));
         Ok(client)
     }
@@ -1875,6 +1880,34 @@ mod tests {
                 .unwrap();
             assert!(error.to_string().contains(name), "{error}");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn varying_connect_timeouts_keep_the_alternative_pool_cache_bounded() {
+        let client = Client::new().unwrap();
+        let config = client.request(Method::Get, "https://example.com").config;
+        client
+            .http_client(&config, RedirectGuards::default(), None)
+            .unwrap();
+        assert!(client.redirect_clients.lock().unwrap().is_empty());
+        for timeout in 1..=100 {
+            client
+                .http_client(
+                    &config,
+                    RedirectGuards::default(),
+                    Some(Duration::from_millis(timeout)),
+                )
+                .unwrap();
+        }
+        client
+            .http_client(
+                &config,
+                RedirectGuards::default(),
+                Some(Duration::from_millis(100)),
+            )
+            .unwrap();
+        assert_eq!(client.redirect_clients.lock().unwrap().len(), 32);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
