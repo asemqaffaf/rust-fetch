@@ -5,7 +5,7 @@
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
   "description": "A reliable HTTP client for JavaScript and TypeScript, written in Rust and compiled to WebAssembly: timeouts, retries, typed errors and interceptors, faster than fetch() in Node.js",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
