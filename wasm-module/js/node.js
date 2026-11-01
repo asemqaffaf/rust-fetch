@@ -19,8 +19,9 @@ import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
 import net from 'node:net';
-import { pipeline, Readable, Transform } from 'node:stream';
+import { finished, pipeline, Transform } from 'node:stream';
 import tls from 'node:tls';
+import { urlToHttpOptions } from 'node:url';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
 
@@ -56,8 +57,8 @@ const native = loadNative();
 const MAX_SOCKETS = 256;
 const POOL_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, maxSockets: MAX_SOCKETS, maxFreeSockets: MAX_SOCKETS };
 const pools = new Map([
-  [http, new http.Agent(POOL_OPTIONS)],
-  [https, new https.Agent(POOL_OPTIONS)],
+  [http, checked(new http.Agent(POOL_OPTIONS))],
+  [https, checked(new https.Agent(POOL_OPTIONS))],
 ]);
 // The options Node's own global agents are created with. Newer versions also
 // list unset ones (e.g. `proxyEnv: undefined` unless NODE_USE_ENV_PROXY is on).
@@ -148,20 +149,20 @@ class TunnelAgent extends https.Agent {
   createConnection(options, callback) {
     const { proxy } = this;
     const target = `${options.host.includes(':') ? `[${options.host}]` : options.host}:${options.port}`;
-    const connect = (proxy.protocol === 'https:' ? https : http).request({
+    const connect = (proxy.protocol === 'https:' ? https : http).request(shadow({
       hostname: proxy.hostname,
       port: defaultPort(proxy),
       method: 'CONNECT',
       path: target,
       headers: { host: target, ...proxyAuthorization(proxy) },
       agent: false,
-    });
+    }));
     connect.once('connect', (response, socket) => {
       if (response.statusCode !== 200) {
         socket.destroy();
         return callback(new TypeError(`The proxy refused to connect to ${target}: ${response.statusCode} ${response.statusMessage}`));
       }
-      callback(null, tls.connect({ ...options, socket }));
+      callback(null, tls.connect(shadow({ ...options, socket })));
     });
     connect.once('error', callback);
     connect.end();
@@ -175,9 +176,46 @@ function proxyAgent(proxy, tunnel) {
   const key = `${tunnel ? 'tunnel' : 'plain'} ${proxy.href}`;
   let agent = proxyAgents.get(key);
   if (!agent) {
-    agent = tunnel ? new TunnelAgent(proxy) : new (proxy.protocol === 'https:' ? https : http).Agent(POOL_OPTIONS);
+    agent = tunnel ? new TunnelAgent(proxy) : checked(new (proxy.protocol === 'https:' ? https : http).Agent(POOL_OPTIONS));
     proxyAgents.set(key, agent);
   }
+  return agent;
+}
+
+// Node's http, net and tls modules read many option names from plain objects,
+// so Object.prototype could supply a socketPath or a trusted CA, say. Own
+// undefined values shadow the inherited ones. http.request reads only a few
+// names from the object it is given, and does so for every request, so that
+// list is short; the rest are read when a connection is made, so the pooled
+// agents shadow them in createConnection. Not rejectUnauthorized, ciphers,
+// checkServerIdentity or minDHSize: tls.connect sets those itself first, so
+// they can't be inherited, and an own undefined would replace its defaults.
+const REQUEST_OPTION_NAMES = [
+  '_defaultAgent', 'auth', 'createConnection', 'defaultPort', 'host', 'insecureHTTPParser', 'joinDuplicateHeaders', 'maxHeaderSize', 'port',
+  'setDefaultHeaders', 'setHost', 'signal', 'socketPath', 'timeout', 'uniqueHeaders',
+];
+const CONNECTION_OPTION_NAMES = [
+  ...REQUEST_OPTION_NAMES,
+  // net.connect
+  'localAddress', 'localPort', 'family', 'lookup', 'hints', 'highWaterMark', 'noDelay', 'keepAlive', 'keepAliveInitialDelay', 'autoSelectFamily',
+  'autoSelectFamilyAttemptTimeout', 'blockList', 'onread', 'fd', 'handle', 'allowHalfOpen', 'optimizeEmptyRequests',
+  // tls.connect
+  'secureContext', 'ca', 'cert', 'key', 'pfx', 'passphrase', 'honorCipherOrder', 'ecdhCurve', 'dhparam', 'minVersion', 'maxVersion',
+  'secureProtocol', 'secureOptions', 'crl', 'sigalgs', 'clientCertEngine', 'privateKeyEngine', 'privateKeyIdentifier', 'sessionIdContext',
+  'ticketKeys', 'sessionTimeout', 'session', 'pskCallback', 'requestOCSP', 'enableTrace', 'servername', 'ALPNProtocols', 'ALPNCallback', 'isServer',
+  'requestCert', 'SNICallback',
+];
+const unset = (names) => Object.fromEntries(names.map((name) => [name, undefined]));
+const REQUEST_SHADOWS = unset(REQUEST_OPTION_NAMES);
+const CONNECTION_SHADOWS = unset(CONNECTION_OPTION_NAMES);
+const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
+// The URL's fields go in the same object: given a URL, Node only recognises it
+// as one while it has no `auth` or `path`, which a polluted prototype supplies.
+const httpOptions = (target, options) => ({ ...REQUEST_SHADOWS, ...urlToHttpOptions(target), ...options });
+/** `agent`, whose new connections are made with every option Node reads set */
+function checked(agent) {
+  const create = agent.createConnection;
+  agent.createConnection = function (options, callback) { return create.call(this, shadow(options), callback); };
   return agent;
 }
 
@@ -185,9 +223,17 @@ function proxyAgent(proxy, tunnel) {
 function requestOptions(url, method, headers, proxy, publicOnly) {
   if (!proxy) {
     const transport = url.protocol === 'https:' ? https : http;
-    return [transport, url, { method, headers, agent: publicOnly ? publicPools.get(transport) : agentFor(transport) }];
+    return [transport, httpOptions(url, { method, headers, agent: publicOnly ? publicPools.get(transport) : agentFor(transport) })];
   }
-  if (url.protocol === 'https:') return [https, url, { method, headers, agent: proxyAgent(proxy, true) }];
+  // A proxy resolves host names itself, so the address it connects to can't be
+  // checked here: only IP addresses (checked before this) are safe to send
+  if (publicOnly && !net.isIP(url.hostname.replace(/^\[|\]$/g, ''))) {
+    throw coded(
+      new Error(`allowPrivateNetwork: false can't check ${url.hostname} through a proxy, which resolves host names itself. Request an IP address, bypass the proxy for this host (NO_PROXY), or enforce the rule in the proxy`),
+      'RUST_FETCH_UNCHECKED',
+    );
+  }
+  if (url.protocol === 'https:') return [https, httpOptions(url, { method, headers, agent: proxyAgent(proxy, true) })];
   // Options override the proxy URL's fields; its credentials only go in Proxy-Authorization
   const options = {
     path: url.href,
@@ -196,7 +242,7 @@ function requestOptions(url, method, headers, proxy, publicOnly) {
     headers: { ...headers, host: url.host, ...proxyAuthorization(proxy) },
     agent: proxyAgent(proxy, false),
   };
-  return [proxy.protocol === 'https:' ? https : http, proxy, options];
+  return [proxy.protocol === 'https:' ? https : http, httpOptions(proxy, options)];
 }
 
 // --- Private networks -----------------------------------------------------------
@@ -225,29 +271,56 @@ for (const [address, prefix] of [
   PRIVATE_NETWORKS.addSubnet(address, prefix, 'ipv4');
 }
 for (const [address, prefix] of [
-  ['::', 128], // unspecified
-  ['::1', 128], // loopback
+  ['::', 96], // unspecified, loopback and the deprecated IPv4-compatible addresses
   ['100::', 64], // discard
+  ['100:0:0:1::', 64], // dummy prefix
   ['2001:db8::', 32], // documentation
+  ['3fff::', 20], // documentation
+  ['5f00::', 16], // segment routing SIDs
+  ['64:ff9b:1::', 48], // local-use NAT64
   ['fc00::', 7], // unique local
   ['fe80::', 10], // link-local
+  ['fec0::', 10], // site-local (deprecated)
   ['ff00::', 8], // multicast
 ]) {
   PRIVATE_NETWORKS.addSubnet(address, prefix, 'ipv6');
 }
 
-/** Whether an IP address is private or reserved; IPv4-mapped and NAT64 (64:ff9b::/96) addresses by their IPv4 address */
+/** The 16 bytes of an IPv6 address */
+function ipv6Bytes(address) {
+  const [head, tail] = address.split('%')[0].split('::');
+  const bytes = (part) => (part ? part.split(':') : []).flatMap((group) => (group.includes('.') ? group.split('.').map(Number) : [parseInt(group, 16) >> 8, parseInt(group, 16) & 255]));
+  const first = bytes(head);
+  if (tail === undefined) return first;
+  const last = bytes(tail);
+  return [...first, ...new Array(16 - first.length - last.length).fill(0), ...last];
+}
+
+/**
+ * BlockList.check turns a string into a SocketAddress, which reads `port` and
+ * `flowlabel` from its options, and reports an address it can't build as not
+ * blocked. A polluted Object.prototype could supply a port that isn't one, so
+ * every field is given.
+ */
+function inPrivateNetworks(address, family) {
+  return PRIVATE_NETWORKS.check(new net.SocketAddress({ address, family, port: 0, flowlabel: 0 }));
+}
+
+/** Whether an IP address is private or reserved, or embeds an IPv4 address that is (NAT64, 6to4, Teredo and IPv4-translated addresses) */
 function isPrivateAddress(address) {
   const family = net.isIP(address);
-  if (family === 4) return PRIVATE_NETWORKS.check(address, 'ipv4');
+  if (family === 4) return inPrivateNetworks(address, 'ipv4');
   if (family !== 6) return false;
-  const nat64 = /^64:ff9b::(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/i.exec(address);
-  if (nat64) {
-    const embedded = nat64[1] ?? [nat64[2], nat64[3]].flatMap((group) => [parseInt(group, 16) >> 8, parseInt(group, 16) & 255]).join('.');
-    return PRIVATE_NETWORKS.check(embedded, 'ipv4');
-  }
   // BlockList matches IPv4-mapped IPv6 (::ffff:a.b.c.d) against the IPv4 ranges
-  return PRIVATE_NETWORKS.check(address, 'ipv6');
+  if (inPrivateNetworks(address, 'ipv6')) return true;
+  const b = ipv6Bytes(address);
+  const v4 = (at, mask = 0) => `${b[at] ^ mask}.${b[at + 1] ^ mask}.${b[at + 2] ^ mask}.${b[at + 3] ^ mask}`;
+  const embedded = [];
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b.slice(4, 12).every((byte) => byte === 0)) embedded.push(v4(12)); // 64:ff9b::/96
+  else if (b[0] === 0x20 && b[1] === 0x02) embedded.push(v4(2)); // 6to4
+  else if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0 && b[3] === 0) embedded.push(v4(4), v4(12, 0xff)); // Teredo: server and obfuscated client
+  else if (b.slice(0, 8).every((byte) => byte === 0) && b[8] === 0xff && b[9] === 0xff && b[10] === 0 && b[11] === 0) embedded.push(v4(12)); // ::ffff:0:0:0/96
+  return embedded.some((embeddedAddress) => inPrivateNetworks(embeddedAddress, 'ipv4'));
 }
 
 function blockedAddress(host, address) {
@@ -271,8 +344,8 @@ function publicLookup(hostname, options, callback) {
 // Connections made under the check are pooled apart, so a connection another
 // client made to a private address is never reused for a checked request
 const publicPools = new Map([
-  [http, new http.Agent({ ...POOL_OPTIONS, lookup: publicLookup })],
-  [https, new https.Agent({ ...POOL_OPTIONS, lookup: publicLookup })],
+  [http, checked(new http.Agent({ ...POOL_OPTIONS, lookup: publicLookup }))],
+  [https, checked(new https.Agent({ ...POOL_OPTIONS, lookup: publicLookup }))],
 ]);
 
 // --- Request queue --------------------------------------------------------------
@@ -432,17 +505,56 @@ function decoderStream(encoding) {
   }
 }
 
+const ignore = () => {};
+
 /** A streamed response body as a web `ReadableStream`, decompressed; cancelling it closes the response */
-function bodyStream(response, method) {
-  const encodings = (method === 'HEAD' ? '' : response.headers['content-encoding'] ?? '')
+function bodyStream(response, method, headers) {
+  const encodings = (method === 'HEAD' ? '' : headers['content-encoding'] ?? '')
     .toLowerCase()
     .split(',')
     .map((e) => e.trim())
     .filter((e) => e && e !== 'identity');
   const decoders = encodings.reverse().map(decoderStream).filter(Boolean);
-  const source = decoders.length ? pipeline(response, ...decoders, () => {}) : response;
-  // A queue of several chunks, so the socket isn't paused after each one
-  return Readable.toWeb(source, { strategy: new CountQueuingStrategy({ highWaterMark: 16 }) });
+  const source = decoders.length ? pipeline(response, ...decoders, ignore) : response;
+  return webStream(source);
+}
+
+/**
+ * `Readable.toWeb(readable)`, with a queue of several chunks so the socket isn't paused after each one. Node's own
+ * builds the stream's underlying source from a plain object, and the ReadableStream constructor reads `type` and
+ * `start` from it by inheritance: an inherited `type` made it throw in the response handler. This source has no prototype.
+ */
+function webStream(readable) {
+  let controller;
+  let cancelled = false;
+  // Set once the stream has finished, failed or been cancelled: data still buffered in the Readable is dropped, not enqueued
+  let done = false;
+  const strategy = new CountQueuingStrategy({ highWaterMark: 16 });
+  readable.pause();
+  const cleanup = finished(readable, (error) => {
+    done = true;
+    cleanup();
+    // Legacy streams may emit 'error' again after finishing
+    readable.on('error', ignore);
+    if (error) {
+      return controller.error(error.code === 'ERR_STREAM_PREMATURE_CLOSE' ? Object.assign(new Error('The operation was aborted', { cause: error }), { name: 'AbortError', code: 'ABORT_ERR' }) : error);
+    }
+    if (!cancelled) controller.close();
+  });
+  readable.on('data', (chunk) => {
+    if (done) return;
+    // A copy, so a pooled Buffer isn't detached
+    controller.enqueue(Buffer.isBuffer(chunk) ? new Uint8Array(chunk) : chunk);
+    if (controller.desiredSize <= 0) readable.pause();
+  });
+  return new ReadableStream({
+    __proto__: null,
+    type: undefined,
+    autoAllocateChunkSize: undefined,
+    start(c) { controller = c; },
+    pull() { readable.resume(); },
+    cancel(reason) { cancelled = true; done = true; readable.destroy(reason); },
+  }, strategy);
 }
 
 function decompress(body, contentEncoding, limit) {
@@ -470,11 +582,49 @@ function tooLarge(limit) {
 const COMPRESSED_SLACK = 1024 * 1024;
 
 /** Response headers as one string per name; repeated headers joined with ", " */
-function flattenHeaders(raw) {
-  const headers = {};
-  for (const name in raw) {
-    const value = raw[name];
+function flattenHeaders(received) {
+  // Own properties only, and the result keeps a header named __proto__ as data
+  const headers = { __proto__: null };
+  for (const name of Object.keys(received)) {
+    const value = received[name];
     headers[name] = Array.isArray(value) ? value.join(', ') : value;
+  }
+  return Object.setPrototypeOf(headers, Object.prototype);
+}
+
+// Node keeps only the first of these when a response repeats one
+const FIRST_ONLY = new Set([
+  'age', 'authorization', 'content-length', 'content-type', 'etag', 'expires', 'from', 'host', 'if-modified-since', 'if-unmodified-since',
+  'last-modified', 'location', 'max-forwards', 'proxy-authorization', 'referer', 'retry-after', 'server', 'user-agent',
+]);
+
+/**
+ * The response's headers by lowercase name, in a map without a prototype and
+ * joined the way Node's own IncomingMessage.headers is. That one is built
+ * with lookups that find Object.prototype: a polluted name could discard the
+ * genuine header or supply one the server never sent (a framing, encoding,
+ * content type or redirect location).
+ */
+function receivedHeaders(raw) {
+  const headers = { __proto__: null };
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i].toLowerCase();
+    const value = raw[i + 1];
+    if (!(name in headers)) headers[name] = name === 'set-cookie' ? [value] : value;
+    else if (name === 'set-cookie') headers[name].push(value);
+    else if (!FIRST_ONLY.has(name)) headers[name] += `${name === 'cookie' ? '; ' : ', '}${value}`;
+  }
+  return headers;
+}
+
+/** The native addon's raw header pairs as an object; repeated headers joined with ", " */
+function ownHeaders(raw) {
+  const headers = {};
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i];
+    if (Object.hasOwn(headers, name)) headers[name] = `${headers[name]}, ${raw[i + 1]}`;
+    else if (name in headers) Object.defineProperty(headers, name, { value: raw[i + 1], writable: true, enumerable: true, configurable: true });
+    else headers[name] = raw[i + 1];
   }
   return headers;
 }
@@ -539,10 +689,13 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   } catch (error) {
     return reject(error);
   }
-  const [transport, target, options] = args;
-  const request = transport.request(target, options, (response) => {
+  const [transport, options] = args;
+  const request = transport.request(options, (response) => {
     const status = response.statusCode;
-    const location = response.headers.location;
+    const incoming = receivedHeaders(response.rawHeaders);
+    // Node's keep-alive handling reads this too
+    response.headers = incoming;
+    const location = incoming.location;
 
     if (REDIRECT_STATUSES.has(status) && location && !state.manual) {
       let drained = 0;
@@ -582,23 +735,23 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
     // Streamed: resolve with the body as it arrives (error statuses are read in full)
     const success = (status >= 200 && status < 300) || (state.manual && REDIRECT_STATUSES.has(status));
     if (state.stream && success) {
-      return resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body: bodyStream(response, method) });
+      return resolve({ status, url: url.href, headers: flattenHeaders(incoming), body: bodyStream(response, method, incoming) });
     }
 
     // With a Content-Length, fill one preallocated buffer (a single copy);
     // otherwise collect chunks and join them at the end.
-    const expected = Number(response.headers['content-length']);
+    const expected = Number(incoming['content-length']);
     // maxResponseBytes limits the decompressed body: check what the server
     // declares, then what arrives (a compressed body gets some slack, and its
     // decompression is bounded too)
     const limit = state.maxResponseBytes;
-    const encoded = !!response.headers['content-encoding'] && response.headers['content-encoding'].trim().toLowerCase() !== 'identity';
+    const encoded = !!incoming['content-encoding'] && incoming['content-encoding'].trim().toLowerCase() !== 'identity';
     const rawLimit = limit === undefined ? Infinity : encoded ? limit + COMPRESSED_SLACK : limit;
     if (Number.isSafeInteger(expected) && expected > rawLimit && method !== 'HEAD') {
       response.destroy();
       return reject(tooLarge(limit));
     }
-    const preallocated = !response.headers['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
+    const preallocated = !incoming['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
     const buffer = preallocated ? new Uint8Array(expected) : undefined;
     let received = 0;
     const chunks = [];
@@ -627,10 +780,10 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
           body = buffer;
         } else {
           const raw = buffer ? Buffer.concat([buffer.subarray(0, Math.min(received, expected)), ...chunks]) : Buffer.concat(chunks);
-          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding'], limit));
+          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, incoming['content-encoding'], limit));
           if (body.length > (limit ?? Infinity)) throw tooLarge(limit);
         }
-        resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body });
+        resolve({ status, url: url.href, headers: flattenHeaders(incoming), body });
       } catch (error) {
         reject(error);
       }
@@ -668,7 +821,9 @@ function nodeTransport(request) {
     return nativeTransport(request);
   }
 
+  // Null prototypes throughout: an inherited property must never be read as a setting
   const state = {
+    __proto__: null,
     cancelled: false,
     request: undefined,
     bodyType: request.bodyType ?? AUTO,
@@ -729,7 +884,7 @@ function nodeTransport(request) {
 
 /** The request's headers plus fetch()-like defaults */
 function withDefaultHeaders(request) {
-  const headers = { ...request.headers };
+  const headers = { __proto__: null, ...request.headers };
   headers['accept'] ??= '*/*';
   headers['accept-encoding'] ??= ACCEPT_ENCODING;
   headers['user-agent'] ??= 'rust-fetch';
@@ -753,6 +908,7 @@ function nativeTransport(request) {
   const bodyType = request.bodyType ?? AUTO;
   const manual = request.redirect === 'manual';
   const options = {
+    __proto__: null,
     id,
     method: request.method,
     url: request.url,
@@ -773,9 +929,9 @@ function nativeTransport(request) {
       clearTimeout(timer);
       // The timeout covers the wait here too
       const timeout = options.timeout > 0 ? Math.max(1, options.timeout - (performance.now() - queuedAt)) : options.timeout;
-      native.send(timeout === options.timeout ? options : { ...options, timeout }).then((response) => {
+      native.send(timeout === options.timeout ? options : { __proto__: null, ...options, timeout }).then((response) => {
         release();
-        resolve(response);
+        resolve(Object.setPrototypeOf(response, null));
       });
     });
     if (!entry) return;
@@ -787,23 +943,18 @@ function nativeTransport(request) {
       resolve(response);
     };
     if (options.timeout > 0) {
-      timer = setTimeout(() => giveUp({ error: `Request timeout after ${options.timeout}ms`, code: 'RUST_FETCH_TIMEOUT' }), options.timeout);
+      timer = setTimeout(() => giveUp({ __proto__: null, error: `Request timeout after ${options.timeout}ms`, code: 'RUST_FETCH_TIMEOUT' }), options.timeout);
     }
   });
   const finished = sent.then((response) => {
     if (response.code === 'RUST_FETCH_TOO_LARGE') throw tooLarge(options.maxResponseBytes);
     if (response.error != null) throw coded(new Error(response.error), response.code);
-    const headers = {};
-    const raw = response.headers;
-    for (let i = 0; i < raw.length; i += 2) {
-      const name = raw[i];
-      headers[name] = Object.hasOwn(headers, name) ? `${headers[name]}, ${raw[i + 1]}` : raw[i + 1];
-    }
+    const headers = ownHeaders(response.headers);
     return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType, manual);
   });
   finished.cancel = () => {
     if (dispatched) native.cancel(id);
-    else giveUp({ error: 'The request was cancelled', code: 'ABORT_ERR' });
+    else giveUp({ __proto__: null, error: 'The request was cancelled', code: 'ABORT_ERR' });
   };
   return finished;
 }
@@ -816,8 +967,8 @@ function finishResponse({ status, url, headers, body }, bodyType, manual) {
   const ok = status >= 200 && status < 300;
   const success = ok || (manual && REDIRECT_STATUSES.has(status));
   // Error statuses carry their body as text (for HttpError.body)
-  const decoded = success ? decodeBody(body, headers['content-type'], bodyType) : decodeBody(body, '', TEXT);
-  return { status, statusText: '', ok, url, headers, body: decoded };
+  const decoded = success ? decodeBody(body, Object.hasOwn(headers, 'content-type') ? headers['content-type'] : undefined, bodyType) : decodeBody(body, '', TEXT);
+  return { __proto__: null, status, statusText: '', ok, url, headers, body: decoded };
 }
 
 globalThis[Symbol.for('rust-fetch.transport')] = nodeTransport;
