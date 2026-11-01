@@ -1014,9 +1014,7 @@ impl<'a> Options<'a> {
         let names = if !value.is_object() {
             Some(Vec::new())
         } else {
-            let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
-            let plain = prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype);
-            plain.then(|| {
+            is_plain_object(value).then(|| {
                 js_sys::Object::keys(value.unchecked_ref::<js_sys::Object>())
                     .iter()
                     .filter_map(|name| name.as_string())
@@ -1042,7 +1040,7 @@ impl<'a> Options<'a> {
     /// The option, unless it's unset, `null` or `undefined`
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
-            prop(self.value, name)
+            read(self.value, name)
         } else {
             None
         }
@@ -2280,14 +2278,45 @@ fn js_number_to_string(n: f64) -> String {
         .unwrap_or_else(|_| n.to_string())
 }
 
+/// Whether `value` is an object whose only prototype is `Object.prototype` (or
+/// none). Options on such objects never come from the prototype chain, so
+/// pollution of `Object.prototype` can't set them; objects with their own
+/// prototype may inherit options deliberately.
+fn is_plain_object(value: &JsValue) -> bool {
+    let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
+    prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype)
+}
+
 /// Read an object property, treating `undefined` and `null` as absent
+fn read(target: &JsValue, name: &str) -> Option<JsValue> {
+    js_sys::Reflect::get(target, &name.into())
+        .ok()
+        .filter(|v| !v.is_undefined() && !v.is_null())
+}
+
+/// Read an option from an options object, treating `undefined` and `null` as
+/// absent. On a plain object only its own properties count.
 fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     if !target.is_object() {
         return None;
     }
-    js_sys::Reflect::get(target, &name.into())
-        .ok()
-        .filter(|v| !v.is_undefined() && !v.is_null())
+    if is_plain_object(target)
+        && !js_sys::Object::has_own(target.unchecked_ref::<js_sys::Object>(), &name.into())
+    {
+        return None;
+    }
+    read(target, name)
+}
+
+/// Like `prop`, but `null` is a value (`undefined` when unset)
+pub(crate) fn raw_prop(target: &JsValue, name: &str) -> JsValue {
+    if !target.is_object()
+        || (is_plain_object(target)
+            && !js_sys::Object::has_own(target.unchecked_ref::<js_sys::Object>(), &name.into()))
+    {
+        return JsValue::UNDEFINED;
+    }
+    js_sys::Reflect::get(target, &name.into()).unwrap_or(JsValue::UNDEFINED)
 }
 
 /// Own data properties, including `__proto__`, without invoking inherited

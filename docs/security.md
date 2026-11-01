@@ -126,9 +126,10 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 - **Every address is checked when connecting:** the host's DNS answers (all of them), or the IP address itself. So DNS rebinding can't get past it, and each redirect is checked again.
 - **Blocked ranges:**
   - IPv4: loopback, RFC 1918 private, link-local (including the 169.254.169.254 metadata endpoint), carrier-grade NAT, "this network", multicast, reserved and documentation ranges
-  - IPv6: loopback, unspecified, unique-local, link-local and multicast, plus IPv4-mapped (`::ffff:10.0.0.1`) and NAT64 (`64:ff9b::…`) forms of the IPv4 ranges
+  - IPv6: loopback, unspecified, unique-local, link-local, site-local, multicast and documentation ranges, the deprecated IPv4-compatible `::a.b.c.d` addresses, and local-use NAT64 (`64:ff9b:1::/48`), plus the forms that carry an IPv4 address: IPv4-mapped (`::ffff:10.0.0.1`), IPv4-translated (`::ffff:0:10.0.0.1`), NAT64 (`64:ff9b::…`), 6to4 (`2002:…`) and Teredo (`2001:0:…`) addresses are blocked when the IPv4 address inside them is
+  - Other spellings: the URL parser turns hexadecimal, octal, decimal and short IPv4 forms (`0x7f.1`, `2130706433`, `127.1`) into the dotted address before the check, and host names are checked by what they resolve to, so `localhost.` and `foo.localhost` are covered
 - **Separate connection pool:** checked requests never reuse a connection another client made to a private address.
-- **Proxies:** through a proxy, only IP-address targets are checked, since the proxy resolves names. Apply the same rule in the proxy's own configuration.
+- **Proxies:** a proxy resolves host names itself, so this client can't see which address it connects to. With `allowPrivateNetwork: false` and a proxy for the target, an IP-address target is checked as usual and a host name is refused, before anything is sent, with a `NetworkError` ("allowPrivateNetwork: false can't check … through a proxy"). The same goes for a redirect to a name. Use an IP address, bypass the proxy for that host (`NO_PROXY` with `proxy: 'env'`), or enforce the rule in the proxy. Before 2.7.0, names went through the proxy unchecked.
 - **WebSockets too:** `client.websocket()` (Node's built-in WebSocket, which connects through undici rather than `node:http`) gets its own checked connection pool. An IP address that is private or reserved throws a `NetworkError` from `websocket()` before anything connects; a host name is checked on every connection, reconnections included, and a blocked one fails the attempt with the same "Blocked: …" message. Set it per connection with `websocket(url, { allowPrivateNetwork })`. It can't be combined with your own `dispatcher` (whose connections it couldn't check), and while another undici global dispatcher is installed (for example a `ProxyAgent` from `setGlobalDispatcher`) `websocket()` throws an `InvalidInputError` instead of connecting unchecked.
 - **Not covered:** in browsers this option does nothing; they enforce their own private-network rules.
 - **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
@@ -167,7 +168,7 @@ const fetcher = new WasmClient({
 });
 ```
 
-Not covered by this client, so handle them elsewhere: targets behind a proxy, where only IP addresses are checked (the proxy needs the same rule); and in browsers, where `allowPrivateNetwork` does nothing. Add an allowlist of hosts or schemes in your code if you can, and egress rules in your network.
+Not covered by this client, so handle them elsewhere: targets behind a proxy, which resolves names itself (this client refuses host names there, so the proxy needs the same rule for the IP addresses it is given); and in browsers, where `allowPrivateNetwork` does nothing. Add an allowlist of hosts or schemes in your code if you can, and egress rules in your network.
 
 **Streaming APIs** (LLMs over Server-Sent Events or NDJSON). Long-lived responses, so the per-attempt timeout isn't enough.
 
@@ -192,6 +193,21 @@ const stream = llm.events('/v1/chat/completions', {
 ```
 
 `for await` over the stream holds the server back when your loop is slow. Left out on purpose: `maxResponseBytes`, which would also end a long stream.
+
+## Prototype pollution
+
+If something else in the process pollutes `Object.prototype`, the client must not read the pollution as settings. Before 2.7.0 (and the patch releases listed in the security advisory), it did in several places. On the Node.js transports an inherited `proxy` (2.4.0 and later) sent requests, their `Authorization` headers and their bodies to the attacker's server; an inherited undici `dispatcher` did the same for `websocket()` connections (2.2.0 and later); an inherited `ca` made the attacker's certificate authority trusted for HTTPS (every 2.x release); an inherited `body`, `signal`, `auth` or `path` altered or aborted requests; inherited `blockPrivateNetwork`, `maxResponseBytes` and timeout fields made requests fail (2.5.0 and later); and, in the unreleased streaming-upload code, inherited upload state threw outside a request and ended the process. In 2.0.0 and earlier (and 1.x and 0.x), Node.js requests went through Node's built-in `fetch()`, whose option handling in undici reads `method`, `headers`, `body`, `signal` and `dispatcher` from the prototype chain, so every request was exposed; the `node:http` transport of 2.1.0 and later doesn't use `fetch()`. In browsers, the requests this client makes were not affected (checked in Chromium, Firefox and WebKit).
+
+Now, on both Node.js transports:
+
+- **Internal objects have no prototype.** The request the Wasm core hands to the transport, the per-request state, upload records and sessions, the native addon's request and response, the diagnostics state, `RequestInit` and WebSocket init objects: none inherits from `Object.prototype`, and values read back from them are read as their own properties.
+- **Options on plain objects ignore the prototype chain**, at the top level and in nested option objects (`retries`, `retryBudget`, `circuitBreaker`, `rateLimit`, WebSocket and SSE options). An options object with its own prototype (shared defaults, a class instance) still inherits, deliberately.
+- **Options Node.js reads by inheritance are set explicitly.** `http.request`, `net.connect` and `tls.connect` copy their options into plain objects and read names such as `socketPath`, `auth`, `lookup`, `ca` and `servername` from them. The transport passes every such name as an own property, and the URL as options rather than as a `URL` object (Node only recognises one while it has no inherited `auth` or `path`).
+- **Protections stay in force:** an unknown certificate is still refused, `allowPrivateNetwork: false` still blocks, `maxResponseBytes` still applies, and explicit options still take effect, including `false`, `0` and `null` where those mean something.
+
+[`prototype-pollution.test.mjs`](https://github.com/asemqaffaf/rust-fetch/blob/main/wasm-module/js/test/prototype-pollution.test.mjs) pollutes every one of those names with hostile values, in child processes, against both transports, and checks that nothing changes: no request reaches an attacker's proxy or dispatcher, no certificate is trusted, and nothing throws outside a request.
+
+**What the client can't fix.** Node.js's own `http`, `net` and stream modules read some names from the prototype chain themselves: an event named `timeout` (`socket.on('timeout')` fails with "existing.push is not a function"), and the `signal` stream option (every new socket and every incoming response then throws). With those names polluted, any Node.js HTTP client fails, this one included on the `node:http` transport; the native transport is unaffected except for streamed responses and progress callbacks, which use `node:http`. Fix the pollution at its source. Freezing the prototype (`Object.freeze(Object.prototype)`, or `node --disable-proto=delete --frozen-intrinsics`) prevents it.
 
 ## Transport isolation (2.7.0)
 

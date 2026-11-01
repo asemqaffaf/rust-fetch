@@ -72,7 +72,8 @@ try {
 More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-started), and configurations to copy for credentialed APIs, user-supplied URLs and streaming APIs in [Hardened configurations](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations).
 
 > **Release status**
-> - **On npm (2.7.0):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **On npm (2.6.1):** everything in the documentation except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **Prepared as 2.7.0, not yet published:** the features listed under *Added* in the [2.7.0 changelog](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md#270---2026-11-08) (streaming request bodies, phase timeouts, circuit breakers, rate limits, idempotency keys, per-request retry policies and observability), and the fix for prototype pollution (#191), which is also prepared as patch releases for the earlier 2.x lines. None of these is published yet; until it is, 2.6.1 and earlier are affected.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](https://asemqaffaf.github.io/rust-fetch/performance#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Compared with `fetch()` and axios

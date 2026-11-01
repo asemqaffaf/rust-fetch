@@ -31,17 +31,17 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     } catch { return Object.create(null); } // The core validates malformed headers.
     return result;
   }
-  const metrics = () => ({ started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
+  const metrics = () => ({ __proto__: null, started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
   const diagnosticOptions = ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext', 'timings', 'metrics', 'propagateTrace', 'debug', 'traceOrigins'];
   function stateFor(options) {
     const debug = typeof process !== 'undefined' && /(?:^|,)(?:rust-fetch\*?|\*)(?:,|$)/.test(process.env?.DEBUG ?? '');
     if (!debug && !diagnosticOptions.some((name) => options != null && Object.hasOwn(Object(options), name))) {
-      return { config: { enabled: false, debug: false }, options: {} };
+      return { __proto__: null, config: { __proto__: null, enabled: false, debug: false }, options: { __proto__: null } };
     }
     return configure(options);
   }
   function configure(options = {}) {
-    const c = {};
+    const c = { __proto__: null };
     for (const key of ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext']) {
       c[key] = own(options, key);
       if (c[key] != null && typeof c[key] !== 'function') throw invalid(key, 'must be a function');
@@ -65,7 +65,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     }
     if (c.propagateTrace && (!c.traceOrigins.size || !c.traceContext)) throw invalid('propagateTrace', 'requires traceOrigins and traceContext');
     c.enabled = !!(c.timings || c.metrics || c.debug || c.onRequestStart || c.onRequestEnd || c.propagateTrace);
-    return { config: c, options: {}, metrics: c.metrics ? metrics() : undefined };
+    return { __proto__: null, config: c, options: { __proto__: null }, metrics: c.metrics ? metrics() : undefined };
   }
   const log = (c, e) => call(c.debug === true ? (v) => console.debug('[rust-fetch]', v) : typeof c.debug === 'function' ? c.debug : undefined, e);
   function trace(c) {
@@ -137,7 +137,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       else if (type === 'attemptStart') {
         cause = undefined;
         if (queue != null) timings.queuedMs += t - queue; queue = undefined;
-        last = { startMs: t - start, ttfbMs: null, totalMs: 0 }; timings.attempts.push(last);
+        last = { __proto__: null, startMs: t - start, ttfbMs: null, totalMs: 0 }; timings.attempts.push(last);
         log(c, summary(type, { attempt: timings.attempts.length }));
       } else if (type === 'headers' && last) {
         last.ttfbMs = t - start - last.startMs; if (value) { last.status = value.status; if (value.url) url = value.url; }
@@ -202,6 +202,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       // client options (which may contain large application objects).
       const sensitiveHeaders = option(options, 'sensitiveHeaders');
       state.options = {
+        __proto__: null,
         baseUrl: option(options, 'baseUrl'),
         headers: state.config.debug ? safeHeaders(option(options, 'headers'), new Set()) : undefined,
         sensitiveHeaders: Array.isArray(sensitiveHeaders) ? [...sensitiveHeaders] : undefined,

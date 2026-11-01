@@ -1273,6 +1273,10 @@ function __wbg_get_imports() {
         __wbg_send_defcfe42df8af5c8: function() { return handleError(function (arg0, arg1) {
             arg0.send(arg1);
         }, arguments); },
+        __wbg_setPrototypeOf_573a48b9f2e22f2d: function(arg0, arg1) {
+            const ret = Object.setPrototypeOf(arg0, arg1);
+            return ret;
+        },
         __wbg_setRequestHeader_733b74e99bf9b791: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4) {
             arg0.setRequestHeader(getStringFromWasm0(arg1, arg2), getStringFromWasm0(arg3, arg4));
         }, arguments); },
@@ -1886,14 +1890,14 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
     if (length != null && (!/^(0|[1-9][0-9]*)$/.test(String(length)) || !Number.isSafeInteger(Number(length)))) throw invalid('Content-Length must be a nonnegative safe integer for a streaming body');
     const total = length == null ? 0 : Number(length);
     const expected = length == null ? undefined : total;
-    let record = { loaded: 0, done: false, source: owner.factory ? undefined : owner.source };
+    let record = { __proto__: null, loaded: 0, done: false, source: owner.factory ? undefined : owner.source };
     const report = (current) => {
       if (progress && !current.cancelled) try { progress({ loaded: current.loaded, total }); } catch {}
     };
     async function read() {
       const current = record;
       try {
-        if (current.done) return { done: true };
+        if (current.done) return { __proto__: null, done: true };
         if (!current.reader) {
           const source = owner.factory ? await owner.factory() : owner.source;
           if (!isSource(source)) throw invalid('A body factory must return a ReadableStream or async iterable');
@@ -1905,17 +1909,17 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
           current.web = typeof source.getReader === 'function';
           if (current.web && source.locked) throw invalid('The streaming body is already locked');
           current.reader = current.web ? source.getReader() : source[Symbol.asyncIterator]();
-          if (current.done) { current.done = false; current.cancelled = false; cancel(current); return { done: true }; }
+          if (current.done) { current.done = false; current.cancelled = false; cancel(current); return { __proto__: null, done: true }; }
         }
         let data = current.pending;
         while (!data?.byteLength) {
           const step = await (current.web ? current.reader.read() : current.reader.next());
-          if (current.done) return { done: true };
+          if (current.done) return { __proto__: null, done: true };
           if (step.done) {
             if (expected !== undefined && current.loaded !== expected) throw invalid('Streaming body length does not match Content-Length');
             current.done = true;
             if (current.web) current.reader.releaseLock();
-            return { done: true };
+            return { __proto__: null, done: true };
           }
           data = bytes(step.value);
         }
@@ -1928,22 +1932,23 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
           chunk = chunk.slice();
           for (;;) {
             const step = await (current.web ? current.reader.read() : current.reader.next());
-            if (current.cancelled) return { done: true };
+            if (current.cancelled) return { __proto__: null, done: true };
             if (step.done) break;
             if (bytes(step.value).byteLength) throw invalid('Streaming body exceeds Content-Length');
           }
           current.done = true;
           if (current.web) current.reader.releaseLock();
         }
-        return { done: false, data: chunk, end: current.done };
+        return { __proto__: null, done: false, data: chunk, end: current.done };
       } catch (cause) {
         const cancelled = current.cancelled;
         cancel(current);
-        if (cancelled) return { done: true };
-        return current.failure = { done: true, error: cause?.message ?? String(cause), invalidInput: cause?.code === 'RUST_FETCH_UPLOAD_INPUT', cause };
+        if (cancelled) return { __proto__: null, done: true };
+        return current.failure = { __proto__: null, done: true, error: cause?.message ?? String(cause), invalidInput: cause?.code === 'RUST_FETCH_UPLOAD_INPUT', cause };
       }
     }
     const session = {
+      __proto__: null,
       next: read,
       failure: () => record.failure,
       cancel: () => cancel(record),
@@ -1973,17 +1978,18 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
         }, { highWaterMark: 0 });
       },
     };
-    if (owner.factory) session.restart = () => { cancel(record); record = { loaded: 0, done: false }; };
+    if (owner.factory) session.restart = () => { cancel(record); record = { __proto__: null, loaded: 0, done: false }; };
     return session;
   }
   function create(source) {
     const factory = typeof source === 'function' ? source : undefined;
     if (!factory && !isSource(source)) return undefined;
-    const owner = { source, factory, used: false };
+    const owner = { __proto__: null, source, factory, used: false };
     const result = {
+      __proto__: null,
       replayable: !!factory,
       open: (progress, length) => open(owner, progress ?? result.progress, length),
-      cancel: () => { if (!owner.used && !factory) cancel({ source, done: false }); },
+      cancel: () => { if (!owner.used && !factory) cancel({ __proto__: null, source, done: false }); },
     };
     return result;
   }
@@ -2034,17 +2040,17 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     } catch { return Object.create(null); } // The core validates malformed headers.
     return result;
   }
-  const metrics = () => ({ started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
+  const metrics = () => ({ __proto__: null, started: 0, completed: 0, failed: 0, active: 0, attempts: 0, retries: 0, samples: [], next: 0, count: 0, sum: 0, min: Infinity, max: 0, origins: new Map() });
   const diagnosticOptions = ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext', 'timings', 'metrics', 'propagateTrace', 'debug', 'traceOrigins'];
   function stateFor(options) {
     const debug = typeof process !== 'undefined' && /(?:^|,)(?:rust-fetch\*?|\*)(?:,|$)/.test(process.env?.DEBUG ?? '');
     if (!debug && !diagnosticOptions.some((name) => options != null && Object.hasOwn(Object(options), name))) {
-      return { config: { enabled: false, debug: false }, options: {} };
+      return { __proto__: null, config: { __proto__: null, enabled: false, debug: false }, options: { __proto__: null } };
     }
     return configure(options);
   }
   function configure(options = {}) {
-    const c = {};
+    const c = { __proto__: null };
     for (const key of ['onRequestStart', 'onRequestEnd', 'redactUrl', 'traceContext']) {
       c[key] = own(options, key);
       if (c[key] != null && typeof c[key] !== 'function') throw invalid(key, 'must be a function');
@@ -2068,7 +2074,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     }
     if (c.propagateTrace && (!c.traceOrigins.size || !c.traceContext)) throw invalid('propagateTrace', 'requires traceOrigins and traceContext');
     c.enabled = !!(c.timings || c.metrics || c.debug || c.onRequestStart || c.onRequestEnd || c.propagateTrace);
-    return { config: c, options: {}, metrics: c.metrics ? metrics() : undefined };
+    return { __proto__: null, config: c, options: { __proto__: null }, metrics: c.metrics ? metrics() : undefined };
   }
   const log = (c, e) => call(c.debug === true ? (v) => console.debug('[rust-fetch]', v) : typeof c.debug === 'function' ? c.debug : undefined, e);
   function trace(c) {
@@ -2140,7 +2146,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       else if (type === 'attemptStart') {
         cause = undefined;
         if (queue != null) timings.queuedMs += t - queue; queue = undefined;
-        last = { startMs: t - start, ttfbMs: null, totalMs: 0 }; timings.attempts.push(last);
+        last = { __proto__: null, startMs: t - start, ttfbMs: null, totalMs: 0 }; timings.attempts.push(last);
         log(c, summary(type, { attempt: timings.attempts.length }));
       } else if (type === 'headers' && last) {
         last.ttfbMs = t - start - last.startMs; if (value) { last.status = value.status; if (value.url) url = value.url; }
@@ -2205,6 +2211,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       // client options (which may contain large application objects).
       const sensitiveHeaders = option(options, 'sensitiveHeaders');
       state.options = {
+        __proto__: null,
         baseUrl: option(options, 'baseUrl'),
         headers: state.config.debug ? safeHeaders(option(options, 'headers'), new Set()) : undefined,
         sensitiveHeaders: Array.isArray(sensitiveHeaders) ? [...sensitiveHeaders] : undefined,

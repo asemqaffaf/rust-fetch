@@ -10,8 +10,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
   'rust_fetch_bg.wasm': { raw: 445_000, gzip: 181_000, brotli: 148_000 }, // includes opt-in observability and WebSocket idle timers; lowered after #179 and #180
-  'rust_fetch.js': { raw: 98_500, gzip: 19_500, brotli: 17_000 }, // includes timings, tracing, redaction and bounded metrics
-  'node.js': { raw: 51_000, gzip: 16_500, brotli: 14_500 }, // Node transports and opt-in connection diagnostics (not loaded by browsers)
+  'rust_fetch.js': { raw: 99_000, gzip: 19_500, brotli: 17_000 }, // includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload and diagnostics records (#191)
+  'node.js': { raw: 56_500, gzip: 18_000, brotli: 15_800 }, // Node transports and opt-in connection diagnostics (not loaded by browsers); raised from 51/16.5/14.5 kB for prototype-pollution safety (#191): the option names Node reads by inheritance, and the IPv6 forms the private-network check understands
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);
