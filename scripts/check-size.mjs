@@ -11,7 +11,7 @@ const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
   'rust_fetch_bg.wasm': { raw: 575_000, gzip: 228_000, brotli: 180_000 },
   'rust_fetch.js': { raw: 70_000, gzip: 11_500, brotli: 10_000 },
-  'node.js': { raw: 30_000, gzip: 10_000, brotli: 9_000 }, // includes the Node.js transports, the request queue and the native addon's loader
+  'node.js': { raw: 34_050, gzip: 11_650, brotli: 10_150 }, // includes the Node.js transports, the request queue and the native addon's loader; raised from 30_000/10_000/9_000 for prototype-pollution safety (#191): the option names Node reads by inheritance, response headers parsed without a prototype, a response-stream adapter
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);
