@@ -589,11 +589,11 @@ export interface InitOutput {
     readonly websocketconnection_sendJson: (a: number, b: any) => [number, number];
     readonly websocketconnection_state: (a: number) => any;
     readonly websocketconnection_url: (a: number) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__h39ac090089444320: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hb74f2302669dffe9: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__ha55f6af3138fa67d: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__hee4dc590ff76ee6a: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h5f968e02a5abe20b: (a: number, b: number) => void;
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___js_sys_6cf4d9cd98c8a011___Function_fn_wasm_bindgen_9d298ef7e71c0d11___JsValue_____wasm_bindgen_9d298ef7e71c0d11___sys__Undefined___js_sys_6cf4d9cd98c8a011___Function_fn_wasm_bindgen_9d298ef7e71c0d11___JsValue_____wasm_bindgen_9d298ef7e71c0d11___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___wasm_bindgen_9d298ef7e71c0d11___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_9d298ef7e71c0d11___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___wasm_bindgen_9d298ef7e71c0d11___JsValue______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke___web_sys_61200b5968e6325f___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_9d298ef7e71c0d11___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
