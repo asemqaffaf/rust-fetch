@@ -165,7 +165,7 @@ export interface ClientOptions extends BrowserRequestOptions {
    * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
    * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
    * redirect, so DNS rebinding can't get past it. For servers that fetch user-supplied URLs (SSRF). Through a
-   * proxy, only IP-literal hosts are checked (the proxy resolves names). Browsers have their own rules. Default: `true`
+   * proxy, which resolves names itself, IP addresses are checked and host names are refused. Browsers have their own rules. Default: `true`
    */
   allowPrivateNetwork?: boolean;
 }
@@ -688,7 +688,9 @@ impl JsRequest {
                 ))
             })?;
         let headers = parse_headers(&prop(&info, "headers").unwrap_or(JsValue::UNDEFINED))?;
-        let body = js_sys::Reflect::get(&info, &"body".into())?;
+        // An interceptor may return a new object without a body: the prototype
+        // chain of a plain one must not supply it
+        let body = try_raw_prop(&info, "body")?;
         Ok(Self {
             method: parse_method(&method)?,
             url,
@@ -743,9 +745,7 @@ impl<'a> Options<'a> {
         let names = if !value.is_object() {
             Some(Vec::new())
         } else {
-            let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
-            let plain = prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype);
-            plain.then(|| {
+            is_plain_object(value).then(|| {
                 js_sys::Object::keys(value.unchecked_ref::<js_sys::Object>())
                     .iter()
                     .filter_map(|name| name.as_string())
@@ -764,7 +764,7 @@ impl<'a> Options<'a> {
     /// The option, unless it's unset, `null` or `undefined`
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
-            prop(self.value, name)
+            read(self.value, name)
         } else {
             None
         }
@@ -1551,14 +1551,50 @@ fn js_number_to_string(n: f64) -> String {
         .unwrap_or_else(|_| n.to_string())
 }
 
+/// Whether `value` is an object whose only prototype is `Object.prototype` (or
+/// none). Options on such objects never come from the prototype chain, so
+/// pollution of `Object.prototype` can't set them; objects with their own
+/// prototype may inherit options deliberately.
+fn is_plain_object(value: &JsValue) -> bool {
+    let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
+    prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype)
+}
+
 /// Read an object property, treating `undefined` and `null` as absent
+fn read(target: &JsValue, name: &str) -> Option<JsValue> {
+    js_sys::Reflect::get(target, &name.into())
+        .ok()
+        .filter(|v| !v.is_undefined() && !v.is_null())
+}
+
+/// Read an option from an options object, treating `undefined` and `null` as
+/// absent. On a plain object only its own properties count.
 fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     if !target.is_object() {
         return None;
     }
+    if is_plain_object(target)
+        && !js_sys::Object::has_own(target.unchecked_ref::<js_sys::Object>(), &name.into())
+    {
+        return None;
+    }
+    read(target, name)
+}
+
+/// Like `prop`, but `null` is a value (`undefined` when unset)
+pub(crate) fn raw_prop(target: &JsValue, name: &str) -> JsValue {
+    try_raw_prop(target, name).unwrap_or(JsValue::UNDEFINED)
+}
+
+/// `raw_prop`, passing on an exception thrown by a getter
+fn try_raw_prop(target: &JsValue, name: &str) -> std::result::Result<JsValue, JsValue> {
+    if !target.is_object()
+        || (is_plain_object(target)
+            && !js_sys::Object::has_own(target.unchecked_ref::<js_sys::Object>(), &name.into()))
+    {
+        return Ok(JsValue::UNDEFINED);
+    }
     js_sys::Reflect::get(target, &name.into())
-        .ok()
-        .filter(|v| !v.is_undefined() && !v.is_null())
 }
 
 fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {

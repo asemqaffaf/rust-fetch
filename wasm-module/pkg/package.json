@@ -5,7 +5,7 @@
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
   "description": "Resilient HTTP client for JavaScript, TypeScript and Rust: fetch() with timeouts, retries, typed errors, interceptors, upload and download progress, and WebSockets, from one Rust core compiled to WebAssembly for browsers and Node.js",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

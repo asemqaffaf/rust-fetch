@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-11-08
+
+A security patch release. Update to receive it: packages that are already installed are not patched. The date is provisional until the release is published.
+
+### Security
+- **Prototype pollution of the Node.js request path (#191).** With `Object.prototype` polluted by other code in the process, the client read internal settings from the prototype chain instead of ignoring them: an inherited `proxy` sent requests, their `Authorization` headers and their bodies to an attacker's server, an inherited undici `dispatcher` did the same for `websocket()` connections, an inherited `ca` made an attacker's certificate authority trusted for HTTPS, inherited `body`, `signal`, `auth` or `path` added a body to requests (also when a request interceptor returned a new object), aborted them or changed what they asked for, inherited `blockPrivateNetwork`, `maxResponseBytes`, `timeout` and `stream` fields changed requests or made every request fail, an inherited `type`, `size` or `start` made calls that return a stream (`responseType: 'stream'` or `'ndjson'`) throw, on Node.js as an uncaught exception in a response handler, and in browsers too, in browsers, inherited `credentials`, `mode`, `cache`, `redirect`, `referrer`, `referrerPolicy`, `priority`, `body` and `headers` (the members of the `fetch()` init object) changed the requests the browser entry made, inherited header names (`content-type`, `content-encoding`, `content-length`, `location`) replaced or corrupted a response's headers, so bodies were decoded wrongly or requests failed. All of these are fixed: the request the Wasm core builds, the transport's per-request state and the header maps have no prototype or are read by own property, plain option objects ignore inherited names (objects with their own prototype still inherit), every option Node's `http`, `net` and `tls` read by inheritance is set explicitly (with the URL passed as options), the sources and strategies of the streams the client creates have no inherited names, and `websocket()` passes undici an init object without a prototype.
+- **`allowPrivateNetwork: false` could be bypassed through `Object.prototype`.** The private-address check used `net.BlockList.check()` with a string, which builds a `SocketAddress` that reads `port` and `flowlabel` from the prototype chain and reports an address it cannot build as not blocked. With `Object.prototype.port` or `flowlabel` polluted, loopback, link-local and metadata addresses passed the check. The check now builds the address with every field set.
+- **Size budget for the hardening:** the Node.js adapter (`node.js`) grows from 33.5 to 41.8 kB raw (gzip 11.2 → 14.0, brotli 9.7 → 12.3) for the hardening, and its budget rises deliberately to 41.95/14.15/12.4 kB. The WebAssembly module and the browser glue stay within their budgets.
+- The `allowPrivateNetwork` documentation in the TypeScript definitions now describes what happens through a proxy (a comment change only; the API snapshot is updated).
+- **`allowPrivateNetwork: false` through a proxy fails closed, and more IPv6 forms are blocked.** A proxy resolves host names itself, so the address it connects to could not be checked and names were sent through unchecked. A host name (including after a redirect) is now refused with a `NetworkError` before anything is sent, while IP-address targets are checked as before; bypass the proxy for the host (`NO_PROXY`) or use an address. The check also covers IPv4-compatible, IPv4-translated, 6to4 and Teredo addresses that carry a private IPv4 address, and the site-local, local-use NAT64, `3fff::/20` documentation and segment-routing ranges. Behaviour change: code that sent host names through a proxy with `allowPrivateNetwork: false` now gets that error.
+- Node.js's own `http`, `net` and stream modules read a few names from the prototype chain themselves (an event named `timeout`, the `signal` stream option); with those polluted, any Node.js HTTP client fails, this one included on the `node:http` transport. Fix the pollution at its source. See the [security guide](https://asemqaffaf.github.io/rust-fetch/security).
+
 ## [2.5.2] - 2026-10-24
 
 A security patch: a server can no longer tie up connections, or memory on the native transport, with a long or endless redirect body. Performance: the base-against-head benchmark detected no slowdown. Comparisons against `fetch()` and axios were not rerun, so the comparative results in the README remain tied to the versions they tested.
@@ -227,7 +239,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.2...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.3...HEAD
+[2.5.3]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.2...v2.5.3
 [2.5.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.4.1...v2.5.0

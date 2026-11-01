@@ -510,23 +510,22 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
                 merged.insert(name.clone(), value.clone());
             }
         }
-        if merged.iter().next().is_none() && dispatcher.is_none() {
-            protocols.into()
-        } else {
-            let init = js_sys::Object::new();
-            set(&init, "protocols", &protocols)?;
-            if merged.iter().next().is_some() {
-                let js_headers = js_sys::Object::new();
-                for (name, values) in merged.iter() {
-                    set(&js_headers, name, &values.join(", ").into())?;
-                }
-                set(&init, "headers", &js_headers)?;
+        // Always an init object without a prototype, even for just protocols:
+        // given anything else, undici looks its `dispatcher` up on a fresh
+        // object, and so would find one on a polluted Object.prototype
+        let init = js_sys::Object::create(JsValue::NULL.unchecked_ref());
+        set(&init, "protocols", &protocols)?;
+        if merged.iter().next().is_some() {
+            let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
+            for (name, values) in merged.iter() {
+                set(&js_headers, name, &values.join(", ").into())?;
             }
-            if let Some(dispatcher) = &dispatcher {
-                set(&init, "dispatcher", dispatcher)?;
-            }
-            init.into()
+            set(&init, "headers", &js_headers)?;
         }
+        if let Some(dispatcher) = &dispatcher {
+            set(&init, "dispatcher", dispatcher)?;
+        }
+        init.into()
     } else {
         if headers.is_some() {
             return Err(invalid(
