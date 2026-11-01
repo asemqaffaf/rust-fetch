@@ -53,16 +53,17 @@ jobs:
           npm run api:check
 
       - name: Choose npm dist-tag
-        # Older majors (e.g. a 1.x patch after 2.0) must not become "latest"
+        # A patch for an older line (a 1.x patch after 2.0, or 2.5.3 after 2.6.1)
+        # must not become "latest". npm rejects tags that look like version
+        # ranges (v2, v2.5), so those lines publish under release-<major>.<minor>.
         run: |
-          major=${VERSION%%.*}
           latest=$(npm view rust-fetch version 2>/dev/null || echo 0.0.0)
           if [[ "$VERSION" == *-* ]]; then
             tag=next
-          elif [ "$major" -lt "${latest%%.*}" ]; then
-            tag="v$major"
-          else
+          elif [ "$(printf '%s\n%s\n' "$VERSION" "$latest" | sort -V | tail -n1)" = "$VERSION" ]; then
             tag=latest
+          else
+            tag="release-${VERSION%.*}"
           fi
           echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
           echo "Publishing $VERSION with dist-tag $tag"
