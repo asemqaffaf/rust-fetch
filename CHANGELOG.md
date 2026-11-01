@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-11-08
+
+A security patch release. Update to receive it: packages that are already installed are not patched. The date is provisional until the release is published.
+
+### Security
+- **Prototype pollution of the Node.js request path (#191).** With `Object.prototype` polluted by other code in the process, the client read internal settings from the prototype chain instead of ignoring them: an inherited undici `dispatcher` did the same for `websocket()` connections, an inherited `ca` made an attacker's certificate authority trusted for HTTPS, inherited `body`, `signal`, `auth` or `path` added a body to requests (also when a request interceptor returned a new object), aborted them or changed what they asked for, an inherited `type`, `size` or `start` made calls that return a stream (`responseType: 'stream'`) throw, on Node.js as an uncaught exception in a response handler, and in browsers too, in browsers, inherited `credentials`, `mode`, `cache`, `redirect`, `referrer`, `referrerPolicy`, `priority`, `body` and `headers` (the members of the `fetch()` init object) changed the requests the browser entry made, inherited `params` and `responseType` added query parameters and changed how responses were decoded, inherited header names (`content-type`, `content-encoding`, `content-length`, `location`) replaced or corrupted a response's headers, so bodies were decoded wrongly or requests failed. All of these are fixed: the request the Wasm core builds, the transport's per-request state and the header maps have no prototype or are read by own property, plain option objects ignore inherited names (objects with their own prototype still inherit), every option Node's `http`, `net` and `tls` read by inheritance is set explicitly (with the URL passed as options), the sources and strategies of the streams the client creates have no inherited names, and `websocket()` passes undici an init object without a prototype.
+- **Size budget for the hardening:** the Node.js adapter (`node.js`) grows from 16.4 to 20.9 kB raw (gzip 5.9 → 7.5) for the hardening, and its budget rises deliberately to 21/7.65 kB. The WebAssembly module and the browser glue stay within their budgets.
+- Node.js's own `http`, `net` and stream modules read a few names from the prototype chain themselves (an event named `timeout`, the `signal` stream option); with those polluted, any Node.js HTTP client fails, this one included on the `node:http` transport. Fix the pollution at its source. See the [security guide](https://asemqaffaf.github.io/rust-fetch/security).
+
 ## [2.2.0] - 2026-10-23
 
 ### Added
@@ -153,7 +162,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.0.0...v2.1.0
