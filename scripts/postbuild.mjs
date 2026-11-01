@@ -82,5 +82,30 @@ manifest.keywords = [
 manifest.homepage = 'https://asemqaffaf.github.io/rust-fetch/';
 manifest.bugs = { url: 'https://github.com/asemqaffaf/rust-fetch/issues' };
 
+// wasm-streams builds its ReadableStream from a source object and a strategy that
+// inherit from Object.prototype, and the constructor reads `type`, `start`,
+// `autoAllocateChunkSize` and `size` from them by inheritance: with one of those
+// names polluted, every call returning a stream threw. The source gets them as own
+// properties and the strategy becomes a prototype-free copy.
+const streamsGlueUrl = new URL('rust_fetch.js', pkgDir);
+const construct = 'new ReadableStream(IntoUnderlyingSource.__wrap(arg0), arg1)';
+const streamsGlue = readFileSync(streamsGlueUrl, 'utf8');
+if (streamsGlue.split(construct).length !== 2) {
+  throw new Error('postbuild: expected exactly one ReadableStream construction from wasm-streams in rust_fetch.js');
+}
+writeFileSync(
+  streamsGlueUrl,
+  `${streamsGlue.replace(construct, 'new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), streamStrategy(arg1))')}
+// Added by scripts/postbuild.mjs
+function streamSource(source) {
+  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { value: undefined });
+  return source;
+}
+function streamStrategy(strategy) {
+  return new CountQueuingStrategy({ highWaterMark: strategy.highWaterMark });
+}
+`,
+);
+
 writeFileSync(manifestUrl, JSON.stringify(manifest, null, 2) + '\n');
 console.log(`postbuild: prepared ${manifest.name}@${manifest.version}`);

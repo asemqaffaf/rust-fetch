@@ -54,16 +54,17 @@ jobs:
           npm run api:check
 
       - name: Choose npm dist-tag
-        # Older majors (e.g. a 1.x patch after 2.0) must not become "latest"
+        # A patch for an older line (a 1.x patch after 2.0, or 2.5.3 after 2.6.1)
+        # must not become "latest". npm rejects tags that look like version
+        # ranges (v2, v2.5), so those lines publish under release-<major>.<minor>.
         run: |
-          major=${VERSION%%.*}
           latest=$(npm view rust-fetch version 2>/dev/null || echo 0.0.0)
           if [[ "$VERSION" == *-* ]]; then
             tag=next
-          elif [ "$major" -lt "${latest%%.*}" ]; then
-            tag="v$major"
-          else
+          elif [ "$(printf '%s\n%s\n' "$VERSION" "$latest" | sort -V | tail -n1)" = "$VERSION" ]; then
             tag=latest
+          else
+            tag="release-${VERSION%.*}"
           fi
           echo "DIST_TAG=$tag" >> "$GITHUB_ENV"
           echo "Publishing $VERSION with dist-tag $tag"
@@ -82,8 +83,18 @@ jobs:
         # fails the release on a regression (scripts/check-package.mjs)
         if: env.ALREADY_PUBLISHED != 'true'
         run: |
-          if npm view "rust-fetch@$DIST_TAG" version >/dev/null 2>&1; then
-            node scripts/check-package.mjs --strict --baseline "$DIST_TAG"
+          baseline="$DIST_TAG"
+          if [[ "$DIST_TAG" == release-* ]]; then
+            # Compare with the newest published version of the same line
+            baseline=$(npm view rust-fetch versions --json | node -e '
+              const line = process.argv[1];
+              const versions = JSON.parse(require("fs").readFileSync(0, "utf8")).filter((v) => v.startsWith(`${line}.`) && !v.includes("-"));
+              versions.sort((a, b) => a.split(".")[2] - b.split(".")[2]);
+              console.log(versions.at(-1) ?? "");
+            ' "${VERSION%.*}")
+          fi
+          if [ -n "$baseline" ] && npm view "rust-fetch@$baseline" version >/dev/null 2>&1; then
+            node scripts/check-package.mjs --strict --baseline "$baseline"
           else
             node scripts/check-package.mjs --strict --no-bench
           fi
