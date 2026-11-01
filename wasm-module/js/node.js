@@ -649,14 +649,12 @@ function bodyStream(response, method, headers) {
 function webStream(readable) {
   let controller;
   let cancelled = false;
+  // Set once the stream has finished, failed or been cancelled: data still buffered in the Readable is dropped, not enqueued
+  let done = false;
   const strategy = new CountQueuingStrategy({ highWaterMark: 16 });
-  if (readable.destroyed || !readable.readable) {
-    const closed = new ReadableStream({ __proto__: null, type: undefined, autoAllocateChunkSize: undefined, start: undefined, pull: undefined, cancel: undefined }, strategy);
-    closed.cancel();
-    return closed;
-  }
   readable.pause();
   const cleanup = finished(readable, (error) => {
+    done = true;
     cleanup();
     // Legacy streams may emit 'error' again after finishing
     readable.on('error', ignore);
@@ -666,6 +664,7 @@ function webStream(readable) {
     if (!cancelled) controller.close();
   });
   readable.on('data', (chunk) => {
+    if (done) return;
     // A copy, so a pooled Buffer isn't detached
     controller.enqueue(Buffer.isBuffer(chunk) ? new Uint8Array(chunk) : chunk);
     if (controller.desiredSize <= 0) readable.pause();
@@ -676,7 +675,7 @@ function webStream(readable) {
     autoAllocateChunkSize: undefined,
     start(c) { controller = c; },
     pull() { readable.resume(); },
-    cancel(reason) { cancelled = true; readable.destroy(reason); },
+    cancel(reason) { cancelled = true; done = true; readable.destroy(reason); },
   }, strategy);
 }
 
