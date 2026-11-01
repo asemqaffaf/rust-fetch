@@ -9,6 +9,8 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const { WasmClient } = await import(process.env.POLLUTION_PKG);
+// Pollution through __proto__ leaves enumerable properties (which for...in loops see too); POLLUTION_ENUMERABLE=0 uses hidden ones
+const enumerable = process.env.POLLUTION_ENUMERABLE !== '0';
 
 const problems = [];
 const crashes = [];
@@ -52,12 +54,21 @@ const outcome = async (run) => {
   try { return await Promise.race([run(), hung]); } catch (error) { return { error: own(error, 'kind') ?? own(error, 'name') ?? String(error), status: own(error, 'status') }; } finally { clearTimeout(timer); }
 };
 const scenarios = {
-  get: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); const r = await c.get(`${T}/json`); c.free(); return [r.status, r.body]; }),
+  get: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); const r = await c.get(`${T}/json`); c.free(); return [r.status, r.body, Object.keys(r.headers).sort().join()]; }),
+  gzip: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); const r = await c.get(`${T}/gzip`); c.free(); return [r.status, r.body]; }),
   post: () => outcome(async () => {
     const c = new WasmClient({ retries: 0 });
     const r = await c.post(`${T}/json`, { body: 'hello', headers: { authorization: 'Bearer secret' } });
     c.free();
     return [r.status, r.body];
+  }),
+  // An interceptor that returns a new object, which has no body of its own
+  interceptor: () => outcome(async () => {
+    const c = new WasmClient({ retries: 0 });
+    c.addRequestInterceptor((request) => ({ method: request.method, url: request.url, headers: request.headers }));
+    const r = await c.post(`${T}/json`, { body: 'hello' });
+    c.free();
+    return [r.status, r.body.size];
   }),
   upload: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); const r = await c.post(`${T}/json`, { body: bytes }); c.free(); return [r.status, r.body.size]; }),
   redirect: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); const r = await c.get(`${T}/redirect`, { headers: { authorization: 'Bearer secret' } }); c.free(); return [r.status, r.url.replace(T, ''), r.body.authorization]; }),
@@ -66,9 +77,20 @@ const scenarios = {
     const r = await c.get(`${T}/stream`, { responseType: 'stream' });
     let text = '';
     const reader = r.body.getReader();
-    for (let step = await reader.read(); !step.done; step = await reader.read()) text += Buffer.from(step.value).toString();
+    const decoder = new TextDecoder();
+    for (let step = await reader.read(); !step.done; step = await reader.read()) text += decoder.decode(step.value, { stream: true });
     c.free();
     return [r.status, text];
+  }),
+  // A stream the Wasm core builds itself, from a source and a strategy it creates
+  ndjson: () => outcome(async () => {
+    const c = new WasmClient({ retries: 0 });
+    const r = await c.get(`${T}/nd`, { responseType: 'ndjson' });
+    const values = [];
+    const reader = r.body.getReader();
+    for (let step = await reader.read(); !step.done; step = await reader.read()) values.push(step.value);
+    c.free();
+    return [r.status, values];
   }),
   httpError: () => outcome(async () => { const c = new WasmClient({ retries: 0 }); try { await c.get(`${T}/404`); } finally { c.free(); } }),
   progress: () => outcome(async () => {
@@ -129,6 +151,7 @@ const substitute = (value) => {
   return Array.isArray(value) ? value.map(substitute) : value;
 };
 const noop = () => {};
+const dataOnly = new Set(JSON.parse(process.env.POLLUTION_DATA_ONLY ?? '[]'));
 const generic = [true, 1, 'x', {}, ['x'], noop];
 const hostile = JSON.parse(process.env.POLLUTION_NAMES);
 
@@ -137,7 +160,7 @@ const hostile = JSON.parse(process.env.POLLUTION_NAMES);
 // program, not only this library. A difference is excused on the node:http
 // transport only when plain http.get misbehaves under the same pollution.
 const nativeOff = process.env.RUST_FETCH_NATIVE === '0';
-const usesNodeHttp = (scenario) => nativeOff || scenario === 'stream' || scenario === 'progress';
+const usesNodeHttp = (scenario) => nativeOff || scenario === 'stream' || scenario === 'ndjson' || scenario === 'progress';
 // Likewise a plain `new WebSocket()`, which undici builds from objects that inherit
 const wsBreaks = () => new Promise((resolve) => {
   let done = false;
@@ -166,14 +189,15 @@ const nodeBreaks = () => new Promise((resolve) => {
 
 const excused = [];
 for (const [name, extra] of Object.entries(hostile)) {
-  const values = [...generic, ...extra.map(substitute)];
+  // Data is all that most pollution can inject; a function for `then`, `toJSON` or `toString` breaks every program (and this harness)
+  const values = [...generic, ...extra.map(substitute)].filter((value) => !(dataOnly.has(name) && typeof value === 'function'));
   if (process.env.POLLUTION_VERBOSE) console.error(name);
   for (const value of values) {
     const saved = Object.getOwnPropertyDescriptor(Object.prototype, name);
     crashes.length = 0;
     dispatched.length = 0;
     await proxyHits();
-    Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable: false, value });
+    Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable, value });
     let result, broken;
     try {
       result = JSON.stringify(await run());

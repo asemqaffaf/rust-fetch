@@ -1143,7 +1143,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbg_new_with_into_underlying_source_fd904252f385f59c: function(arg0, arg1) {
-            const ret = new ReadableStream(IntoUnderlyingSource.__wrap(arg0), arg1);
+            const ret = new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), streamStrategy(arg1));
             return ret;
         },
         __wbg_new_with_length_3da0ad195f6f63ba: function(arg0) {
@@ -1846,6 +1846,15 @@ export { initSync, __wbg_init as default };
 // Added by scripts/postbuild.mjs
 EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
 
+// Added by scripts/postbuild.mjs
+function streamSource(source) {
+  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { value: undefined });
+  return source;
+}
+function streamStrategy(strategy) {
+  return new CountQueuingStrategy({ highWaterMark: strategy.highWaterMark });
+}
+
 // Portable byte transport, appended to the generated browser/Node glue by
 // postbuild. Retry decisions stay in Rust; an owner only opens a body source.
 (() => {
@@ -1963,7 +1972,12 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
       },
       report: (loaded) => { if (progress && !record.cancelled) try { progress({ loaded, total }); } catch {} },
       readable() {
+        // No prototype: the ReadableStream constructor reads `type`, `start` and `size` by inheritance
         return new ReadableStream({
+          __proto__: null,
+          type: undefined,
+          autoAllocateChunkSize: undefined,
+          start: undefined,
           async pull(controller) {
             const current = record;
             const step = await read();
@@ -1975,7 +1989,7 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
             else { controller.enqueue(step.data); report(current); }
           },
           cancel: () => cancel(record),
-        }, { highWaterMark: 0 });
+        }, new CountQueuingStrategy({ highWaterMark: 0 }));
       },
     };
     if (owner.factory) session.restart = () => { cancel(record); record = { __proto__: null, loaded: 0, done: false }; };
@@ -1998,7 +2012,9 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
     let duplex = false;
     try {
       const request = new Request('https://rust-fetch.invalid/', {
-        method: 'POST', body: new ReadableStream({ start(c) { c.close(); } }),
+        __proto__: null,
+        method: 'POST',
+        body: new ReadableStream({ __proto__: null, type: undefined, autoAllocateChunkSize: undefined, pull: undefined, cancel: undefined, start(c) { c.close(); } }),
         get duplex() { duplex = true; return 'half'; },
       });
       supported = duplex && !request.headers.has('Content-Type');
@@ -2193,12 +2209,16 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       if (response.body instanceof ReadableStream) {
         const reader = response.body.getReader(); response.timings = timings;
         response.body = new ReadableStream({
+          __proto__: null,
+          type: undefined,
+          autoAllocateChunkSize: undefined,
+          start: undefined,
           async pull(controller) {
             try { const step = await reader.read(); if (step.done) { end(response); reader.releaseLock(); controller.close(); } else controller.enqueue(step.value); }
             catch (e) { end(undefined, e, true); reader.releaseLock(); controller.error(e); }
           },
           async cancel(reason) { try { await reader.cancel(reason); } finally { end(response); reader.releaseLock(); } },
-        }, { highWaterMark: 0 });
+        }, new CountQueuingStrategy({ highWaterMark: 0 }));
       } else end(response);
       return response;
     }, (e) => { end(undefined, e, true); throw e; });

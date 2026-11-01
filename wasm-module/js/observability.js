@@ -184,12 +184,16 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       if (response.body instanceof ReadableStream) {
         const reader = response.body.getReader(); response.timings = timings;
         response.body = new ReadableStream({
+          __proto__: null,
+          type: undefined,
+          autoAllocateChunkSize: undefined,
+          start: undefined,
           async pull(controller) {
             try { const step = await reader.read(); if (step.done) { end(response); reader.releaseLock(); controller.close(); } else controller.enqueue(step.value); }
             catch (e) { end(undefined, e, true); reader.releaseLock(); controller.error(e); }
           },
           async cancel(reason) { try { await reader.cancel(reason); } finally { end(response); reader.releaseLock(); } },
-        }, { highWaterMark: 0 });
+        }, new CountQueuingStrategy({ highWaterMark: 0 }));
       } else end(response);
       return response;
     }, (e) => { end(undefined, e, true); throw e; });

@@ -19,7 +19,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
 import net from 'node:net';
-import { pipeline, Readable, Transform } from 'node:stream';
+import { finished, pipeline, Transform } from 'node:stream';
 import tls from 'node:tls';
 import { urlToHttpOptions } from 'node:url';
 import v8 from 'node:v8';
@@ -638,8 +638,46 @@ function bodyStream(response, method, headers) {
     .filter((e) => e && e !== 'identity');
   const decoders = encodings.reverse().map(decoderStream).filter(Boolean);
   const source = decoders.length ? pipeline(response, ...decoders, ignore) : response;
-  // A queue of several chunks, so the socket isn't paused after each one
-  return Readable.toWeb(source, { strategy: new CountQueuingStrategy({ highWaterMark: 16 }) });
+  return webStream(source);
+}
+
+/**
+ * `Readable.toWeb(readable)`, with a queue of several chunks so the socket isn't paused after each one. Node's own
+ * builds the stream's underlying source from a plain object, and the ReadableStream constructor reads `type` and
+ * `start` from it by inheritance: an inherited `type` made it throw in the response handler. This source has no prototype.
+ */
+function webStream(readable) {
+  let controller;
+  let cancelled = false;
+  const strategy = new CountQueuingStrategy({ highWaterMark: 16 });
+  if (readable.destroyed || !readable.readable) {
+    const closed = new ReadableStream({ __proto__: null, type: undefined, autoAllocateChunkSize: undefined, start: undefined, pull: undefined, cancel: undefined }, strategy);
+    closed.cancel();
+    return closed;
+  }
+  readable.pause();
+  const cleanup = finished(readable, (error) => {
+    cleanup();
+    // Legacy streams may emit 'error' again after finishing
+    readable.on('error', ignore);
+    if (error) {
+      return controller.error(error.code === 'ERR_STREAM_PREMATURE_CLOSE' ? Object.assign(new Error('The operation was aborted', { cause: error }), { name: 'AbortError', code: 'ABORT_ERR' }) : error);
+    }
+    if (!cancelled) controller.close();
+  });
+  readable.on('data', (chunk) => {
+    // A copy, so a pooled Buffer isn't detached
+    controller.enqueue(Buffer.isBuffer(chunk) ? new Uint8Array(chunk) : chunk);
+    if (controller.desiredSize <= 0) readable.pause();
+  });
+  return new ReadableStream({
+    __proto__: null,
+    type: undefined,
+    autoAllocateChunkSize: undefined,
+    start(c) { controller = c; },
+    pull() { readable.resume(); },
+    cancel(reason) { cancelled = true; readable.destroy(reason); },
+  }, strategy);
 }
 
 function decompress(body, contentEncoding, limit) {

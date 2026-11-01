@@ -24,6 +24,8 @@ before(async () => {
         res.writeHead(200, { 'content-type': url.pathname.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
         return res.end(readFileSync(new URL(url.pathname.slice(1), pkg)));
       }
+      if (url.pathname === '/nd') { res.writeHead(200, { 'content-type': 'application/x-ndjson' }); return res.end('{"a":1}\n{"a":2}\n'); }
+      if (url.pathname === '/text') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('one,two'); }
       const record = { method: req.method, authorization: req.headers.authorization ?? null, polluted: req.headers['x-polluted'] ?? null, size: Buffer.concat(chunks).length, cache: req.headers['cache-control'] ?? null, referer: req.headers.referer ?? null };
       seen.push(record);
       res.writeHead(url.pathname === '/redirect' ? 302 : 200, url.pathname === '/redirect' ? { location: '/echo' } : { 'content-type': 'application/json' });
@@ -45,6 +47,22 @@ async function pollute(names) {
       ['get', () => new WasmClient({ retries: 0 }).get('/echo', { headers: { authorization: 'Bearer secret' } })],
       ['post', () => new WasmClient({ retries: 0 }).post('/echo', { body: 'hello' })],
       ['redirect', () => new WasmClient({ retries: 0 }).get('/redirect')],
+      // Streams: the ReadableStream constructor reads `type`, `start` and `size` from the source and strategy it is given
+      ['ndjson', async () => {
+        const r = await new WasmClient({ retries: 0 }).get('/nd', { responseType: 'ndjson' });
+        const values = [];
+        const reader = r.body.getReader();
+        for (let step = await reader.read(); !step.done; step = await reader.read()) values.push(step.value);
+        return { status: r.status, body: values };
+      }],
+      ['stream', async () => {
+        const r = await new WasmClient({ retries: 0 }).get('/text', { responseType: 'stream' });
+        let text = '';
+        const decoder = new TextDecoder();
+        const reader = r.body.getReader();
+        for (let step = await reader.read(); !step.done; step = await reader.read()) text += decoder.decode(step.value, { stream: true });
+        return { status: r.status, body: text };
+      }],
     ]) {
       try { const r = await request(); out[label] = [r.status, r.body]; } catch (error) { out[label] = { error: String(error?.kind ?? error?.name ?? error) }; }
     }
@@ -54,7 +72,7 @@ async function pollute(names) {
   const problems = [];
   for (const [name, extra] of Object.entries(names)) {
     for (const value of [true, 1, 'x', {}, ['x'], ...extra.map((v) => (v === '$abort' ? AbortSignal.abort() : v))]) {
-      Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable: false, value });
+      Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable: true, value });
       let result;
       try { result = await run(); } finally { delete Object.prototype[name]; }
       if (result !== baseline) problems.push(`${name}=${typeof value === 'object' && value instanceof AbortSignal ? 'aborted signal' : JSON.stringify(value)} changed the requests: ${result.slice(0, 140)}`);
@@ -67,6 +85,7 @@ const NAMES = {
   method: ['DELETE'], headers: [{ authorization: 'Bearer attacker', 'x-polluted': '1' }], body: ['injected'], credentials: ['include', 'omit'], mode: ['no-cors', 'same-origin'],
   cache: ['no-store', 'only-if-cached'], redirect: ['error', 'manual'], referrer: ['http://attacker.invalid/', ''], referrerPolicy: ['unsafe-url'], integrity: ['sha256-AAAA'],
   keepalive: [true, false], signal: ['$abort'], priority: ['low'], window: [null], duplex: ['half'],
+  type: ['bytes', 'x'], size: ['x'], start: ['x'], autoAllocateChunkSize: [1], highWaterMark: [0, 1],
 };
 
 for (const [label, engine] of [['Chromium', chromium], ['Firefox', firefox], ['WebKit', webkit]]) {

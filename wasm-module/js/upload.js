@@ -115,7 +115,12 @@
       },
       report: (loaded) => { if (progress && !record.cancelled) try { progress({ loaded, total }); } catch {} },
       readable() {
+        // No prototype: the ReadableStream constructor reads `type`, `start` and `size` by inheritance
         return new ReadableStream({
+          __proto__: null,
+          type: undefined,
+          autoAllocateChunkSize: undefined,
+          start: undefined,
           async pull(controller) {
             const current = record;
             const step = await read();
@@ -127,7 +132,7 @@
             else { controller.enqueue(step.data); report(current); }
           },
           cancel: () => cancel(record),
-        }, { highWaterMark: 0 });
+        }, new CountQueuingStrategy({ highWaterMark: 0 }));
       },
     };
     if (owner.factory) session.restart = () => { cancel(record); record = { __proto__: null, loaded: 0, done: false }; };
@@ -150,7 +155,9 @@
     let duplex = false;
     try {
       const request = new Request('https://rust-fetch.invalid/', {
-        method: 'POST', body: new ReadableStream({ start(c) { c.close(); } }),
+        __proto__: null,
+        method: 'POST',
+        body: new ReadableStream({ __proto__: null, type: undefined, autoAllocateChunkSize: undefined, pull: undefined, cancel: undefined, start(c) { c.close(); } }),
         get duplex() { duplex = true; return 'half'; },
       });
       supported = duplex && !request.headers.has('Content-Type');

@@ -72,12 +72,26 @@ const DOCUMENTED_OPTIONS = {
   retryOnNetworkError: [false], retryOnTimeout: [false], dispatcher: ['$dispatcher'], protocols: [['x']], reconnect: [{ maxRetries: 9 }],
   messageType: ['json'], idleTimeoutMs: [1], maxLineBytes: [1], maxEventBytes: [1], failureThreshold: [1], resetAfterMs: [1], requests: [1], perMs: [1],
 };
-const TABLE = { ...TRANSPORT_REQUEST, ...REQUEST_STATE, ...UPLOAD_RECORDS, ...ADDON_REQUEST_AND_RESPONSE, ...NODE_OPTIONS, ...DIAGNOSTICS, ...DOCUMENTED_OPTIONS };
+// Names the response's headers can have: Node.js's own header map looks them up on the prototype chain
+const RESPONSE_HEADERS = {
+  'content-type': ['text/plain', 'application/octet-stream'], 'content-encoding': ['gzip', 'br', 'identity'], 'content-length': ['1', '99999'],
+  location: ['http://127.0.0.1:1/'], 'set-cookie': ['a=b'], 'x-inherited': ['secret'], connection: ['close'], 'transfer-encoding': ['chunked'],
+};
+// What the ReadableStream constructor reads from the source and the strategy it is given
+const STREAM_OPTIONS = { type: ['bytes', 'x'], size: ['x'], start: ['x'], autoAllocateChunkSize: [1], highWaterMark: [0, 1], pull: ['x'], cancel: ['x'] };
+// Names that objects, errors and promises are read by throughout JavaScript. Only data is tried for them: a function
+// for `then`, `toJSON` or `toString` breaks every program in the process, and data is all that most pollution can inject.
+// (Names of the events and stream methods Node.js itself reads, like `on` or `end`, break any HTTP client: see the security guide.)
+const COMMON_NAMES = {
+  toString: [], valueOf: [], constructor: [], toJSON: [], then: [], message: ['x'], name: ['x'], code: ['x'], cause: [], stack: [], type: ['x'], length: [1], size: [1],
+  byteLength: [1], buffer: [], errno: [1], syscall: ['x'], errors: [], statusCode: [500], redirected: [true], bodyUsed: [true], locked: [true],
+};
+const TABLE = { ...TRANSPORT_REQUEST, ...RESPONSE_HEADERS, ...STREAM_OPTIONS, ...COMMON_NAMES, ...REQUEST_STATE, ...UPLOAD_RECORDS, ...ADDON_REQUEST_AND_RESPONSE, ...NODE_OPTIONS, ...DIAGNOSTICS, ...DOCUMENTED_OPTIONS };
 
 const run = async (names, env = {}) => {
   for (const name of names) assert.ok(TABLE[name], `${name} is not in the table`);
   const { stdout } = await promisify(execFile)(process.execPath, [child], {
-    env: { ...process.env, ...env, POLLUTION_PKG: pkg, POLLUTION_NAMES: JSON.stringify(Object.fromEntries(names.map((name) => [name, TABLE[name]]))) },
+    env: { ...process.env, ...env, POLLUTION_PKG: pkg, POLLUTION_DATA_ONLY: JSON.stringify(Object.keys(COMMON_NAMES)), POLLUTION_NAMES: JSON.stringify(Object.fromEntries(names.map((name) => [name, TABLE[name]]))) },
     maxBuffer: 16 * 1024 * 1024,
     timeout: 540_000,
   });
@@ -102,10 +116,18 @@ for (const [label, env] of [['default transport', {}], ['node:http', { RUST_FETC
       assert.deepEqual(await run([...new Set(names)], env), []);
     });
 
+    it('reads no inherited response header, stream option, or body of a request interceptor\'s new object', { timeout: 300_000 }, async () => {
+      assert.deepEqual(await run([...Object.keys(RESPONSE_HEADERS), ...Object.keys(STREAM_OPTIONS), 'body'], env), []);
+    });
+
+    it('reads no inherited name that objects, errors, streams and promises are read by', { timeout: 300_000 }, async () => {
+      assert.deepEqual(await run(Object.keys(COMMON_NAMES), env), []);
+    });
+
     it('reads no inherited native addon field, Node.js option or documented option', { timeout: 540_000 }, async () => {
       const done = new Set(['proxy', 'dispatcher', 'url', 'host', 'hostname', 'socketPath', 'agent', 'lookup', 'createConnection', 'blockPrivateNetwork', 'allowPrivateNetwork',
         'publicOnly', 'port', 'flowlabel', 'family', 'address', 'maxResponseBytes', 'rejectUnauthorized', 'ca', 'checkServerIdentity', 'servername', 'minVersion', 'secureContext', 'timeout', 'responseTimeout', 'timeoutMs',
-        ...Object.keys(UPLOAD_RECORDS), ...Object.keys(REQUEST_STATE), ...Object.keys(TRANSPORT_REQUEST)]);
+        ...Object.keys(UPLOAD_RECORDS), ...Object.keys(REQUEST_STATE), ...Object.keys(TRANSPORT_REQUEST), ...Object.keys(RESPONSE_HEADERS), ...Object.keys(STREAM_OPTIONS), ...Object.keys(COMMON_NAMES)]);
       const rest = Object.keys(TABLE).filter((name) => !done.has(name));
       // Several child processes at once, each with its own servers
       const chunks = [0, 1, 2].map((index) => rest.filter((_, position) => position % 3 === index));

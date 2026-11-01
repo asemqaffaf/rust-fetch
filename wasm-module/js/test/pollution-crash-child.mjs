@@ -7,6 +7,8 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const { WasmClient } = await import(process.env.POLLUTION_PKG);
+// Pollution through __proto__ leaves enumerable properties (which for...in loops see too); POLLUTION_ENUMERABLE=0 uses hidden ones
+const enumerable = process.env.POLLUTION_ENUMERABLE !== '0';
 const servers = fork(fileURLToPath(new URL('./pollution-servers.mjs', import.meta.url)));
 const ports = await new Promise((resolve) => servers.once('message', resolve));
 const url = `http://127.0.0.1:${ports.target}/json`;
@@ -23,7 +25,7 @@ const body = () => new ReadableStream({
 let requests = 0;
 for (const name of names) {
   for (const value of values) {
-    Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable: false, value });
+    Object.defineProperty(Object.prototype, name, { configurable: true, writable: true, enumerable, value });
     let sizes;
     try {
       const client = new WasmClient({ retries: 0 });

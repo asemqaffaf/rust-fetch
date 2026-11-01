@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
+import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -16,6 +17,8 @@ const target = http.createServer((req, res) => {
   req.on('end', () => {
     const body = Buffer.concat(chunks);
     if (req.url === '/redirect') { res.writeHead(302, { location: '/json' }); return res.end(); }
+    if (req.url === '/nd') { res.writeHead(200, { 'content-type': 'application/x-ndjson' }); return res.end('{"a":1}\n{"a":2}\n'); }
+    if (req.url === '/gzip') { res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip' }); return res.end(gzipSync('{"gz":true}')); }
     if (req.url === '/404') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"missing":true}'); }
     if (req.url === '/stream') {
       res.writeHead(200, { 'content-type': 'text/plain' });
