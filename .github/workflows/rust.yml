@@ -261,11 +261,31 @@ jobs:
           addon="rust-fetch-native.$(node -p 'process.platform + "-" + process.arch').node"
           cp historical/native/target/release/librust_fetch_native.so "$historical_pkg/node_modules/rust-fetch/$addon"
           echo "HISTORICAL_PKG=$historical_pkg/node_modules/rust-fetch" >> "$GITHUB_ENV"
+          # The 2.6.2 backport changes JS/Wasm hardening, not native code.
+          # Verify this before sharing the historical native binary.
+          git diff --exit-code v2.6.1 v2.6.2 -- native/src native/build.rs
+          python3 - <<'PYTHON'
+          import subprocess, tomllib
+          for path in ['native/Cargo.toml', 'native/Cargo.lock']:
+              baseline, patched = [tomllib.loads(subprocess.check_output(['git', 'show', f'{tag}:{path}'], text=True)) for tag in ['v2.6.1', 'v2.6.2']]
+              for data in [baseline, patched]:
+                  packages = [data['package']] if path.endswith('Cargo.toml') else data['package']
+                  for package in packages:
+                      if package['name'] == 'rust-fetch-native':
+                          package['version'] = 'historical-comparison'
+              assert baseline == patched, f'{path}: the patched reference needs its own native build'
+          PYTHON
+          hardened_pkg="$RUNNER_TEMP/historical-2.6.2"
+          mkdir -p "$hardened_pkg"
+          (cd "$hardened_pkg" && npm init -y >/dev/null && npm install --no-audit --no-fund --ignore-scripts rust-fetch@2.6.2)
+          cp "$historical_pkg/node_modules/rust-fetch/$addon" "$hardened_pkg/node_modules/rust-fetch/$addon"
+          echo "HARDENED_PKG=$hardened_pkg/node_modules/rust-fetch" >> "$GITHUB_ENV"
       - name: Compare (results in the job summary)
         run: |
           historical_args=()
           if [ -n "$HISTORICAL_PKG" ]; then
             historical_args+=(--also "Benchmarks: cumulative 2.7 change against rust-fetch@2.6.1 (rebuilt native addon)=$HISTORICAL_PKG")
+            historical_args+=(--also "Benchmarks: this PR against security-patched rust-fetch@2.6.2 (identical native sources and dependencies)=$HARDENED_PKG")
           fi
           node benchmarks/compare.mjs base/wasm-module/pkg head-pkg \
             --also "Benchmarks: this PR against rust-fetch@$PUBLISHED_VERSION from npm (what the release gate compares; no native addon)=$PUBLISHED" \

@@ -28,6 +28,14 @@ The handshake change keeps TCP/TLS state off the reused-connection path without 
 
 These diagnostic assets precede the descriptor-hardening follow-up, which adds 16 Wasm bytes. Final-source validation and historical performance are reported by [PR #204 CI](https://github.com/asemqaffaf/rust-fetch/pull/204/checks). The cache-padding experiment was discarded because it showed no useful improvement.
 
+### Final-source checks and remaining variance
+
+The [full final-source CI comparison at `101d479`](https://github.com/asemqaffaf/rust-fetch/actions/runs/41480854946) passed all 14 functional/validation jobs, but its informational historical benchmark measured native concurrency **14.6% below 2.6.1** (10,372 vs 12,139 requests/s, worse in three of five rounds). Node:http startup was 4.1% slower and native startup 14.6% slower. A green informational job is not acceptance of #181's 5% target.
+
+An [independent exact-artifact run](https://github.com/asemqaffaf/rust-fetch/actions/runs/41483532400), nine rotating rounds on AMD EPYC 9V45 / Node 22.23.4, measured that same CI artifact at **33,143 vs 34,229 requests/s (-3.2%)**, compared with security-patched 2.6.2 at 33,675 (-1.6%). Its median paired difference versus 2.6.1 was -5.5%. Swapping the paired Wasm/glue assets back to `c9e847d` did not improve the result (33,027 requests/s), so the +16-byte descriptor-hardening change does not explain the earlier Linux gap. Final-source macOS samples are retained in the [PR description](https://github.com/asemqaffaf/rust-fetch/pull/204): 28,632 vs 27,290 requests/s (+4.9%), seven wins in nine rounds.
+
+These differences remain unresolved; #204 stays draft. CI now retains the original 2.6.1 comparison and adds security-patched 2.6.2 on the same runner to separate mandatory hardening costs from subsequent 2.7 work. The patched reference can share the historical native addon only after CI verifies identical native sources and equivalent Cargo manifests/locked dependencies (apart from the package's own version). Benchmark thresholds are unchanged.
+
 ## Reproduce
 
 Build both the historical baseline and the candidate with Rust 1.99.1. Install `rust-fetch@2.6.1` in a temporary directory for its published Wasm/JS assets, then build its native addon from tag `v2.6.1` and copy that binary alongside its `node.js`. The npm package alone has no addon and cannot measure native throughput. Build the candidate with `npm run build` and `npm run build:native`.
