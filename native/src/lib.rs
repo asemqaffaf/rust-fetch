@@ -212,7 +212,7 @@ fn start_attempt<'env>(
     scope: &External<Scope>,
     defaults: bool,
 ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Response>> {
-    let transport = Arc::clone(&scope.0);
+    let transport = &scope.0;
     let id = request.id;
     let (handle, registration) = AbortHandle::new_pair();
     // Register synchronously before JS can cancel, and reject an occupied ID.
@@ -223,10 +223,20 @@ fn start_attempt<'env>(
                 .spawn_future(async { Ok(Response::failed(error, Some("RUST_FETCH_REQUEST_ID"))) })
         }
     };
-    let active = Arc::clone(&transport);
-    let promise = env.spawn_future(async move {
-        Ok(send_attempt(&active, request, registration, generation, defaults).await)
-    });
+    let active = Arc::clone(transport);
+    // Registration and completion both run on the owning JS thread. Moving
+    // completion out of the network worker avoids contending on the request
+    // registry while preserving synchronous cancellation and generation checks.
+    let promise = env.spawn_future_with_callback(
+        async move {
+            let response = send_attempt(&active, request, registration, defaults).await;
+            Ok((active, id, generation, response))
+        },
+        |_env, (active, id, generation, response)| {
+            active.pending.finish(id, generation);
+            Ok(response)
+        },
+    );
     if promise.is_err() {
         transport.pending.finish(id, generation);
     }
@@ -237,10 +247,8 @@ async fn send_attempt(
     transport: &Transport,
     request: Request,
     registration: futures_util::future::AbortRegistration,
-    generation: u64,
     defaults: bool,
 ) -> Response {
-    let id = request.id;
     let timeout = timeouts::duration(request.timeout);
     let attempt = Abortable::new(transport.send(request, defaults), registration);
     let outcome = match timeout {
@@ -249,8 +257,6 @@ async fn send_attempt(
             .map_err(|_| duration),
         None => Ok(attempt.await),
     };
-    transport.pending.finish(id, generation);
-
     match outcome {
         Ok(Ok(Ok(response))) => response,
         Ok(Ok(Err(message))) => Response::failure(message),

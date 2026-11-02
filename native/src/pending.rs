@@ -1,4 +1,7 @@
 //! Request IDs belong to one JavaScript module/environment, not the process.
+//! Registration, completion, cancellation and environment cleanup all run on
+//! its JS thread; the network worker never takes this registry lock. The mutex
+//! keeps the containing transport Send + Sync without unsafe thread assumptions.
 use crate::pool::lock;
 use futures_util::future::AbortHandle;
 use std::{collections::HashMap, sync::Mutex};
