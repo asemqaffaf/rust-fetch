@@ -737,17 +737,19 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
   }, async () => {
     const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
-    assert.equal(addon.TRANSPORT_VERSION, 5);
+    assert.equal(addon.TRANSPORT_VERSION, 6);
     const scope = addon.configure({ zstd: false, rejectUnauthorized: true });
     const s = await startServer((req, res) => res.end('ok'));
     try {
-      const attempts = [];
-      for (let i = 0; i < 512; i++) {
-        const id = 0xffff0000 + i;
-        attempts.push(addon.send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }, scope));
-        addon.cancel(id, scope);
+      for (const send of [addon.send, addon.sendSimple]) {
+        const attempts = [];
+        for (let i = 0; i < 512; i++) {
+          const id = 0xffff0000 + i;
+          attempts.push(send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }, scope));
+          addon.cancel(id, scope);
+        }
+        for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
       }
-      for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
     } finally { await s.close(); }
   });
 
@@ -762,7 +764,7 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       await new Promise((resolve) => local.listen(0, '127.0.0.1', resolve));
       const request = { id: 71, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
       try {
-        const first = native.send(request, firstScope), second = native.send(request, secondScope);
+        const first = native.sendSimple(request, firstScope), second = native.send(request, secondScope);
         for (let i = 0; i < 100 && replies.length < 2; i++) await sleep(5);
         assert.equal(replies.length, 2);
         native.cancel(71, firstScope);
@@ -777,7 +779,7 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       await new Promise((r) => local.listen(0, '127.0.0.1', r));
       const request = { id: 72, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
       try {
-        const first = native.send(request, active);
+        const first = native.sendSimple(request, active);
         assert.equal((await native.send(request, active)).code, 'RUST_FETCH_REQUEST_ID');
         native.cancel(72, active);
         const replacement = native.send(request, active);
