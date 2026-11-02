@@ -20,7 +20,6 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import { finished, pipeline, Transform } from 'node:stream';
 import tls from 'node:tls';
-import { urlToHttpOptions } from 'node:url';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
 
@@ -111,7 +110,7 @@ function parseProxy(value, source) {
   let url = proxyUrls.get(value);
   if (!url) {
     try {
-      url = new URL(value.includes('://') ? value : `http://${value}`);
+      url = httpUrl(new URL(value.includes('://') ? value : `http://${value}`));
     } catch {
       throw new TypeError(`Invalid proxy URL in ${source}: ${value}`);
     }
@@ -205,12 +204,19 @@ const CONNECTION_OPTION_NAMES = [
   'requestCert', 'SNICallback',
 ];
 const unset = (names) => Object.fromEntries(names.map((name) => [name, undefined]));
-const REQUEST_SHADOWS = unset(REQUEST_OPTION_NAMES);
 const CONNECTION_SHADOWS = unset(CONNECTION_OPTION_NAMES);
 const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
-// The URL's fields go in the same object: given a URL, Node only recognises it
-// as one while it has no `auth` or `path`, which a polluted prototype supplies.
-const httpOptions = (target, options) => ({ ...REQUEST_SHADOWS, ...urlToHttpOptions(target), ...options });
+/**
+ * A URL for `http.request`. Node tells a URL from an options object by it having no `auth` and no `path`, which a
+ * polluted prototype supplies; with them set (and not enumerable, so they aren't copied) it is always taken as a URL,
+ * and its fields are merged into an object without a prototype that the other options are merged into in turn.
+ * That is why no per-request list of shadows is needed for the names `http.request` reads.
+ */
+function httpUrl(url) {
+  Object.defineProperty(url, 'auth', { value: undefined });
+  Object.defineProperty(url, 'path', { value: undefined });
+  return url;
+}
 /** `agent`, whose new connections are made with every option Node reads set */
 function checked(agent) {
   const create = agent.createConnection;
@@ -222,9 +228,9 @@ function checked(agent) {
 function requestOptions(url, method, headers, proxy) {
   if (!proxy) {
     const transport = url.protocol === 'https:' ? https : http;
-    return [transport, httpOptions(url, { method, headers, agent: agentFor(transport) })];
+    return [transport, url, { method, headers, agent: agentFor(transport) }];
   }
-  if (url.protocol === 'https:') return [https, httpOptions(url, { method, headers, agent: proxyAgent(proxy, true) })];
+  if (url.protocol === 'https:') return [https, url, { method, headers, agent: proxyAgent(proxy, true) }];
   // Options override the proxy URL's fields; its credentials only go in Proxy-Authorization
   const options = {
     path: url.href,
@@ -233,7 +239,7 @@ function requestOptions(url, method, headers, proxy) {
     headers: { ...headers, host: url.host, ...proxyAuthorization(proxy) },
     agent: proxyAgent(proxy, false),
   };
-  return [proxy.protocol === 'https:' ? https : http, httpOptions(proxy, options)];
+  return [proxy.protocol === 'https:' ? https : http, proxy, options];
 }
 
 // --- Request queue --------------------------------------------------------------
@@ -551,8 +557,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
   } catch (error) {
     return reject(error);
   }
-  const [transport, options] = args;
-  const request = transport.request(options, (response) => {
+  const [transport, target, options] = args;
+  const request = transport.request(target, options, (response) => {
     const status = response.statusCode;
     const incoming = receivedHeaders(response.rawHeaders);
     // Node's keep-alive handling reads this too
@@ -568,7 +574,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       }
       let next;
       try {
-        next = new URL(location, url);
+        next = httpUrl(new URL(location, url));
       } catch {
         return reject(new TypeError(`Invalid redirect location: ${location}`));
       }
@@ -666,7 +672,6 @@ function nodeTransport(request) {
 
   // Null prototypes throughout: an inherited property must never be read as a setting
   const state = {
-    __proto__: null,
     cancelled: false,
     request: undefined,
     bodyType: request.bodyType ?? AUTO,
@@ -676,6 +681,7 @@ function nodeTransport(request) {
     maxRedirects: request.maxRedirects ?? MAX_REDIRECTS,
     proxy,
     stream: request.stream === true,
+    waiting: undefined,
   };
   let timer;
   const promise = new Promise((resolve, reject) => {
@@ -688,7 +694,7 @@ function nodeTransport(request) {
     }
     let url;
     try {
-      url = new URL(request.url);
+      url = httpUrl(new URL(request.url));
     } catch (error) {
       clearTimeout(timer);
       return reject(error);
