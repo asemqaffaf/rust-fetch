@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.2.1] - 2026-11-08
+## [2.2.1] - 2026-11-02
 
-A security patch release. Update to receive it: packages that are already installed are not patched. The date is provisional until the release is published.
+A security patch release. Update to receive it: packages that are already installed are not patched.
 
 ### Security
 - **Prototype pollution of the Node.js request path (#191).** With `Object.prototype` polluted by other code in the process, the client read internal settings from the prototype chain instead of ignoring them: an inherited undici `dispatcher` did the same for `websocket()` connections, an inherited `ca` made an attacker's certificate authority trusted for HTTPS, inherited `body`, `signal`, `auth` or `path` added a body to requests (also when a request interceptor returned a new object), aborted them or changed what they asked for, an inherited `type`, `size` or `start` made calls that return a stream (`responseType: 'stream'`) throw, on Node.js as an uncaught exception in a response handler, and in browsers too, in browsers, inherited `credentials`, `mode`, `cache`, `redirect`, `referrer`, `referrerPolicy`, `priority`, `body` and `headers` (the members of the `fetch()` init object) changed the requests the browser entry made, inherited `params` and `responseType` added query parameters and changed how responses were decoded, inherited header names (`content-type`, `content-encoding`, `content-length`, `location`) replaced or corrupted a response's headers, so bodies were decoded wrongly or requests failed. All of these are fixed: the request the Wasm core builds, the transport's per-request state and the header maps have no prototype or are read by own property, plain option objects ignore inherited names (objects with their own prototype still inherit), every option Node's `http`, `net` and `tls` read by inheritance is set explicitly (with the URL passed as options), the sources and strategies of the streams the client creates have no inherited names, and `websocket()` passes undici an init object without a prototype.
