@@ -12,11 +12,27 @@ const server = http.createServer((req, res) => { res.writeHead(200, { 'content-t
 server.keepAliveTimeout = 30000;
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const url = `http://127.0.0.1:${server.address().port}`;
-const results = {};
+const results = {}, builds = process.argv.slice(2).map(argument => {
+  const equal = argument.indexOf('='), label = argument.slice(0, equal), pkg = resolve(argument.slice(equal + 1));
+  if (equal < 1 || !/^[a-z0-9_-]+$/i.test(label)) throw Error('Expected label=package-path');
+  return { label, pkg };
+});
+const samples = Object.fromEntries(builds.map(({label}) => [label, []]));
+const rounds = 9;
+const median = values => [...values].sort((a,b) => a-b)[Math.floor(values.length / 2)];
 try {
-  for (const argument of process.argv.slice(2)) {
-    const equal = argument.indexOf('='), label = argument.slice(0, equal), pkg = resolve(argument.slice(equal + 1));
-    if (equal < 1 || !/^[a-z0-9_-]+$/i.test(label)) throw Error('Expected label=package-path');
+  for (let round = 0; round < rounds; round++) {
+    for (let index = 0; index < builds.length; index++) {
+      const { label, pkg } = builds[(round + index) % builds.length];
+      const { stdout } = await promisify(execFile)(process.execPath, [fileURLToPath(new URL('./compare.mjs', import.meta.url)), 'worker'], {
+        env: { ...process.env, BENCH_SECONDS: '2', BENCH_WORKER: JSON.stringify({ pkg, url, scenario: 'concurrent' }) }, timeout: 30000,
+      });
+      samples[label].push(JSON.parse(stdout));
+    }
+    console.log(`native round ${round + 1}/${rounds}`);
+  }
+  console.log('INTERLEAVED SUMMARY', JSON.stringify(Object.fromEntries(builds.map(({label}) => [label, { throughput: median(samples[label].map(v=>v.value)), cpuUserUsPerRequest: median(samples[label].map(v=>v.cpuUserUsPerRequest)), cpuSystemUsPerRequest: median(samples[label].map(v=>v.cpuSystemUsPerRequest)) }]))));
+  for (const {label,pkg} of builds) {
     const name = `${label}.cpuprofile`;
     const { stdout } = await promisify(execFile)(process.execPath, ['--cpu-prof', `--cpu-prof-dir=${directory}`, `--cpu-prof-name=${name}`, fileURLToPath(new URL('./compare.mjs', import.meta.url)), 'worker'], {
       env: { ...process.env, BENCH_SECONDS: '4', BENCH_WORKER: JSON.stringify({ pkg, url, scenario: 'concurrent' }) }, timeout: 30000,
@@ -33,4 +49,4 @@ try {
     console.log(label, JSON.stringify(results[label], null, 2));
   }
 } finally { server.closeAllConnections(); server.close(); }
-writeFileSync(resolve(directory, 'summary.json'), JSON.stringify({ environment: { node: process.version, cpu: cpus()[0].model, os: release() }, results }, null, 2));
+writeFileSync(resolve(directory, 'summary.json'), JSON.stringify({ environment: { node: process.version, cpu: cpus()[0].model, os: release() }, rounds, samples, results }, null, 2));

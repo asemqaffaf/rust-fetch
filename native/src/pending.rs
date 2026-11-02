@@ -6,6 +6,8 @@ use crate::pool::lock;
 use futures_util::future::AbortHandle;
 use std::{collections::HashMap, sync::Mutex};
 
+// Separate JS registry writes from pool data and Arc ownership counters.
+#[repr(align(128))]
 #[derive(Default)]
 pub(crate) struct Pending(Mutex<State>);
 #[derive(Default)]
