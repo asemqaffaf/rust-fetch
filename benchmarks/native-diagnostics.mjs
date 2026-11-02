@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { cpus, release } from 'node:os';
+import { availableParallelism, cpus, release } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -18,7 +18,7 @@ const results = {}, builds = process.argv.slice(2).map(argument => {
   return { label, pkg };
 });
 const samples = Object.fromEntries(builds.map(({label}) => [label, []]));
-const rounds = 9;
+const rounds = 15;
 const median = values => [...values].sort((a,b) => a-b)[Math.floor(values.length / 2)];
 try {
   for (let round = 0; round < rounds; round++) {
@@ -49,4 +49,4 @@ try {
     console.log(label, JSON.stringify(results[label], null, 2));
   }
 } finally { server.closeAllConnections(); server.close(); }
-writeFileSync(resolve(directory, 'summary.json'), JSON.stringify({ environment: { node: process.version, cpu: cpus()[0].model, os: release() }, rounds, samples, results }, null, 2));
+writeFileSync(resolve(directory, 'summary.json'), JSON.stringify({ environment: { node: process.version, cpu: cpus()[0].model, logicalCpus: cpus().length, availableParallelism: availableParallelism(), os: release() }, rounds, samples, results }, null, 2));
