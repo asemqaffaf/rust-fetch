@@ -98,6 +98,8 @@ The native Node.js transport against Node.js `fetch()`, from [our measurements](
 
 In 2.7.0, the native connection pool and TLS settings belong to one adapter module/environment; workers have separate pools. This matches the isolation of Node agents and prevents cancellation or TLS settings from crossing environments.
 
+**Unreleased 2.7 performance follow-up:** default requests use a compact native entry and prepare default headers on the worker. Requests with optional policies retain the full entry and its security controls; both entries share cancellation registration and TLS scopes. Seven local interleaved rounds against 2.6.1 measured native concurrent throughput 2.6% lower (33.3k vs 34.2k requests/s), improved from roughly 10% lower. Node startup measured 3.7% slower and default client overhead was level. These local results require CI verification; they do not establish zero overhead. See the [method and results](https://github.com/asemqaffaf/rust-fetch/tree/main/benchmarks/performance-2.7). Rebuild local addons for private wire version 6; older binaries fall back to node:http.
+
 | Workload | Native transport vs `fetch()` |
 | --- | --- |
 | HTTPS, 50 concurrent small-JSON requests | **1.95×** throughput |

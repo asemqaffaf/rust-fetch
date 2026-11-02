@@ -24,7 +24,10 @@ use bytes::Bytes;
 use futures_util::future::{AbortHandle, Abortable};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
-use hyper::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_ENCODING, HOST, LOCATION};
+use hyper::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
+    HOST, LOCATION, USER_AGENT,
+};
 use hyper::Method;
 use napi::bindgen_prelude::{Buffer, External, Uint8Array};
 use napi_derive::napi;
@@ -35,7 +38,7 @@ use pool::{Connection, Pool};
 const MAX_REDIRECTS: u32 = 20;
 /// Private wire protocol understood by the JavaScript adapter.
 #[napi]
-pub const TRANSPORT_VERSION: u32 = 5;
+pub const TRANSPORT_VERSION: u32 = 6;
 
 /// How errors for bodies over `max_response_bytes` start; `send` reports them
 /// with the code `RUST_FETCH_TOO_LARGE`
@@ -130,6 +133,38 @@ pub struct Request {
     pub extra: Option<Extra>,
 }
 
+/// The common buffered request, with all optional policies left at defaults.
+/// Fewer Node-API property conversions on this path; scope, cancellation and
+/// response handling are identical to the full request.
+#[napi(object, object_to_js = false)]
+pub struct SimpleRequest {
+    pub id: u32,
+    pub method: String,
+    pub url: String,
+    pub headers: Vec<String>,
+    pub body: Option<Uint8Array>,
+    pub timeout: Option<f64>,
+}
+
+impl From<SimpleRequest> for Request {
+    fn from(request: SimpleRequest) -> Self {
+        Self {
+            id: request.id,
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body: request.body,
+            timeout: request.timeout,
+            manual: None,
+            max_redirects: None,
+            max_response_bytes: None,
+            sensitive_headers: None,
+            allow_insecure_redirects: None,
+            extra: None,
+        }
+    }
+}
+
 /// The finished response, or `error` (with `code` for timeouts)
 #[napi(object)]
 pub struct Response {
@@ -158,6 +193,25 @@ pub fn send<'env>(
     request: Request,
     scope: &External<Scope>,
 ) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Response>> {
+    start_attempt(env, request, scope, false)
+}
+
+/// Send a buffered attempt with default optional policies.
+#[napi]
+pub fn send_simple<'env>(
+    env: &'env napi::Env,
+    request: SimpleRequest,
+    scope: &External<Scope>,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Response>> {
+    start_attempt(env, request.into(), scope, true)
+}
+
+fn start_attempt<'env>(
+    env: &'env napi::Env,
+    request: Request,
+    scope: &External<Scope>,
+    defaults: bool,
+) -> napi::Result<napi::bindgen_prelude::PromiseRaw<'env, Response>> {
     let transport = Arc::clone(&scope.0);
     let id = request.id;
     let (handle, registration) = AbortHandle::new_pair();
@@ -171,7 +225,7 @@ pub fn send<'env>(
     };
     let active = Arc::clone(&transport);
     let promise = env.spawn_future(async move {
-        Ok(send_attempt(&active, request, registration, generation).await)
+        Ok(send_attempt(&active, request, registration, generation, defaults).await)
     });
     if promise.is_err() {
         transport.pending.finish(id, generation);
@@ -184,10 +238,11 @@ async fn send_attempt(
     request: Request,
     registration: futures_util::future::AbortRegistration,
     generation: u64,
+    defaults: bool,
 ) -> Response {
     let id = request.id;
     let timeout = timeouts::duration(request.timeout);
-    let attempt = Abortable::new(transport.send(request), registration);
+    let attempt = Abortable::new(transport.send(request, defaults), registration);
     let outcome = match timeout {
         Some(duration) => tokio::time::timeout(duration, attempt)
             .await
@@ -338,7 +393,7 @@ impl Extra {
 impl Transport {
     // Redirect rewriting and the final URL share one attempt state.
     #[allow(clippy::too_many_lines)]
-    async fn send(&self, mut request: Request) -> Result<Response, String> {
+    async fn send(&self, mut request: Request, defaults: bool) -> Result<Response, String> {
         let mut extra = request.extra.take().unwrap_or_default();
         let observe = extra.observe.unwrap_or(false);
         let started = observe.then(std::time::Instant::now);
@@ -355,6 +410,11 @@ impl Transport {
         let mut headers = header_map(&request.headers)?;
         let mut upload = extra.take_upload();
         let mut body = request.body.map(|body| Bytes::copy_from_slice(&body));
+        if defaults {
+            // Prepare transport defaults on this worker rather than copying
+            // the same strings across Node-API for every ordinary request.
+            default_headers(&mut headers, body.as_ref(), self.zstd);
+        }
         let mut redirects = 0;
         let manual = request.manual.unwrap_or(false);
         let max_redirects = request.max_redirects.unwrap_or(MAX_REDIRECTS);
@@ -682,6 +742,28 @@ fn read_all(reader: impl Read, limit: Option<u64>) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Match the JavaScript adapter's defaults without replacing caller headers.
+fn default_headers(headers: &mut HeaderMap, body: Option<&Bytes>, zstd: bool) {
+    headers
+        .entry(ACCEPT)
+        .or_insert(HeaderValue::from_static("*/*"));
+    headers
+        .entry(ACCEPT_ENCODING)
+        .or_insert(HeaderValue::from_static(if zstd {
+            "gzip, deflate, br, zstd"
+        } else {
+            "gzip, deflate, br"
+        }));
+    headers
+        .entry(USER_AGENT)
+        .or_insert(HeaderValue::from_static("rust-fetch"));
+    if let Some(body) = body {
+        headers
+            .entry(CONTENT_LENGTH)
+            .or_insert_with(|| body.len().into());
+    }
+}
+
 /// Never forward credentials to another origin: the standard headers and the
 /// request's `sensitiveHeaders`
 fn drop_credentials(headers: &mut HeaderMap, sensitive: &[String]) {
@@ -769,4 +851,43 @@ fn error_message(error: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_headers_match_the_runtime_and_body() {
+        for (zstd, encoding) in [
+            (false, "gzip, deflate, br"),
+            (true, "gzip, deflate, br, zstd"),
+        ] {
+            let mut headers = HeaderMap::new();
+            default_headers(&mut headers, None, zstd);
+            assert_eq!(headers[ACCEPT], "*/*");
+            assert_eq!(headers[USER_AGENT], "rust-fetch");
+            assert_eq!(headers[ACCEPT_ENCODING], encoding);
+            assert!(!headers.contains_key(CONTENT_LENGTH));
+            default_headers(&mut headers, Some(&Bytes::new()), zstd);
+            assert_eq!(headers[CONTENT_LENGTH], "0");
+        }
+    }
+
+    #[test]
+    fn default_headers_preserve_caller_values_and_repeats() {
+        let mut headers = HeaderMap::new();
+        for (name, value) in [
+            (ACCEPT, "application/json"),
+            (ACCEPT_ENCODING, "identity"),
+            (USER_AGENT, "application"),
+            (CONTENT_LENGTH, "3"),
+        ] {
+            headers.insert(name, HeaderValue::from_static(value));
+        }
+        headers.append(ACCEPT, HeaderValue::from_static("text/plain"));
+        let expected = headers.clone();
+        default_headers(&mut headers, Some(&Bytes::from_static(b"abc")), true);
+        assert_eq!(headers, expected);
+    }
 }

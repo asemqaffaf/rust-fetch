@@ -11,7 +11,7 @@ const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
   'rust_fetch_bg.wasm': { raw: 445_000, gzip: 181_000, brotli: 148_000 }, // includes opt-in observability and WebSocket idle timers; lowered after #179 and #180
   'rust_fetch.js': { raw: 100_000, gzip: 19_700, brotli: 17_000 }, // includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload, diagnostics and stream records (#191)
-  'node.js': { raw: 58_000, gzip: 18_600, brotli: 16_200 }, // Node transports and opt-in connection diagnostics (not loaded by browsers); raised from 51/16.5/14.5 kB for prototype-pollution safety (#191): the option names Node reads by inheritance, the IPv6 forms the private-network check understands, and a response-stream adapter that Object.prototype can't configure
+  'node.js': { raw: 59_800, gzip: 19_200, brotli: 16_800 }, // Node transports, prototype-pollution hardening (#191), and the compact native entry with a full-policy fallback (#181); not loaded by browsers.
 };
 
 const pkg = new URL('../wasm-module/pkg/', import.meta.url);

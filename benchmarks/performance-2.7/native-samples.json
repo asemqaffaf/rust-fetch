@@ -1,0 +1,125 @@
+{
+  "environment": {
+    "node": "v22.23.3",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M1 Pro",
+    "os": "Darwin 25.6.0",
+    "rust": "1.99.1",
+    "wasmPack": "0.13.1"
+  },
+  "rounds": 7,
+  "seconds": 1.5,
+  "builds": {
+    "v261": "npm rust-fetch@2.6.1 with addon rebuilt from v2.6.1 using Rust 1.99.1",
+    "before": "security-hardened 2.7.0 at 1493861 with addon rebuilt using Rust 1.99.1",
+    "after": "unreleased follow-up, native wire v6"
+  },
+  "summary": {
+    "v261": {
+      "throughput": 33736.917839108595,
+      "startup": 12.221167000000005
+    },
+    "before": {
+      "throughput": 30548.50365142358,
+      "startup": 14.0045
+    },
+    "after": {
+      "throughput": 32737.251154795857,
+      "startup": 13.38525
+    }
+  },
+  "raw": {
+    "v261": [
+      {
+        "startup": 32.92379100000001,
+        "value": 33648.10908557276
+      },
+      {
+        "startup": 12.611332999999998,
+        "value": 32835.08886825434
+      },
+      {
+        "startup": 12.142750000000003,
+        "value": 34060.51166081318
+      },
+      {
+        "startup": 12.221167000000005,
+        "value": 33478.777415244345
+      },
+      {
+        "startup": 12.853375,
+        "value": 34045.471609361855
+      },
+      {
+        "startup": 12.177291999999998,
+        "value": 33973.71445794785
+      },
+      {
+        "startup": 12.090583000000002,
+        "value": 33736.917839108595
+      }
+    ],
+    "before": [
+      {
+        "startup": 21.007,
+        "value": 30150.025337111194
+      },
+      {
+        "startup": 14.0045,
+        "value": 30755.485888586813
+      },
+      {
+        "startup": 13.177541000000002,
+        "value": 30352.232722222125
+      },
+      {
+        "startup": 13.825708000000002,
+        "value": 30324.246167565114
+      },
+      {
+        "startup": 14.053124999999998,
+        "value": 30548.50365142358
+      },
+      {
+        "startup": 14.032958999999998,
+        "value": 30714.937916969368
+      },
+      {
+        "startup": 13.894999999999996,
+        "value": 30679.35183841607
+      }
+    ],
+    "after": [
+      {
+        "startup": 56.030666999999994,
+        "value": 32662.83990252638
+      },
+      {
+        "startup": 13.015458000000002,
+        "value": 33011.739753214264
+      },
+      {
+        "startup": 13.38525,
+        "value": 31882.252135370243
+      },
+      {
+        "startup": 13.273041999999997,
+        "value": 32122.049027597637
+      },
+      {
+        "startup": 13.447375000000001,
+        "value": 32737.251154795857
+      },
+      {
+        "startup": 12.875250000000001,
+        "value": 33130.92581490312
+      },
+      {
+        "startup": 13.839709000000003,
+        "value": 32870.04069679393
+      }
+    ]
+  },
+  "method": "50 concurrent small-JSON GETs over loopback HTTP; existing compare.mjs worker; 300 ms warmup, 1.5 s measurement, fresh process per build/sample, rotating build order; timeoutMs: 0, diagnostics disabled."
+}
