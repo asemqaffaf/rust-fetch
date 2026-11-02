@@ -12,6 +12,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -99,7 +100,8 @@ const run = async (names, env = {}) => {
   return result.problems;
 };
 
-for (const [label, env] of [['default transport', {}], ['node:http', { RUST_FETCH_NATIVE: '0' }]]) {
+const hasNative = existsSync(new URL(`./rust-fetch-native.${process.platform}-${process.arch}.node`, pkg));
+for (const [label, env] of (hasNative ? [['default transport', {}], ['node:http', { RUST_FETCH_NATIVE: '0' }]] : [['node:http', { RUST_FETCH_NATIVE: '0' }]])) {
   describe(`prototype pollution (${label})`, { concurrency: false }, () => {
     it('never sends a request, its credentials or its body to an inherited proxy or dispatcher', { timeout: 120_000 }, async () => {
       assert.deepEqual(await run(['proxy', 'dispatcher', 'url', 'host', 'hostname', 'socketPath', 'agent', 'lookup', 'createConnection'], env), []);
