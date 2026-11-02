@@ -804,6 +804,23 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal((await second).status, 200);
       } finally { native.cancel(71, firstScope); native.cancel(71, secondScope); local.closeAllConnections(); await new Promise((r) => local.close(r)); }
     });
+    it('releases IDs before delivering successful and failed promises', async () => {
+      const native = api(), active = scope(native);
+      const local = await startServer((req, res) => {
+        if (req.url === '/hang') return;
+        if (req.url === '/reset') { req.socket.destroy(); return; }
+        res.end('ok');
+      });
+      const request = { id: 73, method: 'GET', url: local.url('/ok'), headers: [], timeout: 2000 };
+      try {
+        for (const send of [native.send, native.sendSimple]) {
+          assert.equal((await send({ ...request, url: local.url('/hang'), timeout: 20 }, active)).code, 'RUST_FETCH_TIMEOUT');
+          assert.equal((await send(request, active)).status, 200);
+          assert.ok((await send({ ...request, url: local.url('/reset') }, active)).error);
+          for (let i = 0; i < 10; i++) assert.equal((await send(request, active)).status, 200);
+        }
+      } finally { native.cancel(request.id, active); await local.close(); }
+    });
     it('rejects occupied IDs and ignores late completion of a cancelled generation', async () => {
       const native = api(), active = scope(native);
       const local = http.createServer(() => {});
