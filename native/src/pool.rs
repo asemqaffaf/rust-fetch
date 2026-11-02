@@ -130,9 +130,10 @@ impl Pool {
             }
         }
         let start = observe.then(Instant::now);
-        let (sender, tls_ms) = self
-            .connect(url, Arc::clone(&origin.counts), observe)
-            .await?;
+        // New TCP/TLS connections are cold relative to pooled requests. Keep
+        // their handshake state out of every reused connection's future.
+        let (sender, tls_ms) =
+            Box::pin(self.connect(url, Arc::clone(&origin.counts), observe)).await?;
         Ok(Connection {
             sender,
             reused: false,
@@ -152,9 +153,10 @@ impl Pool {
     ) -> Result<Connection, String> {
         let Connection { origin, slot, .. } = connection;
         let start = observe.then(Instant::now);
-        let (sender, tls_ms) = self
-            .connect(url, Arc::clone(&origin.counts), observe)
-            .await?;
+        // New TCP/TLS connections are cold relative to pooled requests. Keep
+        // their handshake state out of every reused connection's future.
+        let (sender, tls_ms) =
+            Box::pin(self.connect(url, Arc::clone(&origin.counts), observe)).await?;
         Ok(Connection {
             sender,
             reused: false,

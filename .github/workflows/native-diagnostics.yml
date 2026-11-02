@@ -41,6 +41,8 @@ jobs:
           github-token: ${{ github.token }}
       - name: Build candidate and historical addons
         run: |
+          cp -R wasm-module/pkg header-pkg
+          cp completion-pkg/rust-fetch-native.linux-x64.node header-pkg/
           npm run build:native
           node historical/scripts/build-native.mjs
           node patched/scripts/build-native.mjs
@@ -53,7 +55,7 @@ jobs:
       - name: Profile native concurrency
         env:
           NATIVE_PROFILE_DIR: ${{ runner.temp }}/native-profiles
-        run: node benchmarks/native-diagnostics.mjs historical="$RUNNER_TEMP/reference/node_modules/rust-fetch" patched="$RUNNER_TEMP/patched/node_modules/rust-fetch" completion=completion-pkg headers=wasm-module/pkg
+        run: node benchmarks/native-diagnostics.mjs historical="$RUNNER_TEMP/reference/node_modules/rust-fetch" patched="$RUNNER_TEMP/patched/node_modules/rust-fetch" completion=completion-pkg headers=header-pkg cold=wasm-module/pkg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
