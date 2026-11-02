@@ -17,7 +17,6 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { createRequire } from 'node:module';
-import { urlToHttpOptions } from 'node:url';
 import zlib from 'node:zlib';
 import { initSync } from './rust_fetch.js';
 
@@ -272,12 +271,19 @@ const CONNECTION_OPTION_NAMES = [
   'requestCert', 'SNICallback',
 ];
 const unset = (names) => Object.fromEntries(names.map((name) => [name, undefined]));
-const REQUEST_SHADOWS = unset(REQUEST_OPTION_NAMES);
 const CONNECTION_SHADOWS = unset(CONNECTION_OPTION_NAMES);
 const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
-// The URL's fields go in the same object: given a URL, Node only recognises it
-// as one while it has no `auth` or `path`, which a polluted prototype supplies.
-const httpOptions = (target, options) => ({ ...REQUEST_SHADOWS, ...urlToHttpOptions(target), ...options });
+/**
+ * A URL for `http.request`. Node tells a URL from an options object by it having no `auth` and no `path`, which a
+ * polluted prototype supplies; with them set (and not enumerable, so they aren't copied) it is always taken as a URL,
+ * and its fields are merged into an object without a prototype that the other options are merged into in turn.
+ * That is why no per-request list of shadows is needed for the names `http.request` reads.
+ */
+function httpUrl(url) {
+  Object.defineProperty(url, 'auth', { value: undefined });
+  Object.defineProperty(url, 'path', { value: undefined });
+  return url;
+}
 /** `agent`, whose new connections are made with every option Node reads set */
 function checked(agent) {
   const create = agent.createConnection;
@@ -288,7 +294,7 @@ function checked(agent) {
 function send(state, method, url, headers, body, redirects, resolve, reject) {
   if (state.cancelled) return;
   const transport = url.protocol === 'https:' ? https : http;
-  const request = transport.request(httpOptions(url, { method, headers, agent: agentFor(transport) }), (response) => {
+  const request = transport.request(url, { method, headers, agent: agentFor(transport) }, (response) => {
     const status = response.statusCode;
     const incoming = receivedHeaders(response.rawHeaders);
     // Node's keep-alive handling reads this too
@@ -300,7 +306,7 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
       if (redirects >= MAX_REDIRECTS) return reject(new TypeError(`Too many redirects (more than ${MAX_REDIRECTS})`));
       let next;
       try {
-        next = new URL(location, url);
+        next = httpUrl(new URL(location, url));
       } catch {
         return reject(new TypeError(`Invalid redirect location: ${location}`));
       }
@@ -385,7 +391,7 @@ function nodeTransport(request) {
     return nativeTransport(request);
   }
 
-  const state = { __proto__: null, cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO, onUploadProgress, onDownloadProgress };
+  const state = { cancelled: false, request: undefined, bodyType: request.bodyType ?? AUTO, onUploadProgress, onDownloadProgress };
   let timer;
   const promise = new Promise((resolve, reject) => {
     if (request.timeout > 0) {
@@ -397,7 +403,7 @@ function nodeTransport(request) {
     }
     let url;
     try {
-      url = new URL(request.url);
+      url = httpUrl(new URL(request.url));
     } catch (error) {
       clearTimeout(timer);
       return reject(error);
