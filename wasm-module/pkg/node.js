@@ -25,8 +25,8 @@ initSync({ module: readFileSync(new URL('./rust_fetch_bg.wasm', import.meta.url)
 const MAX_SOCKETS = 256;
 const POOL_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, maxSockets: MAX_SOCKETS, maxFreeSockets: MAX_SOCKETS };
 const pools = new Map([
-  [http, new http.Agent(POOL_OPTIONS)],
-  [https, new https.Agent(POOL_OPTIONS)],
+  [http, checked(new http.Agent(POOL_OPTIONS))],
+  [https, checked(new https.Agent(POOL_OPTIONS))],
 ]);
 // The options Node's own global agents are created with. Newer versions also
 // list unset ones (e.g. `proxyEnv: undefined` unless NODE_USE_ENV_PROXY is on).
@@ -127,11 +127,37 @@ function decompress(body, contentEncoding) {
 }
 
 /** Response headers as one string per name; repeated headers joined with ", " */
-function flattenHeaders(raw) {
-  const headers = {};
-  for (const name in raw) {
-    const value = raw[name];
+function flattenHeaders(received) {
+  // Own properties only, and the result keeps a header named __proto__ as data
+  const headers = { __proto__: null };
+  for (const name of Object.keys(received)) {
+    const value = received[name];
     headers[name] = Array.isArray(value) ? value.join(', ') : value;
+  }
+  return Object.setPrototypeOf(headers, Object.prototype);
+}
+
+// Node keeps only the first of these when a response repeats one
+const FIRST_ONLY = new Set([
+  'age', 'authorization', 'content-length', 'content-type', 'etag', 'expires', 'from', 'host', 'if-modified-since', 'if-unmodified-since',
+  'last-modified', 'location', 'max-forwards', 'proxy-authorization', 'referer', 'retry-after', 'server', 'user-agent',
+]);
+
+/**
+ * The response's headers by lowercase name, in a map without a prototype and
+ * joined the way Node's own IncomingMessage.headers is. That one is built
+ * with lookups that find Object.prototype: a polluted name could discard the
+ * genuine header or supply one the server never sent (a framing, encoding,
+ * content type or redirect location).
+ */
+function receivedHeaders(raw) {
+  const headers = { __proto__: null };
+  for (let i = 0; i < raw.length; i += 2) {
+    const name = raw[i].toLowerCase();
+    const value = raw[i + 1];
+    if (!(name in headers)) headers[name] = name === 'set-cookie' ? [value] : value;
+    else if (name === 'set-cookie') headers[name].push(value);
+    else if (!FIRST_ONLY.has(name)) headers[name] += `${name === 'cookie' ? '; ' : ', '}${value}`;
   }
   return headers;
 }
@@ -152,19 +178,66 @@ function withoutHeaders(headers, names) {
   return copy;
 }
 
+// Node's http, net and tls modules read many option names from plain objects,
+// so Object.prototype could supply a socketPath or a trusted CA, say. Own
+// undefined values shadow the inherited ones. http.request reads only a few
+// names from the object it is given, and does so for every request, so that
+// list is short; the rest are read when a connection is made, so the pooled
+// agents shadow them in createConnection. Not rejectUnauthorized, ciphers,
+// checkServerIdentity or minDHSize: tls.connect sets those itself first, so
+// they can't be inherited, and an own undefined would replace its defaults.
+const REQUEST_OPTION_NAMES = [
+  '_defaultAgent', 'auth', 'createConnection', 'defaultPort', 'host', 'insecureHTTPParser', 'joinDuplicateHeaders', 'maxHeaderSize', 'port',
+  'setDefaultHeaders', 'setHost', 'signal', 'socketPath', 'timeout', 'uniqueHeaders',
+];
+const CONNECTION_OPTION_NAMES = [
+  ...REQUEST_OPTION_NAMES,
+  // net.connect
+  'localAddress', 'localPort', 'family', 'lookup', 'hints', 'highWaterMark', 'noDelay', 'keepAlive', 'keepAliveInitialDelay', 'autoSelectFamily',
+  'autoSelectFamilyAttemptTimeout', 'blockList', 'onread', 'fd', 'handle', 'allowHalfOpen', 'optimizeEmptyRequests',
+  // tls.connect
+  'secureContext', 'ca', 'cert', 'key', 'pfx', 'passphrase', 'honorCipherOrder', 'ecdhCurve', 'dhparam', 'minVersion', 'maxVersion',
+  'secureProtocol', 'secureOptions', 'crl', 'sigalgs', 'clientCertEngine', 'privateKeyEngine', 'privateKeyIdentifier', 'sessionIdContext',
+  'ticketKeys', 'sessionTimeout', 'session', 'pskCallback', 'requestOCSP', 'enableTrace', 'servername', 'ALPNProtocols', 'ALPNCallback', 'isServer',
+  'requestCert', 'SNICallback',
+];
+const unset = (names) => Object.fromEntries(names.map((name) => [name, undefined]));
+const CONNECTION_SHADOWS = unset(CONNECTION_OPTION_NAMES);
+const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
+/**
+ * A URL for `http.request`. Node tells a URL from an options object by it having no `auth` and no `path`, which a
+ * polluted prototype supplies; with them set (and not enumerable, so they aren't copied) it is always taken as a URL,
+ * and its fields are merged into an object without a prototype that the other options are merged into in turn.
+ * That is why no per-request list of shadows is needed for the names `http.request` reads.
+ */
+function httpUrl(url) {
+  Object.defineProperty(url, 'auth', { value: undefined });
+  Object.defineProperty(url, 'path', { value: undefined });
+  return url;
+}
+/** `agent`, whose new connections are made with every option Node reads set */
+function checked(agent) {
+  const create = agent.createConnection;
+  agent.createConnection = function (options, callback) { return create.call(this, shadow(options), callback); };
+  return agent;
+}
+
 function send(state, method, url, headers, body, redirects, resolve, reject) {
   if (state.cancelled) return;
   const transport = url.protocol === 'https:' ? https : http;
   const request = transport.request(url, { method, headers, agent: agentFor(transport) }, (response) => {
     const status = response.statusCode;
-    const location = response.headers.location;
+    const incoming = receivedHeaders(response.rawHeaders);
+    // Node's keep-alive handling reads this too
+    response.headers = incoming;
+    const location = incoming.location;
 
     if (REDIRECT_STATUSES.has(status) && location) {
       response.resume();
       if (redirects >= MAX_REDIRECTS) return reject(new TypeError(`Too many redirects (more than ${MAX_REDIRECTS})`));
       let next;
       try {
-        next = new URL(location, url);
+        next = httpUrl(new URL(location, url));
       } catch {
         return reject(new TypeError(`Invalid redirect location: ${location}`));
       }
@@ -189,8 +262,8 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
 
     // With a Content-Length, fill one preallocated buffer (a single copy);
     // otherwise collect chunks and join them at the end.
-    const expected = Number(response.headers['content-length']);
-    const preallocated = !response.headers['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
+    const expected = Number(incoming['content-length']);
+    const preallocated = !incoming['content-encoding'] && Number.isSafeInteger(expected) && expected > 0 && expected <= 512 * 1024 * 1024;
     const buffer = preallocated ? new Uint8Array(expected) : undefined;
     let received = 0;
     const chunks = [];
@@ -212,9 +285,9 @@ function send(state, method, url, headers, body, redirects, resolve, reject) {
           body = buffer;
         } else {
           const raw = buffer ? Buffer.concat([buffer.subarray(0, Math.min(received, expected)), ...chunks]) : Buffer.concat(chunks);
-          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, response.headers['content-encoding']));
+          body = ownedBytes(method === 'HEAD' ? raw : decompress(raw, incoming['content-encoding']));
         }
-        resolve({ status, url: url.href, headers: flattenHeaders(response.headers), body });
+        resolve({ status, url: url.href, headers: flattenHeaders(incoming), body });
       } catch (error) {
         reject(error);
       }
@@ -249,12 +322,12 @@ function nodeTransport(request) {
     }
     let url;
     try {
-      url = new URL(request.url);
+      url = httpUrl(new URL(request.url));
     } catch (error) {
       clearTimeout(timer);
       return reject(error);
     }
-    const headers = { ...request.headers };
+    const headers = { __proto__: null, ...request.headers };
     headers['accept'] ??= '*/*';
     headers['accept-encoding'] ??= ACCEPT_ENCODING;
     headers['user-agent'] ??= 'rust-fetch';
@@ -284,8 +357,8 @@ function nodeTransport(request) {
 function finishResponse({ status, url, headers, body }, bodyType) {
   const ok = status >= 200 && status < 300;
   // Error statuses carry their body as text (for HttpError.body)
-  const decoded = ok ? decodeBody(body, headers['content-type'], bodyType) : decodeBody(body, '', TEXT);
-  return { status, statusText: '', ok, url, headers, body: decoded };
+  const decoded = ok ? decodeBody(body, Object.hasOwn(headers, 'content-type') ? headers['content-type'] : undefined, bodyType) : decodeBody(body, '', TEXT);
+  return { __proto__: null, status, statusText: '', ok, url, headers, body: decoded };
 }
 
 globalThis[Symbol.for('rust-fetch.transport')] = nodeTransport;
