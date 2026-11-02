@@ -1,6 +1,6 @@
 # 2.7 performance follow-up: #180 and #181
 
-Local measurements on 2026-11-02, Apple M1 Pro, Node.js 22.23.3, Rust 1.99.1, wasm-pack 0.13.1, Darwin 25.6.0. These are unreleased changes on top of the security-hardened 2.7.0; the package version remains 2.7.0 until a separate patch release is prepared. CI has not run on this branch.
+Local measurements on 2026-11-02, Apple M1 Pro, Node.js 22.23.3, Rust 1.99.1, wasm-pack 0.13.1, Darwin 25.6.0. These are unreleased changes on top of the security-hardened 2.7.0; the package version remains 2.7.0 until a separate patch release is prepared. These measurements were collected before CI. Current validation is tracked in [startup PR #203](https://github.com/asemqaffaf/rust-fetch/pull/203) and [native PR #204](https://github.com/asemqaffaf/rust-fetch/pull/204).
 
 The [full comparison](comparison.md) uses the existing benchmark unchanged: seven interleaved rounds, 1.5 seconds each, fresh processes and the same local server. Against 2.6.1, default client overhead is level, node:http startup is 3.7% slower (15.2 vs 14.7 ms), and native concurrent throughput is 2.6% lower (33,291 vs 34,170 requests/s). The strict 10% regression threshold is unchanged. Native startup remains 7.7% slower. Browser bundle growth from the 2.7 features is still present; these changes do not establish zero overhead for every feature or workload.
 
@@ -19,7 +19,7 @@ node scripts/check-package.mjs --strict --baseline 2.6.1
 
 Run without other test/build workloads competing for CPU. The Node transports enforce the same security controls; requests with optional native policies retain the full entry. Local addons require private wire v6; stale binaries fall back to node:http.
 
-## Verification
+## Initial local verification
 
 - 636 JavaScript tests: 628 passed, 8 intentional skips, including all 97 security/hardening/prototype-pollution tests on both Node transports.
 - 72 real-browser tests: 68 passed, 4 intentional skips; 69 conformance behaviors across six adapters, 414 expected observations.

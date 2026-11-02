@@ -140,7 +140,7 @@ Released 2026-11-02. All 13 features are implemented, but the original "no measu
 | Benchmark pull requests against the published release | [#182](https://github.com/asemqaffaf/rust-fetch/issues/182) | Done |
 | Flaky Linux WebKit upload test | [#184](https://github.com/asemqaffaf/rust-fetch/issues/184) | Done |
 
-**Unreleased follow-up:** seven interleaved local rounds against 2.6.1 measured startup +3.7%, level default request overhead, and native concurrency -2.6%, within #181's 5% target. The [method and results](benchmarks/performance-2.7/README.md) retain the measured costs and validation. Both tickets remain open pending CI verification of the patch.
+**Unreleased follow-up:** seven interleaved local rounds against 2.6.1 measured startup +3.7%, level default request overhead, and native concurrency -2.6%, within #181's 5% target. The [method and results](benchmarks/performance-2.7/README.md) retain the measured costs and validation. The fixes are tracked in [startup PR #203](https://github.com/asemqaffaf/rust-fetch/pull/203) and [native PR #204](https://github.com/asemqaffaf/rust-fetch/pull/204); both tickets remain open until the fixes merge.
 
 | Implemented feature | Issue | Guide or verification |
 | --- | --- | --- |

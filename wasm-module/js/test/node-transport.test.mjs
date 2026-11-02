@@ -185,6 +185,37 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
   });
 
+  it('ignores inherited native option accessors on ordinary and policy requests', { skip: !nativeExpected }, async () => {
+    const source = `
+      import assert from 'node:assert/strict';
+      import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
+      const client = new WasmClient({ retries: 0 });
+      const names = ['extra', 'manual', 'maxRedirects', 'maxResponseBytes', 'sensitiveHeaders', 'allowInsecureRedirects'];
+      for (const name of names) Object.defineProperty(Object.prototype, name, {
+        configurable: true,
+        get() { throw new Error('inherited native option getter: ' + name); },
+        set() { throw new Error('inherited native option setter: ' + name); },
+      });
+      try {
+        const url = ${JSON.stringify(server.url('/echo'))};
+        for (const options of [undefined, { maxResponseBytes: 4096 }, { responseTimeoutMs: 2000 }, { redirect: 'manual' }]) {
+          const response = await client.get(url, options);
+          assert.equal(response.status, 200);
+          assert.equal(response.body.headers.connection, undefined);
+          assert.equal(response.body.method, 'GET');
+        }
+        console.log('protected');
+      } finally {
+        for (const name of names) delete Object.prototype[name];
+        client.free();
+      }
+    `;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], {
+      env: { ...process.env, RUST_FETCH_NATIVE: fileURLToPath(addon) }, timeout: 10000,
+    });
+    assert.equal(stdout.trim(), 'protected');
+  });
+
   it('uses node:http when no addon is bundled or the configured one does not load', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-no-addon-'));
     try {
