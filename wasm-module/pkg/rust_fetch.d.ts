@@ -144,7 +144,7 @@ export interface ClientOptions extends BrowserRequestOptions {
      * link-local including cloud metadata at 169.254.169.254, CGNAT, unique-local and link-local IPv6, multicast…)
      * reject with a `NetworkError` before connecting. The resolved address is checked when connecting, on every
      * redirect, so DNS rebinding can't get past it. For servers that fetch user-supplied URLs (SSRF). Through a
-     * proxy, only IP-literal hosts are checked (the proxy resolves names). Browsers have their own rules. Default: `true`
+     * proxy, which resolves names itself, IP addresses are checked and host names are refused. Browsers have their own rules. Default: `true`
      */
     allowPrivateNetwork?: boolean;
 }

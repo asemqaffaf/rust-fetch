@@ -187,23 +187,30 @@ describe('server-side request forgery (CWE-918)', () => {
   const guarded = new WasmClient({ allowPrivateNetwork: false });
 
   // The next two checks come from an independent evaluation of 2.5.0 (aakjp/stress-test)
-  it('rechecks every redirect hop: a public name through a proxy, redirected to a private address', async () => {
-    // Through a proxy, names aren't checked (the proxy resolves them), so the first hop goes out;
-    // the proxy answers with a redirect to an IP-literal private address, which must be blocked
+  it('rechecks every redirect hop: a public IP address through a proxy, redirected to a private address or a name', async () => {
+    // The proxy answers the first hop with a redirect, which must be checked like a request:
+    // to an IP-literal private address it is blocked, to a name it is refused (the proxy would resolve it unchecked)
     let proxied = 0;
+    let location = api.url('/internal');
     const proxy = http.createServer((req, res) => {
       proxied++;
-      res.writeHead(302, { location: api.url('/internal') });
+      res.writeHead(302, { location });
       res.end();
     });
     await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
     try {
       const before = api.requests.length;
       const client = new WasmClient({ allowPrivateNetwork: false, proxy: `http://127.0.0.1:${proxy.address().port}` });
-      const error = await rejection(client.get('http://public-fixture.invalid/redirect'));
+      const error = await rejection(client.get('http://93.184.216.34/redirect'));
       assert.match(error.message, /Blocked: 127\.0\.0\.1/);
       assert.equal(proxied, 1, 'the first hop reached the proxy');
       assert.equal(api.requests.length, before, 'the redirect target was never contacted');
+      location = 'http://internal.example/admin';
+      assert.match((await rejection(client.get('http://93.184.216.34/redirect'))).message, /can't check internal\.example through a proxy/);
+      assert.equal(proxied, 2, 'the redirect to a name was not followed');
+      // A name as the first hop is refused before anything is sent
+      assert.match((await rejection(client.get('http://public-fixture.invalid/redirect'))).message, /can't check public-fixture\.invalid through a proxy/);
+      assert.equal(proxied, 2);
     } finally {
       proxy.close();
     }
