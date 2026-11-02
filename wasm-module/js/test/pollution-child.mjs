@@ -5,6 +5,7 @@
 // a changed result, a request that reached the attacker's proxy or dispatcher,
 // a certificate that was trusted, or an uncaught exception.
 import { fork } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -162,7 +163,7 @@ const hostile = JSON.parse(process.env.POLLUTION_NAMES);
 // event called `timeout`, a `signal` stream option), which breaks it for every
 // program, not only this library. A difference is excused on the node:http
 // transport only when plain http.get misbehaves under the same pollution.
-const nativeOff = process.env.RUST_FETCH_NATIVE === '0';
+const nativeOff = process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`./rust-fetch-native.${process.platform}-${process.arch}.node`, process.env.POLLUTION_PKG));
 const usesNodeHttp = (scenario) => nativeOff || scenario === 'stream' || scenario === 'ndjson' || scenario === 'progress';
 // Likewise a plain `new WebSocket()`, which undici builds from objects that inherit
 const wsBreaks = () => new Promise((resolve) => {
