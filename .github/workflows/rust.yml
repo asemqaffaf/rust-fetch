@@ -245,10 +245,31 @@ jobs:
           npm install --no-audit --no-fund --ignore-scripts rust-fetch@latest
           echo "PUBLISHED=$RUNNER_TEMP/published/node_modules/rust-fetch" >> "$GITHUB_ENV"
           echo "PUBLISHED_VERSION=$(node -p "require('./node_modules/rust-fetch/package.json').version")" >> "$GITHUB_ENV"
+          echo "CANDIDATE_VERSION=$(node -p "require('$GITHUB_WORKSPACE/package.json').version")" >> "$GITHUB_ENV"
+      # #180/#181 use the pre-2.7 release as their reference. Comparing only
+      # with the current npm release would hide the cumulative 2.7 costs.
+      - name: Build the 2.6.1 reference for 2.7 maintenance
+        if: startsWith(env.CANDIDATE_VERSION, '2.7.')
+        run: |
+          git worktree add historical v2.6.1
+          historical_pkg="$RUNNER_TEMP/historical-2.6.1"
+          mkdir -p "$historical_pkg"
+          (cd "$historical_pkg" && npm init -y >/dev/null && npm install --no-audit --no-fund --ignore-scripts rust-fetch@2.6.1)
+          # Reuse the base build's dependency artifacts. Its addon has already
+          # been copied to base/wasm-module/pkg, so rebuilding cannot replace it.
+          cargo build --manifest-path historical/native/Cargo.toml --target-dir base/native/target --release
+          addon="rust-fetch-native.$(node -p 'process.platform + "-" + process.arch').node"
+          cp base/native/target/release/librust_fetch_native.so "$historical_pkg/node_modules/rust-fetch/$addon"
+          echo "HISTORICAL_PKG=$historical_pkg/node_modules/rust-fetch" >> "$GITHUB_ENV"
       - name: Compare (results in the job summary)
-        run: >
-          node benchmarks/compare.mjs base/wasm-module/pkg head-pkg
-          --also "Benchmarks: this PR against rust-fetch@$PUBLISHED_VERSION from npm (what the release gate compares; no native addon)=$PUBLISHED"
+        run: |
+          historical_args=()
+          if [ -n "$HISTORICAL_PKG" ]; then
+            historical_args+=(--also "Benchmarks: cumulative 2.7 change against rust-fetch@2.6.1 (rebuilt native addon)=$HISTORICAL_PKG")
+          fi
+          node benchmarks/compare.mjs base/wasm-module/pkg head-pkg \
+            --also "Benchmarks: this PR against rust-fetch@$PUBLISHED_VERSION from npm (what the release gate compares; no native addon)=$PUBLISHED" \
+            "${historical_args[@]}"
 
   package:
     name: Packed package (contents, security suite, against npm)
