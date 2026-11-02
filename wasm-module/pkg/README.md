@@ -373,6 +373,8 @@ If something else in the process pollutes `Object.prototype`, the client must no
 
 **What the client can't fix.** Node.js's own `http`, `net` and stream modules read some names from the prototype chain themselves: an event named `timeout`, and the `signal` stream option. With those polluted, any Node.js HTTP client fails, this one included on the `node:http` transport. Fix the pollution at its source; freezing the prototype (`Object.freeze(Object.prototype)`, or `node --disable-proto=delete --frozen-intrinsics`) prevents it.
 
+Not fixed in this line: upload-progress requests, `responseType: 'stream'` requests are sent with Node's own `fetch()` before 2.4.0, and undici reads `dispatcher`, `method`, `headers`, `body` and `signal` for it from the prototype chain, which a package can't shield. Update to 2.4.2 or later for those, or avoid the features where `Object.prototype` can be polluted.
+
 ## Roadmap
 
 - [x] POST, PUT, PATCH, DELETE, HEAD, OPTIONS
