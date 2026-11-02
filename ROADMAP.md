@@ -128,11 +128,11 @@ Performance carried over from 2.4.0:
 
 *Goal: protect both the client and the APIs it calls, keep untrusted servers from exhausting memory or reaching internal networks, and show where the time goes.*
 
-Released 2026-11-02. All 13 features are implemented, but the original "no measurable overhead when unset" criteria are not met. The release notes document those costs. Startup (#180) and native throughput (#181) remain open for the performance follow-up below; feature implementation alone does not complete those tickets. New controls are opt-in; the guides document transport limitations and compatibility details.
+Released 2026-11-02. All 13 features are implemented, but the original "no measurable overhead when unset" criteria are not met. The release notes document those costs. The 2.7.1 follow-up addresses startup (#180) and native throughput (#181), with the remaining costs documented below. New controls are opt-in; the guides document transport limitations and compatibility details.
 
-**Performance follow-up.** The initial release audit against 2.6.1 failed the release benchmark gate. Optimizations brought the published 2.7.0 within the gate, with thin startup margin and a remaining native throughput regression. The table records the published release; the follow-up patch must be independently benchmarked and verified before these tickets close:
+**Performance follow-up.** The initial release audit against 2.6.1 failed the release benchmark gate. Optimizations brought the published 2.7.0 within the gate, with thin startup margin and a remaining native throughput regression. The table records the published release; the independently verified 2.7.1 follow-up is summarized below:
 
-| Performance item | Issue | Status |
+| Performance item | Issue | At the 2.7.0 release |
 | --- | --- | --- |
 | Per-request client overhead +11% against 2.6.1 (release gate) | [#179](https://github.com/asemqaffaf/rust-fetch/issues/179) | Fixed: +0.0% to +3.1% on CI |
 | Import and first-request startup 10–15% slower | [#180](https://github.com/asemqaffaf/rust-fetch/issues/180) | Improved: +5.2% to +9.7% on CI, still close to the 10% threshold |
@@ -140,7 +140,7 @@ Released 2026-11-02. All 13 features are implemented, but the original "no measu
 | Benchmark pull requests against the published release | [#182](https://github.com/asemqaffaf/rust-fetch/issues/182) | Done |
 | Flaky Linux WebKit upload test | [#184](https://github.com/asemqaffaf/rust-fetch/issues/184) | Done |
 
-**Unreleased follow-up:** seven interleaved local rounds against 2.6.1 measured startup +3.7%, level default request overhead, and native concurrency -2.6%, within #181's 5% target. The [method and results](benchmarks/performance-2.7/README.md) retain the measured costs and validation. The fixes are tracked in [startup PR #203](https://github.com/asemqaffaf/rust-fetch/pull/203) and [native PR #204](https://github.com/asemqaffaf/rust-fetch/pull/204); both tickets remain open until the fixes merge.
+**2.7.1 follow-up:** [startup PR #203](https://github.com/asemqaffaf/rust-fetch/pull/203) and [native PR #204](https://github.com/asemqaffaf/rust-fetch/pull/204) add performance improvements and property-descriptor hardening. Full CI, security/audit, browser, conformance and packed-package checks passed. Native concurrency was within 1.1% of 2.6.1 in one full CI run and 0.9% in a balanced fifteen-round Linux check; another full run measured 4.7% faster. Performance parity is not complete: the recorded pre-release comparison measured node:http concurrency 9.9% slower and native startup 12.8% slower. The [method, raw samples and CI results](benchmarks/performance-2.7/README.md) retain both favorable and less favorable runs.
 
 | Implemented feature | Issue | Guide or verification |
 | --- | --- | --- |
