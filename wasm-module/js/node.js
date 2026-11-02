@@ -456,7 +456,8 @@ function nativeTransport(request) {
   const finished = native
     .send({ __proto__: null, id, method: request.method, url: request.url, headers: pairs, body: request.body, timeout: request.timeout })
     .then((response) => {
-      if (response.error != null) throw coded(new Error(response.error), response.code);
+      // The addon sets `error` only for failures: an absent one must not be read from the prototype chain
+      if (Object.hasOwn(response, 'error') && response.error != null) throw coded(new Error(response.error), Object.hasOwn(response, 'code') ? response.code : undefined);
       const headers = ownHeaders(response.headers);
       return finishResponse({ status: response.status, url: response.url, headers, body: ownedBytes(response.body) }, bodyType);
     });
