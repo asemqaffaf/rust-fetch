@@ -105,10 +105,17 @@ if (process.env.BENCH_WORKER) {
     return count;
   };
   await run(300); // warm up: connections, JIT tiers
+  const cpuStart = process.cpuUsage(), resourceStart = process.resourceUsage();
   const start = performance.now();
   const count = await run(seconds * 1000);
-  const rate = count / ((performance.now() - start) / 1000);
-  console.log(JSON.stringify({ startup, value: scenario === 'large' ? (rate * 8) : rate }));
+  const elapsedMs = performance.now() - start;
+  const rate = count / (elapsedMs / 1000);
+  const cpu = process.cpuUsage(cpuStart), resource = process.resourceUsage();
+  console.log(JSON.stringify({ startup, value: scenario === 'large' ? (rate * 8) : rate, count, elapsedMs,
+    cpuUserUsPerRequest: cpu.user / count, cpuSystemUsPerRequest: cpu.system / count,
+    voluntarySwitchesPerRequest: (resource.voluntaryContextSwitches - resourceStart.voluntaryContextSwitches) / count,
+    involuntarySwitchesPerRequest: (resource.involuntaryContextSwitches - resourceStart.involuntaryContextSwitches) / count,
+  }));
   process.exit(0);
 }
 
