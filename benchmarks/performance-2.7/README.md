@@ -34,7 +34,26 @@ The [full final-source CI comparison at `101d479`](https://github.com/asemqaffaf
 
 An [independent exact-artifact run](https://github.com/asemqaffaf/rust-fetch/actions/runs/41483532400), nine rotating rounds on AMD EPYC 9V45 / Node 22.23.4, measured that same CI artifact at **33,143 vs 34,229 requests/s (-3.2%)**, compared with security-patched 2.6.2 at 33,675 (-1.6%). Its median paired difference versus 2.6.1 was -5.5%. Swapping the paired Wasm/glue assets back to `c9e847d` did not improve the result (33,027 requests/s), so the +16-byte descriptor-hardening change does not explain the earlier Linux gap. Final-source macOS samples are retained in the [PR description](https://github.com/asemqaffaf/rust-fetch/pull/204): 28,632 vs 27,290 requests/s (+4.9%), seven wins in nine rounds.
 
-These differences remain unresolved; #204 stays draft. CI now retains the original 2.6.1 comparison and adds security-patched 2.6.2 on the same runner to separate mandatory hardening costs from subsequent 2.7 work. The patched reference can share the historical native addon only after CI verifies identical native sources and equivalent Cargo manifests/locked dependencies (apart from the package's own version). Benchmark thresholds are unchanged.
+The later full-matrix and balanced checks below provide the final acceptance measurements. The earlier results remain visible because runner and round variance is substantial. CI retains the original 2.6.1 comparison and adds security-patched 2.6.2 on the same runner to separate mandatory hardening costs from subsequent 2.7 work. The patched reference can share the historical native addon only after CI verifies identical native sources and equivalent Cargo manifests/locked dependencies (apart from the package's own version). Benchmark thresholds are unchanged.
+
+### Final acceptance measurements
+
+The [expanded full CI run at `50e39b2`](https://github.com/asemqaffaf/rust-fetch/actions/runs/41484836331) passed all 14 jobs, plus separate docs and fuzz workflows. Runtime code is unchanged from `101d479`; only the patched-reference comparison and this report changed. Five interleaved rounds against 2.6.1 measured:
+
+| Metric | 2.6.1 | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Native concurrent throughput | 10,508 requests/s | 10,391 requests/s | -1.1% |
+| Default client overhead | 14.9 µs | 14.8 µs | 1.0% better |
+| Node:http import + first request | 25.0 ms | 26.2 ms | 4.9% slower |
+| Native import + first request | 17.7 ms | 20.1 ms | 13.3% slower |
+
+The native-concurrency target is met in this full run. Against security-patched 2.6.2, native concurrency was 5.9% lower in this particular run; that control must not be used to claim security hardening explains every measured gap. Across the two full CI runs, candidate native throughput was nearly unchanged (10,372 → 10,391), while the historical baseline moved from 12,139 to 10,508. Both results are retained; there is no guarantee of a sub-5% point estimate on every shared runner.
+
+An independent [fifteen-round exact-artifact comparison](https://github.com/asemqaffaf/rust-fetch/actions/runs/41486089622) balances each of three builds across all three positions five times. On Intel Xeon Platinum 8573C / four CPUs / Node 22.23.4, the candidate reached **19,025 vs 19,190 requests/s (-0.9%)**, with nine wins in fifteen paired rounds and median paired difference +0.2%. Security-patched 2.6.2 reached 18,162 requests/s and lost to 2.6.1 in every round; the candidate beat it in twelve of fifteen rounds. Median client-process user CPU was 69.0 µs/request versus 68.5 for 2.6.1 and 72.7 for 2.6.2. [Raw unprofiled rounds and source metadata](linux-native-final-samples.json).
+
+Native startup remains a measured limitation, documented in the Unreleased changelog: native imports still compile/load the larger 2.7 Wasm and JavaScript assets. The published node:http path has margin under the unchanged strict 10% gate. The independent parent PR also passed its strict packed check against 2.6.1. #180 and #181 remain open until their PRs are accepted and merged.
+
+The cache-padding experiment and a scope-binding prototype were discarded. The latter improved the local median by only about 1% in paired rounds and did not justify a new private binding API. Native payload validation, per-module TLS/cancellation isolation, timeout accounting and security checks remain intact.
 
 ## Reproduce
 
