@@ -56,7 +56,7 @@ Resilience, observability and a streaming upload path. Everything new is opt-in:
 - **Phase timeout size budgets:** WebAssembly grows from 134 to about 154 kB brotli; the Node wrapper adds about 1 kB. Budgets rise deliberately to 480/192/156 kB (raw/gzip/brotli) for Wasm and 43/14/12.5 kB for Node.
 
 ### Documentation
-- **Documentation by version.** The site has a version menu: the latest release, and 2.5 at [/v2.5/](https://asemqaffaf.github.io/rust-fetch/v2.5/). 2.5 had no documentation site, so its page is the README as published with 2.5.2, with a notice linking to the latest version. Search covers the latest version only.
+- **Documentation by version.** The site has a version menu with minor-version labels: the latest release (2.7), archived [2.6 documentation](/v2.6/) with its own sidebar and navigation, and [2.5 documentation](/v2.5/) (the README as published with 2.5.2). Search covers the latest version only.
 
 ## [2.6.1] - 2026-10-29
 

@@ -8,6 +8,7 @@ const slugify = (text: string) => slug(text);
 
 // The latest release: the workspace version only changes in release pull requests
 const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+const minorVersion = version.split('.').slice(0, 2).join('.');
 
 export default defineConfig({
   title: 'rust-fetch',
@@ -21,7 +22,7 @@ export default defineConfig({
   head: [['meta', { name: 'theme-color', content: '#654ff0' }]],
   themeConfig: {
     nav: [
-      { text: 'Guide', link: '/guide/getting-started', activeMatch: '/guide/' },
+      { text: 'Guide', link: '/guide/getting-started', activeMatch: '^/guide/' },
       { text: 'Security', link: '/security' },
       { text: 'Performance', link: '/performance' },
       { text: 'Conformance', link: '/conformance' },
@@ -38,80 +39,143 @@ export default defineConfig({
         ],
       },
       {
-        text: `v${version}`,
+        text: `v${minorVersion}`,
         items: [
-          { text: `${version} (latest)`, link: '/' },
-          // Archived: 2.5 and earlier had no site, so this is the README of 2.5.2
+          { text: `${minorVersion} (latest)`, link: '/' },
+          { text: '2.6', link: '/v2.6/' },
           { text: '2.5', link: '/v2.5/' },
           { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
         ],
       },
     ],
-    sidebar: [
-      {
-        text: 'Start here',
-        items: [
-          { text: 'Introduction', link: '/guide/introduction' },
-          { text: 'Getting started', link: '/guide/getting-started' },
-          { text: 'Guide overview', link: '/guide/' },
-        ],
-      },
-      {
-        text: 'Guide',
-        items: [
-          {
-            text: 'Basics',
-            items: [
-              { text: 'Client options', link: '/guide/configuration' },
-              { text: 'Requests and responses', link: '/guide/requests' },
-              { text: 'Errors', link: '/guide/errors' },
-            ],
-          },
-          {
-            text: 'Reliability',
-            items: [
-              { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
-              { text: 'Concurrency and rate limits', link: '/guide/load-limits' },
-              { text: 'Circuit breakers', link: '/guide/circuit-breakers' },
-              { text: 'Observability', link: '/guide/observability' },
-              { text: 'Interceptors', link: '/guide/interceptors' },
-            ],
-          },
-          {
-            text: 'Streaming and real-time',
-            items: [
-              { text: 'Streaming and Server-Sent Events', link: '/guide/streaming' },
-              { text: 'Uploads', link: '/guide/uploads' },
-              { text: 'WebSockets', link: '/guide/websockets' },
-            ],
-          },
-          {
-            text: 'Tooling',
-            items: [{ text: 'TypeScript', link: '/guide/typescript' }],
-          },
-        ],
-      },
-      {
-        text: 'Production',
-        items: [
-          { text: 'Security', link: '/security' },
-          { text: 'Performance', link: '/performance' },
-          { text: 'Reliability under faults', link: '/reliability' },
-          { text: 'Transport conformance', link: '/conformance' },
-        ],
-      },
-      {
-        text: 'Reference',
-        items: [
-          { text: 'Architecture', link: '/architecture' },
-          { text: 'Using it from Rust', link: '/rust' },
-          { text: 'Compatibility and limitations', link: '/compatibility' },
-          { text: 'Stability and releases', link: '/stability' },
-          { text: 'Development and benchmarking', link: '/development' },
-          { text: 'FAQ', link: '/faq' },
-        ],
-      },
-    ],
+    sidebar: {
+      '/v2.6/': [
+        {
+          text: 'Start here',
+          items: [
+            { text: 'Introduction', link: '/v2.6/guide/introduction' },
+            { text: 'Getting started', link: '/v2.6/guide/getting-started' },
+            { text: 'Guide overview', link: '/v2.6/guide/' },
+          ],
+        },
+        {
+          text: 'Guide',
+          items: [
+            {
+              text: 'Basics',
+              items: [
+                { text: 'Client options', link: '/v2.6/guide/configuration' },
+                { text: 'Requests and responses', link: '/v2.6/guide/requests' },
+                { text: 'Errors', link: '/v2.6/guide/errors' },
+              ],
+            },
+            {
+              text: 'Reliability',
+              items: [
+                { text: 'Timeouts, retries and cancellation', link: '/v2.6/guide/timeouts-and-retries' },
+                { text: 'Interceptors', link: '/v2.6/guide/interceptors' },
+              ],
+            },
+            {
+              text: 'Streaming and real-time',
+              items: [
+                { text: 'Streaming and Server-Sent Events', link: '/v2.6/guide/streaming' },
+                { text: 'Uploads', link: '/v2.6/guide/uploads' },
+                { text: 'WebSockets', link: '/v2.6/guide/websockets' },
+              ],
+            },
+            {
+              text: 'Tooling',
+              items: [{ text: 'TypeScript', link: '/v2.6/guide/typescript' }],
+            },
+          ],
+        },
+        {
+          text: 'Production',
+          items: [
+            { text: 'Security', link: '/v2.6/security' },
+            { text: 'Performance', link: '/v2.6/performance' },
+            { text: 'Transport conformance', link: '/v2.6/conformance' },
+          ],
+        },
+        {
+          text: 'Reference',
+          items: [
+            { text: 'Architecture', link: '/v2.6/architecture' },
+            { text: 'Using it from Rust', link: '/v2.6/rust' },
+            { text: 'Compatibility and limitations', link: '/v2.6/compatibility' },
+            { text: 'Stability and releases', link: '/v2.6/stability' },
+            { text: 'Development and benchmarking', link: '/v2.6/development' },
+            { text: 'FAQ', link: '/v2.6/faq' },
+          ],
+        },
+      ],
+      '/': [
+        {
+          text: 'Start here',
+          items: [
+            { text: 'Introduction', link: '/guide/introduction' },
+            { text: 'Getting started', link: '/guide/getting-started' },
+            { text: 'Guide overview', link: '/guide/' },
+          ],
+        },
+        {
+          text: 'Guide',
+          items: [
+            {
+              text: 'Basics',
+              items: [
+                { text: 'Client options', link: '/guide/configuration' },
+                { text: 'Requests and responses', link: '/guide/requests' },
+                { text: 'Errors', link: '/guide/errors' },
+              ],
+            },
+            {
+              text: 'Reliability',
+              items: [
+                { text: 'Timeouts, retries and cancellation', link: '/guide/timeouts-and-retries' },
+                { text: 'Concurrency and rate limits', link: '/guide/load-limits' },
+                { text: 'Circuit breakers', link: '/guide/circuit-breakers' },
+                { text: 'Observability', link: '/guide/observability' },
+                { text: 'Interceptors', link: '/guide/interceptors' },
+              ],
+            },
+            {
+              text: 'Streaming and real-time',
+              items: [
+                { text: 'Streaming and Server-Sent Events', link: '/guide/streaming' },
+                { text: 'Uploads', link: '/guide/uploads' },
+                { text: 'WebSockets', link: '/guide/websockets' },
+              ],
+            },
+            {
+              text: 'Tooling',
+              items: [{ text: 'TypeScript', link: '/guide/typescript' }],
+            },
+          ],
+        },
+        {
+          text: 'Production',
+          items: [
+            { text: 'Security', link: '/security' },
+            { text: 'Performance', link: '/performance' },
+            { text: 'Reliability under faults', link: '/reliability' },
+            { text: 'Transport conformance', link: '/conformance' },
+          ],
+        },
+        {
+          text: 'Reference',
+          items: [
+            { text: 'Architecture', link: '/architecture' },
+            { text: 'Using it from Rust', link: '/rust' },
+            { text: 'Compatibility and limitations', link: '/compatibility' },
+            { text: 'Stability and releases', link: '/stability' },
+            { text: 'Development and benchmarking', link: '/development' },
+            { text: 'FAQ', link: '/faq' },
+          ],
+        },
+      ],
+    },
     socialLinks: [
       { icon: 'github', link: 'https://github.com/asemqaffaf/rust-fetch' },
       { icon: 'npm', link: 'https://www.npmjs.com/package/rust-fetch' },
