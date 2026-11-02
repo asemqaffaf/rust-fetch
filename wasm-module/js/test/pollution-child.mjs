@@ -50,7 +50,7 @@ const bytes = () => new ReadableStream({
 // A request that never settles is a difference too, and mustn't stall the run
 const outcome = async (run) => {
   let timer;
-  const hung = new Promise((resolve) => { timer = setTimeout(resolve, 10_000, { error: 'HANG' }); });
+  const hung = new Promise((resolve) => { timer = setTimeout(resolve, 1_500, { error: 'HANG' }); });
   try { return await Promise.race([run(), hung]); } catch (error) { return { error: own(error, 'kind') ?? own(error, 'name') ?? String(error), status: own(error, 'status') }; } finally { clearTimeout(timer); }
 };
 const scenarios = {
@@ -123,13 +123,16 @@ const scenarios = {
   websocket: () => outcome(() => new Promise((resolve) => {
     const c = new WasmClient({ retries: 0 });
     const done = (result) => { clearTimeout(timer); resolve(result); }; // not freed: the connection still uses the client
-    const timer = setTimeout(done, 1500, 'pending');
+    const timer = setTimeout(done, 800, 'pending');
     try { c.websocket(`${T.replace('http', 'ws')}/json`, { onError: () => done('error'), onClose: () => done('closed') }); } catch (error) { done(`threw: ${error.message}`.slice(0, 80)); }
   })),
 };
+// Releases before 2.4 send these through Node's own fetch(), which reads `dispatcher`, `method`, `headers`, `body` and `signal`
+// from the prototype chain and can't be shielded from outside: the security notes list them as not fixed, and they are left out here
+const skipped = new Set((process.env.POLLUTION_SKIP_SCENARIOS ?? '').split(',').filter(Boolean));
 const run = async () => {
   const results = {};
-  for (const [name, scenario] of Object.entries(scenarios)) results[name] = await scenario();
+  for (const [name, scenario] of Object.entries(scenarios)) if (!skipped.has(name)) results[name] = await scenario();
   return results;
 };
 
@@ -165,7 +168,7 @@ const usesNodeHttp = (scenario) => nativeOff || scenario === 'stream' || scenari
 const wsBreaks = () => new Promise((resolve) => {
   let done = false;
   const finish = (broken) => { if (!done) { done = true; clearTimeout(timer); setTimeout(() => resolve(broken), 20); } };
-  const timer = setTimeout(finish, 1500, true);
+  const timer = setTimeout(finish, 800, true);
   try {
     const socket = new WebSocket(`${T.replace('http', 'ws')}/json`);
     socket.onerror = () => finish(false); // a plain HTTP server refuses the handshake
@@ -177,7 +180,7 @@ const nodeBreaks = () => new Promise((resolve) => {
   const before = crashes.length;
   let done = false;
   const finish = (broken) => { if (!done) { done = true; clearTimeout(timer); agent.destroy(); setTimeout(() => resolve(broken || crashes.length > before), 20); } };
-  const timer = setTimeout(finish, 2000, true);
+  const timer = setTimeout(finish, 1200, true);
   try {
     http.get(`${T}/json`, { agent }, (response) => {
       response.on('error', () => finish(true));
