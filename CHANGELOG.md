@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Lower Node startup overhead (#180):** ordinary requests no longer carry the multipart/blob/upload preparation future when no body is supplied, and Node requests compile their transport separately from the browser's upload/progress/timeout state. Buffered JavaScript requests with explicit options also bypass diagnostics instrumentation when it is disabled. Request validation, cancellation, security guards and opt-in diagnostics are preserved. The 10% release benchmark threshold is unchanged.
+
 ## [2.7.0] - 2026-11-02
 
 Resilience, observability and a streaming upload path. Everything new is opt-in: per-request retry policies, idempotency keys for POST and PATCH retries, concurrency and rate limits, per-origin circuit breakers, connect, response, idle and total timeouts, streaming request bodies, request timings, lifecycle hooks, redacted debug logs and W3C trace context, and `client.stats()`. Errors now carry the method, URL and attempts. The native transport gets per-module isolation of its TLS settings and cancellation scope; it is still not in the npm package. Performance: measured against 2.6.1, per-request overhead is about 0–4% higher and node:http startup 5–10% slower on CI (the release gate's limit is 10%, so the margin is thin; #180), the WebAssembly module grows from 381 to 439 kB (122 to 146 kB brotli), and native-transport concurrency is about 10% lower than 2.6.1 (#181). The "no measurable overhead when unset" goals of the new features are not met; the costs are listed under *Changed*. Prototype pollution of the Node.js and browser request paths is closed across the client (#191; see *Security*).

@@ -1434,12 +1434,12 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 189, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 193, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___wasm_bindgen_e6efeab14c3ffd08___JsValue______true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 260, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 264, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___wasm_bindgen_e6efeab14c3ffd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_e6efeab14c3ffd08___JsError___true_);
             return ret;
         },
@@ -1449,7 +1449,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 181, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 185, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke_______true_);
             return ret;
         },
@@ -2257,9 +2257,12 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     ObservableClient.prototype[name] = function (...args) {
       let state = states.get(this);
       if (!state) { state = stateFor(); states.set(this, state); }
-      // Keep no-options calls outside the large instrumentation function, so
-      // the runtime needn't compile it for the first unobserved request.
-      if (!state.config.enabled && !state.config.redactUrl && args.length <= index) return raw.apply(this, args);
+      // Ordinary buffered requests, including explicit request options, do
+      // not need the timing/metrics/stream instrumentation.
+      if (!state.config.enabled && !state.config.redactUrl) {
+        const type = own(args[index], 'responseType');
+        if (type !== 'stream' && type !== 'ndjson') return raw.apply(this, args);
+      }
       return request(state, name, raw, this, args);
     };
   }

@@ -232,9 +232,12 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     ObservableClient.prototype[name] = function (...args) {
       let state = states.get(this);
       if (!state) { state = stateFor(); states.set(this, state); }
-      // Keep no-options calls outside the large instrumentation function, so
-      // the runtime needn't compile it for the first unobserved request.
-      if (!state.config.enabled && !state.config.redactUrl && args.length <= index) return raw.apply(this, args);
+      // Ordinary buffered requests, including explicit request options, do
+      // not need the timing/metrics/stream instrumentation.
+      if (!state.config.enabled && !state.config.redactUrl) {
+        const type = own(args[index], 'responseType');
+        if (type !== 'stream' && type !== 'ndjson') return raw.apply(this, args);
+      }
       return request(state, name, raw, this, args);
     };
   }
