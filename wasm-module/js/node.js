@@ -283,8 +283,8 @@ const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
  * That is why no per-request list of shadows is needed for the names `http.request` reads.
  */
 function httpUrl(url) {
-  Object.defineProperty(url, 'auth', { value: undefined });
-  Object.defineProperty(url, 'path', { value: undefined });
+  Object.defineProperty(url, 'auth', { __proto__: null, value: undefined });
+  Object.defineProperty(url, 'path', { __proto__: null, value: undefined });
   return url;
 }
 /** `agent`, whose new connections are made with every option Node reads set */

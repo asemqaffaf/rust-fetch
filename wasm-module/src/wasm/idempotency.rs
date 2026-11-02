@@ -97,7 +97,7 @@ pub(crate) fn freeze(options: JsValue, defaults: &Defaults) -> Result<JsValue> {
     } else {
         js_sys::Object::new()
     };
-    let descriptor = js_sys::Object::new();
+    let descriptor = js_sys::Object::create(JsValue::NULL.unchecked_ref());
     super::set(&descriptor, "value", &key.into())?;
     // Defining an own property also works when the caller's inherited
     // property is read-only (for example Object.freeze(options)).

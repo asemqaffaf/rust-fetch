@@ -215,6 +215,8 @@ Each native Node adapter module owns its connection pool, TLS configuration and 
 
 Each Wasm instance is bound to its own Node adapter and WebSocket guard during entry-point initialization. Loading another package copy before constructing a client cannot change the first copy's transport or native TLS policy. The global discovery hooks do not select an instance's adapter.
 
+Property descriptors used for URL preparation, stream sources and idempotency-key snapshots have no prototype. Their `value` fields cannot be combined with inherited `get`/`set` fields.
+
 Node response processing uses actual raw header pairs. Inherited `Object.prototype` properties cannot supply framing, decompression, a MIME type or a redirect location; response header objects keep their usual plain-object shape. A response header named `__proto__` is preserved as data.
 
 The Rust client's alternative reqwest pools for per-request connect/redirect settings are capped at 32. Eviction drops only the cached handle; active requests keep their own clones.

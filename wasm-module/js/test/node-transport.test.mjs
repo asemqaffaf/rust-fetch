@@ -330,6 +330,10 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     for (const [name, value] of Object.entries(polluted)) Object.prototype[name] = value;
     Object.defineProperty(Object.prototype, 'x-accessor', { configurable: true, get() { throw new Error('inherited header getter'); }, set() { throw new Error('inherited header setter'); } });
     Object.defineProperty(Object.prototype, 'x-readonly', { configurable: true, value: 'inherited-value', writable: false });
+    // Data-property descriptors must not inherit accessor fields either.
+    for (const name of ['get', 'set']) Object.defineProperty(Object.prototype, name, {
+      __proto__: null, configurable: true, get() { throw new Error('inherited descriptor field'); },
+    });
     const c = client();
     try {
       for (const path of ['/plain', '/gzip']) {
@@ -350,14 +354,17 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(streamed.headers['__proto__'], 'server-value');
       assert.equal(streamed.headers['x-accessor'], 'actual-value');
       assert.equal(streamed.headers['x-readonly'], 'actual-value');
-      const text = await new Response(streamed.body).text();
-      assert.deepEqual(JSON.parse(text), { intact: true });
+      const chunks = [];
+      for await (const chunk of streamed.body) chunks.push(chunk);
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { intact: true });
       const error = await rejection(c.get(`http://127.0.0.1:${port}/missing-location`));
       assert.equal(error.kind, 'HttpError'); assert.equal(error.status, 302);
     } finally {
       for (const name of Object.keys(polluted)) delete Object.prototype[name];
       delete Object.prototype['x-accessor'];
       delete Object.prototype['x-readonly'];
+      delete Object.prototype.get;
+      delete Object.prototype.set;
       await worker.terminate();
     }
   });

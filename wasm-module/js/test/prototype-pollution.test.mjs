@@ -84,7 +84,7 @@ const STREAM_OPTIONS = { type: ['bytes', 'x'], size: ['x'], start: ['x'], autoAl
 // for `then`, `toJSON` or `toString` breaks every program in the process, and data is all that most pollution can inject.
 // (Names of the events and stream methods Node.js itself reads, like `on` or `end`, break any HTTP client: see the security guide.)
 const COMMON_NAMES = {
-  toString: [], valueOf: [], constructor: [], toJSON: [], then: [], message: ['x'], name: ['x'], code: ['x'], cause: [], stack: [], type: ['x'], length: [1], size: [1],
+  get: [], set: [], toString: [], valueOf: [], constructor: [], toJSON: [], then: [], message: ['x'], name: ['x'], code: ['x'], cause: [], stack: [], type: ['x'], length: [1], size: [1],
   byteLength: [1], buffer: [], errno: [1], syscall: ['x'], errors: [], statusCode: [500], redirected: [true], bodyUsed: [true], locked: [true],
 };
 const TABLE = { ...TRANSPORT_REQUEST, ...RESPONSE_HEADERS, ...STREAM_OPTIONS, ...COMMON_NAMES, ...REQUEST_STATE, ...UPLOAD_RECORDS, ...ADDON_REQUEST_AND_RESPONSE, ...NODE_OPTIONS, ...DIAGNOSTICS, ...DOCUMENTED_OPTIONS };

@@ -1848,7 +1848,7 @@ EventStream.prototype[Symbol.asyncIterator] = function () { return this; };
 
 // Added by scripts/postbuild.mjs
 function streamSource(source) {
-  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { value: undefined });
+  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { __proto__: null, value: undefined });
   return source;
 }
 function streamStrategy(strategy) {
