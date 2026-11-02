@@ -1110,6 +1110,26 @@ describe('idempotency keys', () => {
     } finally { await s.close(); }
   });
 
+  it('keeps a retry key when descriptor accessor fields are polluted', async () => {
+    const s = await startServer((req, res) => {
+      res.writeHead(s.requests.length === 1 ? 503 : 200);
+      res.end('done');
+    });
+    const c = new WasmClient({ retries });
+    try {
+      for (const name of ['get', 'set']) {
+        s.requests.length = 0;
+        Object.defineProperty(Object.prototype, name, { __proto__: null, configurable: true, value: 1 });
+        try {
+          const result = await c.post(s.url(), { idempotencyKey: 'stable-key', responseType: 'text' });
+          assert.equal(result.status, 200);
+          assert.equal(s.requests.length, 2);
+          for (const request of s.requests) assert.equal(request.headers['idempotency-key'], 'stable-key');
+        } finally { delete Object.prototype[name]; }
+      }
+    } finally { c.free(); await s.close(); }
+  });
+
   it('supports client defaults, explicit keys, custom headers and per-request opt-out', async () => {
     const s = await startServer((req, res) => { res.writeHead(503); res.end('busy'); });
     try {

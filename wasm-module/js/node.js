@@ -49,7 +49,7 @@ function loadNative() {
   try {
     const addon = createRequire(import.meta.url)(path);
     // Older local binaries do not understand the current transport contract.
-    if (addon.TRANSPORT_VERSION !== 5) return undefined;
+    if (addon.TRANSPORT_VERSION !== 6) return undefined;
     const extraCaCerts = process.env.NODE_EXTRA_CA_CERTS;
     nativeScope = addon.configure({
       zstd: typeof zlib.zstdDecompressSync === 'function',
@@ -283,8 +283,8 @@ const shadow = (options) => ({ ...CONNECTION_SHADOWS, ...options });
  * That is why no per-request list of shadows is needed for the names `http.request` reads.
  */
 function httpUrl(url) {
-  Object.defineProperty(url, 'auth', { value: undefined });
-  Object.defineProperty(url, 'path', { value: undefined });
+  Object.defineProperty(url, 'auth', { __proto__: null, value: undefined });
+  Object.defineProperty(url, 'path', { __proto__: null, value: undefined });
   return url;
 }
 /** `agent`, whose new connections are made with every option Node reads set */
@@ -748,7 +748,9 @@ function ownHeaders(raw) {
   for (let i = 0; i < raw.length; i += 2) {
     const name = raw[i];
     if (Object.hasOwn(headers, name)) headers[name] = `${headers[name]}, ${raw[i + 1]}`;
-    else if (name in headers) Object.defineProperty(headers, name, { value: raw[i + 1], writable: true, enumerable: true, configurable: true });
+    // Defining an own property bypasses inherited setters, readonly values and
+    // __proto__. The descriptor must ignore inherited get/set fields too.
+    else if (name in headers) Object.defineProperty(headers, name, { __proto__: null, value: raw[i + 1], writable: true, enumerable: true, configurable: true });
     else headers[name] = raw[i + 1];
   }
   return headers;
@@ -1143,6 +1145,7 @@ function withDefaultHeaders(request) {
   return headers;
 }
 
+const EMPTY_NATIVE_HEADERS = Object.freeze([]);
 let nextNativeId = 0;
 
 /** `nodeTransport` through the native addon: same contract, same rules */
@@ -1150,18 +1153,25 @@ function nativeTransport(request, upload) {
   // prettier-ignore
   if (nativeTlsWarning && request.url.startsWith('https:')) { nativeTlsWarning = false; process.emitWarning(TLS_WARNING); }
   const id = (nextNativeId = (nextNativeId + 1) >>> 0);
-  const headers = withDefaultHeaders(request);
-  // Alternating names/values, preserving repeats.
-  const pairs = [];
-  for (const name in headers) {
-    const value = headers[name];
-    if (Array.isArray(value)) for (const item of value) pairs.push(name, item);
-    else pairs.push(name, value);
+  const headers = request.headers;
+  const names = Object.keys(headers);
+  let pairs;
+  if (names.length === 0) pairs = EMPTY_NATIVE_HEADERS;
+  else {
+    // The core provides a private header map with no prototype. Build pairs
+    // directly, without cloning and then enumerating another dictionary.
+    pairs = [];
+    for (const name of names) {
+      const value = headers[name];
+      if (Array.isArray(value)) for (const item of value) pairs.push(name, item);
+      else pairs.push(name, value);
+    }
   }
   const bodyType = request.bodyType ?? AUTO;
   const manual = request.redirect === 'manual';
+  // Every field read by the addon is an own data property, including absent
+  // options. A fixed shape avoids dictionary lookups without inheriting defaults.
   const options = {
-    __proto__: null,
     extra: undefined,
     id,
     method: request.method,
@@ -1189,19 +1199,32 @@ function nativeTransport(request, upload) {
       uploadRestart: upload?.restart,
     };
   }
+  // The full entry retains every optional policy. The common entry only
+  // skips conversions when all those policies are absent/default.
+  const simple = !extra && !manual && options.maxRedirects === undefined && options.maxResponseBytes === undefined && options.sensitiveHeaders === undefined && options.allowInsecureRedirects === undefined;
+  const send = simple ? native.sendSimple : native.send;
+  if (!simple) {
+    // The common entry prepares defaults on the native worker.
+    pairs = [...pairs];
+    if (!Object.hasOwn(headers, 'accept')) pairs.push('accept', '*/*');
+    if (!Object.hasOwn(headers, 'accept-encoding')) pairs.push('accept-encoding', ACCEPT_ENCODING);
+    if (!Object.hasOwn(headers, 'user-agent')) pairs.push('user-agent', 'rust-fetch');
+    if (request.body && !Object.hasOwn(headers, 'content-length')) pairs.push('content-length', String(request.body.length));
+    options.headers = pairs;
+  }
   let dispatched = false;
   let giveUp;
   const sent = new Promise((resolve) => {
     let timer;
-    const queuedAt = performance.now();
+    const timed = options.timeout > 0 || extra?.connectTimeout > 0 || extra?.responseTimeout > 0;
+    const queuedAt = timed ? performance.now() : 0;
     request.__observe?.('transportQueued');
     const entry = whenFree(() => {
       request.__observe?.('transportStart');
       dispatched = true;
       clearTimeout(timer);
       // The timeout covers the wait here too
-      const elapsed = performance.now() - queuedAt;
-      let pending = options;
+      const elapsed = timed ? performance.now() - queuedAt : 0;
       if (extra?.connectTimeout > 0 || extra?.responseTimeout > 0) {
         for (const [phase, ms] of [['total', options.timeout], ['connect', extra.connectTimeout], ['response', extra.responseTimeout]]) {
           if (ms > 0) {
@@ -1209,16 +1232,16 @@ function nativeTransport(request, upload) {
               release();
               return resolve({ __proto__: null, error: timeoutError(phase, ms).message, code: 'RUST_FETCH_TIMEOUT', phase });
             }
-            if (pending === options) pending = { __proto__: null, ...options, extra: { __proto__: null, ...extra } };
-            if (phase === 'total') pending.timeout = ms - elapsed;
-            else if (phase === 'connect') pending.extra.connectTimeoutRemaining = ms - elapsed;
-            else pending.extra.responseTimeout = ms - elapsed;
+            // This attempt owns options/extra; no other request or retry uses them.
+            if (phase === 'total') options.timeout = ms - elapsed;
+            else if (phase === 'connect') extra.connectTimeoutRemaining = ms - elapsed;
+            else extra.responseTimeout = ms - elapsed;
           }
         }
       } else if (options.timeout > 0) {
-        pending = { __proto__: null, ...options, timeout: Math.max(1, options.timeout - elapsed) };
+        options.timeout = Math.max(1, options.timeout - elapsed);
       }
-      native.send(pending, nativeScope).then((response) => {
+      send(options, nativeScope).then((response) => {
         release();
         resolve(Object.setPrototypeOf(response, null));
       });

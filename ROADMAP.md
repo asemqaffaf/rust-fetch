@@ -17,7 +17,7 @@ Dates aren't promised; the order is.
 | [2.4.0](#240-performance-proxies-and-request-options) | Performance, proxies and request options | Released |
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
-| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Release prepared; publication pending |
+| [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
 | [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
@@ -128,9 +128,9 @@ Performance carried over from 2.4.0:
 
 *Goal: protect both the client and the APIs it calls, keep untrusted servers from exhausting memory or reaching internal networks, and show where the time goes.*
 
-All 13 items are implemented. The release is prepared as 2.7.0; the npm package stays at 2.6.1 until it is published. New controls are opt-in; the guides document transport limitations and compatibility details.
+Released 2026-11-02. All 13 features are implemented, but the original "no measurable overhead when unset" criteria are not met. The release notes document those costs. Startup (#180) and native throughput (#181) remain open for the performance follow-up below; feature implementation alone does not complete those tickets. New controls are opt-in; the guides document transport limitations and compatibility details.
 
-**Before release: performance.** A release audit against 2.6.1 found that the 2.7 work, measured cumulatively rather than PR by PR, failed the release workflow's benchmark gate. Status:
+**Performance follow-up.** The initial release audit against 2.6.1 failed the release benchmark gate. Optimizations brought the published 2.7.0 within the gate, with thin startup margin and a remaining native throughput regression. The table records the published release; the follow-up patch must be independently benchmarked and verified before these tickets close:
 
 | Performance item | Issue | Status |
 | --- | --- | --- |
@@ -139,6 +139,8 @@ All 13 items are implemented. The release is prepared as 2.7.0; the npm package 
 | Native transport concurrent throughput 15% below 2.6.1 | [#181](https://github.com/asemqaffaf/rust-fetch/issues/181) | Improved to about 10% below; outside the npm gate |
 | Benchmark pull requests against the published release | [#182](https://github.com/asemqaffaf/rust-fetch/issues/182) | Done |
 | Flaky Linux WebKit upload test | [#184](https://github.com/asemqaffaf/rust-fetch/issues/184) | Done |
+
+**Unreleased follow-up:** seven interleaved local rounds against 2.6.1 measured startup +3.7%, level default request overhead, and native concurrency -2.6%, within #181's 5% target. The [method and results](benchmarks/performance-2.7/README.md) retain the measured costs and validation. The fixes are tracked in [startup PR #203](https://github.com/asemqaffaf/rust-fetch/pull/203) and [native PR #204](https://github.com/asemqaffaf/rust-fetch/pull/204); both tickets remain open until the fixes merge.
 
 | Implemented feature | Issue | Guide or verification |
 | --- | --- | --- |

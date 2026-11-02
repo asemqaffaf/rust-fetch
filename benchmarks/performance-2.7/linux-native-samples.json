@@ -1,0 +1,482 @@
+{
+  "environment": {
+    "node": "v22.23.4",
+    "cpu": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
+    "os": "7.0.0-1017-azure"
+  },
+  "rounds": 9,
+  "samples": {
+    "historical": [
+      {
+        "startup": 32.501017000000004,
+        "value": 13454.463932089257,
+        "count": 26920,
+        "elapsedMs": 2000.8229339999998,
+        "cpuUserUsPerRequest": 94.89227340267459,
+        "cpuSystemUsPerRequest": 20.300334323922733,
+        "voluntarySwitchesPerRequest": 1.2743684992570579,
+        "involuntarySwitchesPerRequest": 0.007912332838038633
+      },
+      {
+        "startup": 20.246879999999997,
+        "value": 13337.384272876143,
+        "count": 26685,
+        "elapsedMs": 2000.767126,
+        "cpuUserUsPerRequest": 96.99928798950721,
+        "cpuSystemUsPerRequest": 19.587071388420462,
+        "voluntarySwitchesPerRequest": 1.2987446130785085,
+        "involuntarySwitchesPerRequest": 0.003410155518081319
+      },
+      {
+        "startup": 21.985939000000002,
+        "value": 13874.589953316157,
+        "count": 27762,
+        "elapsedMs": 2000.9239980000002,
+        "cpuUserUsPerRequest": 95.48195374972984,
+        "cpuSystemUsPerRequest": 20.715294287155103,
+        "voluntarySwitchesPerRequest": 1.26421007132051,
+        "involuntarySwitchesPerRequest": 0.002485411713853469
+      },
+      {
+        "startup": 21.495926999999995,
+        "value": 14319.128524773794,
+        "count": 28651,
+        "elapsedMs": 2000.8899250000002,
+        "cpuUserUsPerRequest": 91.18191337126103,
+        "cpuSystemUsPerRequest": 19.356043419077867,
+        "voluntarySwitchesPerRequest": 1.1828557467453142,
+        "involuntarySwitchesPerRequest": 0.013646993124149244
+      },
+      {
+        "startup": 17.23687199999999,
+        "value": 15291.917999133102,
+        "count": 30597,
+        "elapsedMs": 2000.860847,
+        "cpuUserUsPerRequest": 85.57848808706736,
+        "cpuSystemUsPerRequest": 19.463084616138836,
+        "voluntarySwitchesPerRequest": 1.171389351897245,
+        "involuntarySwitchesPerRequest": 0.0022878059940517046
+      },
+      {
+        "startup": 17.533884999999998,
+        "value": 13517.412039349683,
+        "count": 27045,
+        "elapsedMs": 2000.752801,
+        "cpuUserUsPerRequest": 95.13514512848955,
+        "cpuSystemUsPerRequest": 20.066112035496396,
+        "voluntarySwitchesPerRequest": 1.321833980403032,
+        "involuntarySwitchesPerRequest": 0.0021445738583841744
+      },
+      {
+        "startup": 17.468992999999998,
+        "value": 14155.852623945588,
+        "count": 28325,
+        "elapsedMs": 2000.9391699999999,
+        "cpuUserUsPerRequest": 89.91918799646955,
+        "cpuSystemUsPerRequest": 19.480494263018535,
+        "voluntarySwitchesPerRequest": 1.2741394527802294,
+        "involuntarySwitchesPerRequest": 0.0016946160635481025
+      },
+      {
+        "startup": 20.416253000000005,
+        "value": 13075.679965377745,
+        "count": 26167,
+        "elapsedMs": 2001.1961190000002,
+        "cpuUserUsPerRequest": 97.71303550273245,
+        "cpuSystemUsPerRequest": 23.33358810715787,
+        "voluntarySwitchesPerRequest": 1.3672946841441511,
+        "involuntarySwitchesPerRequest": 0.002292964420835403
+      },
+      {
+        "startup": 17.787707000000005,
+        "value": 12930.008608980846,
+        "count": 25872,
+        "elapsedMs": 2000.926742,
+        "cpuUserUsPerRequest": 101.86035095856525,
+        "cpuSystemUsPerRequest": 21.650471552257265,
+        "voluntarySwitchesPerRequest": 1.308982683982684,
+        "involuntarySwitchesPerRequest": 0.0034400123685837973
+      }
+    ],
+    "patched": [
+      {
+        "startup": 18.211430999999997,
+        "value": 12472.403644863987,
+        "count": 24954,
+        "elapsedMs": 2000.737044,
+        "cpuUserUsPerRequest": 101.41985252865273,
+        "cpuSystemUsPerRequest": 20.007413641099625,
+        "voluntarySwitchesPerRequest": 1.4267051374529134,
+        "involuntarySwitchesPerRequest": 0.002444497876092009
+      },
+      {
+        "startup": 21.200350999999998,
+        "value": 11997.559524963215,
+        "count": 24005,
+        "elapsedMs": 2000.8235800000002,
+        "cpuUserUsPerRequest": 106.1650489481358,
+        "cpuSystemUsPerRequest": 22.1172672359925,
+        "voluntarySwitchesPerRequest": 1.280566548635701,
+        "involuntarySwitchesPerRequest": 0.015663403457613
+      },
+      {
+        "startup": 18.139721,
+        "value": 12320.077443091244,
+        "count": 24652,
+        "elapsedMs": 2000.9614480000002,
+        "cpuUserUsPerRequest": 102.90260425117637,
+        "cpuSystemUsPerRequest": 22.486978744118126,
+        "voluntarySwitchesPerRequest": 1.4317296771053059,
+        "involuntarySwitchesPerRequest": 0.005111147168586727
+      },
+      {
+        "startup": 21.127507,
+        "value": 12319.401738784418,
+        "count": 24649,
+        "elapsedMs": 2000.8276800000003,
+        "cpuUserUsPerRequest": 103.60351332711267,
+        "cpuSystemUsPerRequest": 22.167106170635726,
+        "voluntarySwitchesPerRequest": 1.4794920686437583,
+        "involuntarySwitchesPerRequest": 0.003935250922958335
+      },
+      {
+        "startup": 18.412425999999996,
+        "value": 11781.19689449829,
+        "count": 23573,
+        "elapsedMs": 2000.900266,
+        "cpuUserUsPerRequest": 106.99261867390659,
+        "cpuSystemUsPerRequest": 23.555635684893733,
+        "voluntarySwitchesPerRequest": 1.497221397361388,
+        "involuntarySwitchesPerRequest": 0.0036058202180460695
+      },
+      {
+        "startup": 21.626495999999996,
+        "value": 13068.532713996437,
+        "count": 26148,
+        "elapsedMs": 2000.8367099999998,
+        "cpuUserUsPerRequest": 99.85888022028453,
+        "cpuSystemUsPerRequest": 22.04061496099128,
+        "voluntarySwitchesPerRequest": 1.371462444546428,
+        "involuntarySwitchesPerRequest": 0.0035184335322013156
+      },
+      {
+        "startup": 17.547766000000003,
+        "value": 11870.412874806341,
+        "count": 23750,
+        "elapsedMs": 2000.7728670000001,
+        "cpuUserUsPerRequest": 108.31461052631579,
+        "cpuSystemUsPerRequest": 22.280631578947368,
+        "voluntarySwitchesPerRequest": 1.498021052631579,
+        "involuntarySwitchesPerRequest": 0.003789473684210526
+      },
+      {
+        "startup": 20.51108200000001,
+        "value": 12320.116300538526,
+        "count": 24652,
+        "elapsedMs": 2000.9551370000001,
+        "cpuUserUsPerRequest": 103.66319162745417,
+        "cpuSystemUsPerRequest": 21.01314294986208,
+        "voluntarySwitchesPerRequest": 1.463370111958462,
+        "involuntarySwitchesPerRequest": 0.002312185623884472
+      },
+      {
+        "startup": 17.798256000000002,
+        "value": 12266.800219011437,
+        "count": 24545,
+        "elapsedMs": 2000.9293019999998,
+        "cpuUserUsPerRequest": 102.39221837441434,
+        "cpuSystemUsPerRequest": 23.454797311061316,
+        "voluntarySwitchesPerRequest": 1.4213078019963332,
+        "involuntarySwitchesPerRequest": 0.003259319617029945
+      }
+    ],
+    "completion": [
+      {
+        "startup": 19.793135000000007,
+        "value": 11793.351480412892,
+        "count": 23600,
+        "elapsedMs": 2001.127503,
+        "cpuUserUsPerRequest": 109.4240254237288,
+        "cpuSystemUsPerRequest": 21.355296610169493,
+        "voluntarySwitchesPerRequest": 1.4939406779661017,
+        "involuntarySwitchesPerRequest": 0.00326271186440678
+      },
+      {
+        "startup": 19.89759,
+        "value": 11290.795194309547,
+        "count": 22594,
+        "elapsedMs": 2001.099091,
+        "cpuUserUsPerRequest": 113.83323006107817,
+        "cpuSystemUsPerRequest": 24.317694963264582,
+        "voluntarySwitchesPerRequest": 1.5598831548198637,
+        "involuntarySwitchesPerRequest": 0.0038505797999468885
+      },
+      {
+        "startup": 19.590151000000006,
+        "value": 10911.587714414967,
+        "count": 21835,
+        "elapsedMs": 2001.083671,
+        "cpuUserUsPerRequest": 117.61598351270895,
+        "cpuSystemUsPerRequest": 24.88504694298145,
+        "voluntarySwitchesPerRequest": 1.5725669796198762,
+        "involuntarySwitchesPerRequest": 0.003526448362720403
+      },
+      {
+        "startup": 22.468247999999996,
+        "value": 12725.977898149265,
+        "count": 25465,
+        "elapsedMs": 2001.025006,
+        "cpuUserUsPerRequest": 102.9043392892205,
+        "cpuSystemUsPerRequest": 21.445395641075987,
+        "voluntarySwitchesPerRequest": 1.3833496956607108,
+        "involuntarySwitchesPerRequest": 0.0027488709994109564
+      },
+      {
+        "startup": 22.571355000000004,
+        "value": 11418.491678272532,
+        "count": 22847,
+        "elapsedMs": 2000.8772300000003,
+        "cpuUserUsPerRequest": 112.466144351556,
+        "cpuSystemUsPerRequest": 23.203834201426883,
+        "voluntarySwitchesPerRequest": 1.4893421455770999,
+        "involuntarySwitchesPerRequest": 0.0035453232371865013
+      },
+      {
+        "startup": 18.420634,
+        "value": 11360.544274426038,
+        "count": 22733,
+        "elapsedMs": 2001.048493,
+        "cpuUserUsPerRequest": 112.29569348524171,
+        "cpuSystemUsPerRequest": 22.75863282452822,
+        "voluntarySwitchesPerRequest": 1.5378524611797828,
+        "involuntarySwitchesPerRequest": 0.00365107992785818
+      },
+      {
+        "startup": 22.754564000000002,
+        "value": 12815.160816826878,
+        "count": 25642,
+        "elapsedMs": 2000.911293,
+        "cpuUserUsPerRequest": 102.56649247328602,
+        "cpuSystemUsPerRequest": 22.782310272209656,
+        "voluntarySwitchesPerRequest": 1.4197020513220497,
+        "involuntarySwitchesPerRequest": 0.0025349036736604007
+      },
+      {
+        "startup": 18.89365,
+        "value": 11774.52080413949,
+        "count": 23561,
+        "elapsedMs": 2001.0156160000001,
+        "cpuUserUsPerRequest": 109.91991002079708,
+        "cpuSystemUsPerRequest": 23.715249777174144,
+        "voluntarySwitchesPerRequest": 1.492381477865965,
+        "involuntarySwitchesPerRequest": 0.003352998599380332
+      },
+      {
+        "startup": 20.84583,
+        "value": 12293.598451006197,
+        "count": 24598,
+        "elapsedMs": 2000.8787579999998,
+        "cpuUserUsPerRequest": 105.12643304333686,
+        "cpuSystemUsPerRequest": 22.290023579152777,
+        "voluntarySwitchesPerRequest": 1.4140987072119684,
+        "involuntarySwitchesPerRequest": 0.002967720952923002
+      }
+    ],
+    "headers": [
+      {
+        "startup": 19.730439000000004,
+        "value": 12169.691266770455,
+        "count": 24354,
+        "elapsedMs": 2001.2011369999998,
+        "cpuUserUsPerRequest": 107.34647285866798,
+        "cpuSystemUsPerRequest": 22.790465631929045,
+        "voluntarySwitchesPerRequest": 1.4019873532068654,
+        "involuntarySwitchesPerRequest": 0.005214749117188141
+      },
+      {
+        "startup": 20.061536000000004,
+        "value": 12436.73517498826,
+        "count": 24886,
+        "elapsedMs": 2001.007471,
+        "cpuUserUsPerRequest": 106.28469822390099,
+        "cpuSystemUsPerRequest": 21.552037290042595,
+        "voluntarySwitchesPerRequest": 1.3877280398617697,
+        "involuntarySwitchesPerRequest": 0.003777224142087921
+      },
+      {
+        "startup": 19.786675999999993,
+        "value": 12344.470423660623,
+        "count": 24701,
+        "elapsedMs": 2000.9768869999998,
+        "cpuUserUsPerRequest": 104.93222946439415,
+        "cpuSystemUsPerRequest": 21.504716408242583,
+        "voluntarySwitchesPerRequest": 1.460062345654022,
+        "involuntarySwitchesPerRequest": 0.002267114691712886
+      },
+      {
+        "startup": 18.898559,
+        "value": 13006.625714281361,
+        "count": 26024,
+        "elapsedMs": 2000.826392,
+        "cpuUserUsPerRequest": 101.14744082385491,
+        "cpuSystemUsPerRequest": 20.632224100830005,
+        "voluntarySwitchesPerRequest": 1.3967875806947434,
+        "involuntarySwitchesPerRequest": 0.0038810328927144176
+      },
+      {
+        "startup": 19.566228999999993,
+        "value": 13185.541475910884,
+        "count": 26382,
+        "elapsedMs": 2000.827956,
+        "cpuUserUsPerRequest": 100.94397695398378,
+        "cpuSystemUsPerRequest": 20.561253885224776,
+        "voluntarySwitchesPerRequest": 1.3331438101736033,
+        "involuntarySwitchesPerRequest": 0.0029186566598438327
+      },
+      {
+        "startup": 19.182180000000002,
+        "value": 11819.409173629254,
+        "count": 23649,
+        "elapsedMs": 2000.8614350000003,
+        "cpuUserUsPerRequest": 106.0694743963804,
+        "cpuSystemUsPerRequest": 23.608017252315108,
+        "voluntarySwitchesPerRequest": 1.4839950949300182,
+        "involuntarySwitchesPerRequest": 0.0032136665398114087
+      },
+      {
+        "startup": 19.580753999999992,
+        "value": 12492.210722292759,
+        "count": 24996,
+        "elapsedMs": 2000.9268619999998,
+        "cpuUserUsPerRequest": 104.09517522803648,
+        "cpuSystemUsPerRequest": 23.977076332213155,
+        "voluntarySwitchesPerRequest": 1.4562730036805889,
+        "involuntarySwitchesPerRequest": 0.002680428868618979
+      },
+      {
+        "startup": 22.216794,
+        "value": 13087.498824221566,
+        "count": 26188,
+        "elapsedMs": 2000.9934939999998,
+        "cpuUserUsPerRequest": 99.78306858102948,
+        "cpuSystemUsPerRequest": 20.477241484649458,
+        "voluntarySwitchesPerRequest": 1.4059874751794714,
+        "involuntarySwitchesPerRequest": 0.001832900565144341
+      },
+      {
+        "startup": 23.576416000000002,
+        "value": 11939.671494144406,
+        "count": 23891,
+        "elapsedMs": 2000.9763259999997,
+        "cpuUserUsPerRequest": 107.70608178812105,
+        "cpuSystemUsPerRequest": 22.931020049390984,
+        "voluntarySwitchesPerRequest": 1.4768741367041982,
+        "involuntarySwitchesPerRequest": 0.0028881168640910804
+      }
+    ],
+    "cold": [
+      {
+        "startup": 23.654043,
+        "value": 11137.527453372983,
+        "count": 22286,
+        "elapsedMs": 2000.9827220000002,
+        "cpuUserUsPerRequest": 114.36812348559634,
+        "cpuSystemUsPerRequest": 22.609575518262588,
+        "voluntarySwitchesPerRequest": 1.1469981154087767,
+        "involuntarySwitchesPerRequest": 0.02737144395584672
+      },
+      {
+        "startup": 22.840282000000002,
+        "value": 11786.01402694702,
+        "count": 23582,
+        "elapsedMs": 2000.846083,
+        "cpuUserUsPerRequest": 109.4704011534221,
+        "cpuSystemUsPerRequest": 22.66427783902977,
+        "voluntarySwitchesPerRequest": 1.5363836824696802,
+        "involuntarySwitchesPerRequest": 0.0033924179458909337
+      },
+      {
+        "startup": 19.296420999999995,
+        "value": 12517.730534184737,
+        "count": 25047,
+        "elapsedMs": 2000.9218070000002,
+        "cpuUserUsPerRequest": 102.09713738172236,
+        "cpuSystemUsPerRequest": 24.602227811713977,
+        "voluntarySwitchesPerRequest": 1.4573402004232043,
+        "involuntarySwitchesPerRequest": 0.0024354214077534236
+      },
+      {
+        "startup": 19.587081000000005,
+        "value": 13234.478082287244,
+        "count": 26482,
+        "elapsedMs": 2000.9855949999999,
+        "cpuUserUsPerRequest": 97.80035495808474,
+        "cpuSystemUsPerRequest": 20.94362208292425,
+        "voluntarySwitchesPerRequest": 1.4014802507363493,
+        "involuntarySwitchesPerRequest": 0.003889434332754324
+      },
+      {
+        "startup": 18.893040999999997,
+        "value": 11921.39619521733,
+        "count": 23852,
+        "elapsedMs": 2000.77236,
+        "cpuUserUsPerRequest": 107.2418665101459,
+        "cpuSystemUsPerRequest": 23.11453966124434,
+        "voluntarySwitchesPerRequest": 1.4950947509642798,
+        "involuntarySwitchesPerRequest": 0.0034378668455475434
+      },
+      {
+        "startup": 19.171223999999995,
+        "value": 12937.51750160561,
+        "count": 25888,
+        "elapsedMs": 2001.002124,
+        "cpuUserUsPerRequest": 97.84147095179233,
+        "cpuSystemUsPerRequest": 21.295967243510507,
+        "voluntarySwitchesPerRequest": 1.4208127317676142,
+        "involuntarySwitchesPerRequest": 0.002047280593325093
+      },
+      {
+        "startup": 19.969863000000004,
+        "value": 13149.09802837704,
+        "count": 26309,
+        "elapsedMs": 2000.821649,
+        "cpuUserUsPerRequest": 98.78592876962256,
+        "cpuSystemUsPerRequest": 21.02637880573188,
+        "voluntarySwitchesPerRequest": 1.4205404994488577,
+        "involuntarySwitchesPerRequest": 0.0025846668440457636
+      },
+      {
+        "startup": 22.848007000000003,
+        "value": 13401.86267059745,
+        "count": 26816,
+        "elapsedMs": 2000.9158920000002,
+        "cpuUserUsPerRequest": 96.94674821002387,
+        "cpuSystemUsPerRequest": 18.793108591885442,
+        "voluntarySwitchesPerRequest": 1.3775357995226731,
+        "involuntarySwitchesPerRequest": 0.002908711217183771
+      },
+      {
+        "startup": 19.968833000000004,
+        "value": 13085.150002360722,
+        "count": 26182,
+        "elapsedMs": 2000.8941429999998,
+        "cpuUserUsPerRequest": 100.60014513788099,
+        "cpuSystemUsPerRequest": 20.73248796883355,
+        "voluntarySwitchesPerRequest": 1.4034069207852724,
+        "involuntarySwitchesPerRequest": 0.003475670307845084
+      }
+    ]
+  },
+  "source": {
+    "diagnosticCommit": "c5b7459ad8c2b9b64ec4f7cca604513c619fec9a",
+    "workflow": "https://github.com/asemqaffaf/rust-fetch/actions/runs/41477977011",
+    "durationSeconds": 2,
+    "concurrency": 50,
+    "baselineTags": [
+      "v2.6.1",
+      "v2.6.2"
+    ],
+    "completionCommit": "65b3f3c70bac057c767aaaf9b989e0f1155f04f9",
+    "note": "Diagnostic candidate uses the 65b3f3c Wasm assets. The descriptor-hardening follow-up adds 16 Wasm bytes and is validated separately in PR CI. CPU-profiled samples are excluded."
+  }
+}

@@ -185,6 +185,37 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     assert.equal(headers.connection, nativeExpected ? undefined : 'keep-alive');
   });
 
+  it('ignores inherited native option accessors on ordinary and policy requests', { skip: !nativeExpected }, async () => {
+    const source = `
+      import assert from 'node:assert/strict';
+      import { WasmClient } from ${JSON.stringify(new URL('../../pkg/node.js', import.meta.url).href)};
+      const client = new WasmClient({ retries: 0 });
+      const names = ['extra', 'manual', 'maxRedirects', 'maxResponseBytes', 'sensitiveHeaders', 'allowInsecureRedirects'];
+      for (const name of names) Object.defineProperty(Object.prototype, name, {
+        configurable: true,
+        get() { throw new Error('inherited native option getter: ' + name); },
+        set() { throw new Error('inherited native option setter: ' + name); },
+      });
+      try {
+        const url = ${JSON.stringify(server.url('/echo'))};
+        for (const options of [undefined, { maxResponseBytes: 4096 }, { responseTimeoutMs: 2000 }, { redirect: 'manual' }]) {
+          const response = await client.get(url, options);
+          assert.equal(response.status, 200);
+          assert.equal(response.body.headers.connection, undefined);
+          assert.equal(response.body.method, 'GET');
+        }
+        console.log('protected');
+      } finally {
+        for (const name of names) delete Object.prototype[name];
+        client.free();
+      }
+    `;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source], {
+      env: { ...process.env, RUST_FETCH_NATIVE: fileURLToPath(addon) }, timeout: 10000,
+    });
+    assert.equal(stdout.trim(), 'protected');
+  });
+
   it('uses node:http when no addon is bundled or the configured one does not load', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'rust-fetch-no-addon-'));
     try {
@@ -299,6 +330,10 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     for (const [name, value] of Object.entries(polluted)) Object.prototype[name] = value;
     Object.defineProperty(Object.prototype, 'x-accessor', { configurable: true, get() { throw new Error('inherited header getter'); }, set() { throw new Error('inherited header setter'); } });
     Object.defineProperty(Object.prototype, 'x-readonly', { configurable: true, value: 'inherited-value', writable: false });
+    // Data-property descriptors must not inherit accessor fields either.
+    for (const name of ['get', 'set']) Object.defineProperty(Object.prototype, name, {
+      __proto__: null, configurable: true, get() { throw new Error('inherited descriptor field'); },
+    });
     const c = client();
     try {
       for (const path of ['/plain', '/gzip']) {
@@ -313,20 +348,27 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal(Object.hasOwn(response.headers, 'x-inherited'), false);
         assert.equal(Object.getPrototypeOf(response.headers), Object.prototype);
       }
+      // Node 20's own ReadableStream descriptors inherit get/set. Keep the
+      // buffered check above strict; stream headers still face the other pollution.
+      delete Object.prototype.get;
+      delete Object.prototype.set;
       const binary = await c.get(`http://127.0.0.1:${port}/no-type`);
       assert.ok(binary.body instanceof Uint8Array, 'an inherited MIME type must not select JSON decoding');
       const streamed = await c.get(`http://127.0.0.1:${port}/plain`, { responseType: 'stream' });
       assert.equal(streamed.headers['__proto__'], 'server-value');
       assert.equal(streamed.headers['x-accessor'], 'actual-value');
       assert.equal(streamed.headers['x-readonly'], 'actual-value');
-      const text = await new Response(streamed.body).text();
-      assert.deepEqual(JSON.parse(text), { intact: true });
+      const chunks = [];
+      for await (const chunk of streamed.body) chunks.push(chunk);
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), { intact: true });
       const error = await rejection(c.get(`http://127.0.0.1:${port}/missing-location`));
       assert.equal(error.kind, 'HttpError'); assert.equal(error.status, 302);
     } finally {
       for (const name of Object.keys(polluted)) delete Object.prototype[name];
       delete Object.prototype['x-accessor'];
       delete Object.prototype['x-readonly'];
+      delete Object.prototype.get;
+      delete Object.prototype.set;
       await worker.terminate();
     }
   });
@@ -737,17 +779,19 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     skip: process.env.RUST_FETCH_NATIVE === '0' || !existsSync(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)),
   }, async () => {
     const addon = createRequire(import.meta.url)(fileURLToPath(new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url)));
-    assert.equal(addon.TRANSPORT_VERSION, 5);
+    assert.equal(addon.TRANSPORT_VERSION, 6);
     const scope = addon.configure({ zstd: false, rejectUnauthorized: true });
     const s = await startServer((req, res) => res.end('ok'));
     try {
-      const attempts = [];
-      for (let i = 0; i < 512; i++) {
-        const id = 0xffff0000 + i;
-        attempts.push(addon.send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }, scope));
-        addon.cancel(id, scope);
+      for (const send of [addon.send, addon.sendSimple]) {
+        const attempts = [];
+        for (let i = 0; i < 512; i++) {
+          const id = 0xffff0000 + i;
+          attempts.push(send({ id, method: 'GET', url: s.url(), headers: [], timeout: 2000 }, scope));
+          addon.cancel(id, scope);
+        }
+        for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
       }
-      for (const response of await Promise.all(attempts)) assert.equal(response.code, 'ABORT_ERR', 'a cancel issued before the task starts must not be lost');
     } finally { await s.close(); }
   });
 
@@ -762,7 +806,7 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       await new Promise((resolve) => local.listen(0, '127.0.0.1', resolve));
       const request = { id: 71, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
       try {
-        const first = native.send(request, firstScope), second = native.send(request, secondScope);
+        const first = native.sendSimple(request, firstScope), second = native.send(request, secondScope);
         for (let i = 0; i < 100 && replies.length < 2; i++) await sleep(5);
         assert.equal(replies.length, 2);
         native.cancel(71, firstScope);
@@ -771,13 +815,30 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal((await second).status, 200);
       } finally { native.cancel(71, firstScope); native.cancel(71, secondScope); local.closeAllConnections(); await new Promise((r) => local.close(r)); }
     });
+    it('releases IDs before delivering successful and failed promises', async () => {
+      const native = api(), active = scope(native);
+      const local = await startServer((req, res) => {
+        if (req.url === '/hang') return;
+        if (req.url === '/reset') { req.socket.destroy(); return; }
+        res.end('ok');
+      });
+      const request = { id: 73, method: 'GET', url: local.url('/ok'), headers: [], timeout: 2000 };
+      try {
+        for (const send of [native.send, native.sendSimple]) {
+          assert.equal((await send({ ...request, url: local.url('/hang'), timeout: 20 }, active)).code, 'RUST_FETCH_TIMEOUT');
+          assert.equal((await send(request, active)).status, 200);
+          assert.ok((await send({ ...request, url: local.url('/reset') }, active)).error);
+          for (let i = 0; i < 10; i++) assert.equal((await send(request, active)).status, 200);
+        }
+      } finally { native.cancel(request.id, active); await local.close(); }
+    });
     it('rejects occupied IDs and ignores late completion of a cancelled generation', async () => {
       const native = api(), active = scope(native);
       const local = http.createServer(() => {});
       await new Promise((r) => local.listen(0, '127.0.0.1', r));
       const request = { id: 72, method: 'GET', url: `http://127.0.0.1:${local.address().port}/`, headers: [], timeout: 2000 };
       try {
-        const first = native.send(request, active);
+        const first = native.sendSimple(request, active);
         assert.equal((await native.send(request, active)).code, 'RUST_FETCH_REQUEST_ID');
         native.cancel(72, active);
         const replacement = native.send(request, active);
