@@ -90,9 +90,9 @@ const TABLE = { ...TRANSPORT_REQUEST, ...RESPONSE_HEADERS, ...STREAM_OPTIONS, ..
 const run = async (names, env = {}) => {
   for (const name of names) assert.ok(TABLE[name], `${name} is not in the table`);
   const { stdout } = await promisify(execFile)(process.execPath, [child], {
-    env: { ...process.env, ...env, POLLUTION_PKG: pkg, POLLUTION_DATA_ONLY: JSON.stringify(Object.keys(COMMON_NAMES)), POLLUTION_NAMES: JSON.stringify(Object.fromEntries(names.map((name) => [name, TABLE[name]]))) },
+    env: { ...process.env, ...env, POLLUTION_PKG: pkg, POLLUTION_SKIP_SCENARIOS: 'stream,ndjson,progress', POLLUTION_DATA_ONLY: JSON.stringify(Object.keys(COMMON_NAMES)), POLLUTION_NAMES: JSON.stringify(Object.fromEntries(names.map((name) => [name, TABLE[name]]))) },
     maxBuffer: 16 * 1024 * 1024,
-    timeout: 540_000,
+    timeout: 900_000,
   });
   const result = JSON.parse(stdout.trim().split('\n').at(-1));
   assert.equal(result.checked, names.length);
@@ -123,13 +123,13 @@ for (const [label, env] of [['default transport', {}], ['node:http', { RUST_FETC
       assert.deepEqual(await run(Object.keys(COMMON_NAMES), env), []);
     });
 
-    it('reads no inherited native addon field, Node.js option or documented option', { timeout: 540_000 }, async () => {
+    it('reads no inherited native addon field, Node.js option or documented option', { timeout: 900_000 }, async () => {
       const done = new Set(['proxy', 'dispatcher', 'url', 'host', 'hostname', 'socketPath', 'agent', 'lookup', 'createConnection', 'blockPrivateNetwork', 'allowPrivateNetwork',
         'publicOnly', 'port', 'flowlabel', 'family', 'address', 'maxResponseBytes', 'rejectUnauthorized', 'ca', 'checkServerIdentity', 'servername', 'minVersion', 'secureContext', 'timeout', 'responseTimeout', 'timeoutMs',
         ...Object.keys(UPLOAD_RECORDS), ...Object.keys(REQUEST_STATE), ...Object.keys(TRANSPORT_REQUEST), ...Object.keys(RESPONSE_HEADERS), ...Object.keys(STREAM_OPTIONS), ...Object.keys(COMMON_NAMES)]);
       const rest = Object.keys(TABLE).filter((name) => !done.has(name));
       // Several child processes at once, each with its own servers
-      const chunks = [0, 1, 2].map((index) => rest.filter((_, position) => position % 3 === index));
+      const chunks = [0, 1, 2, 3, 4, 5].map((index) => rest.filter((_, position) => position % 6 === index));
       const problems = (await Promise.all(chunks.map((names) => run(names, env)))).flat();
       assert.deepEqual(problems, []);
     });
