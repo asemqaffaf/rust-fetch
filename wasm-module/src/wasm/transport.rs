@@ -115,7 +115,9 @@ impl PreparedRequest {
         let method = config.method.to_reqwest();
 
         if let Some(transport) = NODE_TRANSPORT.with(Clone::clone) {
-            let js_headers = js_sys::Object::new();
+            // No prototype, for this and the request below: a header named like a
+            // property of Object.prototype must not read as already sent
+            let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
             for &(name, value) in &headers {
                 // Repeated headers are sent as an array, one line each
                 let existing = js_sys::Reflect::get(&js_headers, &name.into())?;
@@ -135,7 +137,8 @@ impl PreparedRequest {
             let timeout_ms = config
                 .timeout
                 .map_or(0, |t| u64::try_from(t.as_millis()).unwrap_or(u64::MAX));
-            let request = js_sys::Object::new();
+            // Fields the transport reads must not come from Object.prototype
+            let request = js_sys::Object::create(JsValue::NULL.unchecked_ref());
             set(&request, "method", &method.as_str().into())?;
             set(&request, "url", &url.into())?;
             set(&request, "headers", &js_headers)?;
@@ -189,6 +192,8 @@ impl PreparedRequest {
                 .map_err(invalid_request)?;
         }
         let init = web_sys::RequestInit::new();
+        // fetch() reads credentials, mode, cache and more by inheritance
+        let _ = js_sys::Object::set_prototype_of(&init, JsValue::NULL.unchecked_ref());
         init.set_method(method.as_str());
         init.set_headers(js_headers.as_ref());
         if let Some(body) = &body {
@@ -495,7 +500,8 @@ async fn send_node(
     if !(200..300).contains(&status) {
         // For error statuses the transport decodes the body as text
         let body = get(&response, "body")?.as_string();
-        let retry_after = get(&get(&response, "headers")?, "retry-after")?.as_string();
+        let retry_after = own_prop(&get(&response, "headers")?, "retry-after")
+            .and_then(|value| value.as_string());
         return Ok(http_error(status, body, retry_after.as_deref()));
     }
     // Same status text table as the fetch() path
@@ -507,11 +513,20 @@ async fn send_node(
     Ok(Attempt::Success(response))
 }
 
+/// A property the object itself has: the prototype chain is never consulted,
+/// so a polluted `Object.prototype` can't supply error details or headers
+fn own_prop(target: &JsValue, name: &str) -> Option<JsValue> {
+    if !target.is_object()
+        || !js_sys::Object::has_own(target.unchecked_ref::<js_sys::Object>(), &name.into())
+    {
+        return None;
+    }
+    js_sys::Reflect::get(target, &name.into()).ok()
+}
+
 /// Map a Node transport rejection to an error kind
 fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
-    let code = js_sys::Reflect::get(error, &"code".into())
-        .ok()
-        .and_then(|code| code.as_string());
+    let code = own_prop(error, "code").and_then(|code| code.as_string());
     match code.as_deref() {
         Some("RUST_FETCH_TIMEOUT") => Error::Timeout {
             duration_ms: timeout_ms,
