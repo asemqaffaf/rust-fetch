@@ -7,14 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- **Property-descriptor hardening:** URL request preparation, browser stream sources and frozen idempotency keys use prototype-free descriptors. Polluted `get`/`set` fields cannot inject accessor semantics or reject requests. Regression tests cover buffered and streamed responses, inherited header setters/read-only values, and retry-key reuse on both Node transports.
+## [2.7.1] - 2026-11-03
+
+Security hardening and performance fixes for 2.7.0. Public APIs and defaults are unchanged. The native transport remains an optional local build, outside the npm package.
+
+### Security
+- Use prototype-free property descriptors for URL request preparation, browser stream sources and idempotency-key snapshots. Inherited `get`/`set` fields cannot inject accessor semantics or make those descriptors reject requests. Preserve real `__proto__` response headers and inherited-name collisions without invoking prototype getters/setters.
 
 ### Changed
-- **Final 2.7 performance checks:** the full Linux CI comparison measured native concurrency 1.1% below 2.6.1, client overhead 1.0% better, and node:http startup 4.9% slower. Native startup still costs 13.3% (17.7 → 20.1 ms); the larger Wasm/glue sources and their import/first-call compilation remain. Fifteen balanced native-only Linux rounds measured throughput 0.9% below 2.6.1. Earlier mixed-run results were noisier, including a 14.6% native-concurrency gap; all results and raw rounds are retained in the [performance report](benchmarks/performance-2.7/README.md). These changes do not establish zero overhead for every feature or runner.
-- **2.7 performance follow-up (#180, #181):** ordinary requests no longer carry the multipart/blob/upload preparation future when no body is supplied, and Node requests compile their transport separately from the browser's upload/progress/timeout state. Buffered JavaScript requests with explicit options also bypass diagnostics instrumentation when it is disabled. In the initial seven interleaved local rounds against 2.6.1 (Apple M1 Pro, Node.js 22.23.3), default client overhead is level, node:http startup is 3.7% slower (was 5–10% on CI before this follow-up), and native concurrent throughput is 2.6% lower (was about 10% lower locally). These are local results; CI verification is tracked in PRs #203 and #204. [Method and results](benchmarks/performance-2.7/README.md).
-- **Native transport default requests:** a compact Node-API entry converts only the common fields and prepares default headers on the worker. Requests with size/redirect/credential policies, phase timers, streaming uploads or diagnostics retain the full entry. Both entries share TLS scopes, synchronous cancellation registration and request-generation checks. Completion releases the request ID on the owning JavaScript thread before resolving its promise, keeping the registry lock off the network worker. Native response headers retain fast ordinary-object properties while guarding inherited setters, read-only values and `__proto__`. TCP/TLS handshake futures are allocated only when opening a connection, so reused connections do not carry their state. Rebuild local addons for private wire version 6; older binaries fall back to node:http.
-- **Node glue size budget:** raised from 58/18.6/16.2 to 59.8/19.2/16.8 kB (raw/gzip/brotli) for the common native entry and explicit full-policy fallback. The Wasm and shared-JavaScript budgets, and the 10% release benchmark threshold, are unchanged.
+- Keep optional body and browser transport futures out of ordinary Node requests. Buffered JavaScript requests also bypass diagnostics instrumentation when it is disabled (#180).
+- Reduce native request conversion work with a compact common entry and worker-prepared default headers. Requests with optional policies retain the full path. Both paths preserve TLS scopes, synchronous cancellation registration and request-generation checks (#181).
+- Complete native request-ID cleanup on the owning JavaScript thread before promise resolution; keep TCP/TLS handshake state off reused connections. Rebuild local addons for private wire version **6**; older binaries fall back to node:http.
+- Compare CI with both historical 2.6.1 and security-patched 2.6.2, including rebuilt native transport assets. Keep the original benchmark thresholds and security checks.
+
+### Performance and remaining limitations
+A [pre-release CI benchmark](https://github.com/asemqaffaf/rust-fetch/actions/runs/41488221106/job/125429011985) versus published 2.7.0 measured node:http concurrent throughput 1.6% higher, startup 3.4% faster and default client overhead 0.9% better. Against 2.6.1, the same run measured:
+
+| Metric | Change versus 2.6.1 |
+| --- | ---: |
+| Default client overhead | Essentially level |
+| Node:http concurrent throughput | 9.9% slower |
+| Native concurrent throughput | 4.7% faster |
+| Node:http import + first request | 4.6% slower |
+| Native import + first request | 12.8% slower |
+
+These are per-run medians, not guarantees. Shared-runner results varied substantially; an independent fifteen-round balanced native comparison measured 0.9% below 2.6.1. The larger 2.7 Wasm/JavaScript assets remain, and performance parity with 2.6.1 is not complete. The published Node transport's throughput gap is close to the unchanged 10% release threshold. [Method, raw samples, CI links and less favorable runs](benchmarks/performance-2.7/README.md).
 
 ## [2.7.0] - 2026-11-02
 
@@ -336,7 +353,9 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...HEAD
+[2.7.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.0...v2.7.1
+[2.7.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.1...v2.7.0
 [2.6.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.5.1...v2.5.2
