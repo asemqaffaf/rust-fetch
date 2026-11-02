@@ -255,11 +255,11 @@ jobs:
           historical_pkg="$RUNNER_TEMP/historical-2.6.1"
           mkdir -p "$historical_pkg"
           (cd "$historical_pkg" && npm init -y >/dev/null && npm install --no-audit --no-fund --ignore-scripts rust-fetch@2.6.1)
-          # Reuse the base build's dependency artifacts. Its addon has already
-          # been copied to base/wasm-module/pkg, so rebuilding cannot replace it.
-          cargo build --manifest-path historical/native/Cargo.toml --target-dir base/native/target --release
+          # Keep versions of the same crate in separate target directories,
+          # so the historical build cannot replace the cached base addon.
+          cargo build --manifest-path historical/native/Cargo.toml --release
           addon="rust-fetch-native.$(node -p 'process.platform + "-" + process.arch').node"
-          cp base/native/target/release/librust_fetch_native.so "$historical_pkg/node_modules/rust-fetch/$addon"
+          cp historical/native/target/release/librust_fetch_native.so "$historical_pkg/node_modules/rust-fetch/$addon"
           echo "HISTORICAL_PKG=$historical_pkg/node_modules/rust-fetch" >> "$GITHUB_ENV"
       - name: Compare (results in the job summary)
         run: |
