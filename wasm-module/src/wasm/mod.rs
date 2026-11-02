@@ -1639,15 +1639,30 @@ fn with_progress(builder: RequestBuilder, _callback: js_sys::Function) -> Reques
 }
 
 /// Attach a JS body to a request, choosing a Content-Type if none was set
-async fn apply_body(request: RequestBuilder, body: BodyMode) -> Result<RequestBuilder> {
+fn apply_body(
+    request: RequestBuilder,
+    body: BodyMode,
+) -> impl std::future::Future<Output = Result<RequestBuilder>> {
+    use futures_util::future::Either;
     let (value, force_json) = match body {
         BodyMode::Auto(value) => (value, false),
         BodyMode::Json(value) => (value, true),
     };
     if !force_json && (value.is_null() || value.is_undefined()) {
-        return Ok(request);
+        return Either::Left(std::future::ready(Ok(request)));
     }
+    // Type erasure keeps multipart/blob/upload preparation out of the
+    // ordinary request's poll function. Only requests with a body allocate.
+    let body: std::pin::Pin<Box<dyn std::future::Future<Output = Result<RequestBuilder>>>> =
+        Box::pin(apply_nonempty_body(request, value, force_json));
+    Either::Right(body)
+}
 
+async fn apply_nonempty_body(
+    request: RequestBuilder,
+    value: JsValue,
+    force_json: bool,
+) -> Result<RequestBuilder> {
     if !force_json {
         if let Some(text) = value.as_string() {
             return Ok(request.text(text));

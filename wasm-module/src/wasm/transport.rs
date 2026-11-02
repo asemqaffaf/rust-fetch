@@ -321,69 +321,80 @@ impl PreparedRequest {
         matches!(self, Self::Node { .. })
     }
 
-    pub(crate) async fn send(&self) -> Result<Attempt<JsValue>> {
+    pub(crate) fn send(&self) -> impl std::future::Future<Output = Result<Attempt<JsValue>>> + '_ {
         match self {
-            Self::Fetch {
-                upload,
-                phases,
-                url,
-                init,
-                body_type,
-                progress,
-                body_length,
-                redirect,
-                limit,
-            } => {
-                send_fetch(
-                    url,
-                    init,
-                    *body_type,
-                    progress,
-                    *body_length,
-                    *redirect,
-                    *limit,
-                    phases.as_deref(),
-                    upload.as_ref(),
-                )
-                .await
-            }
-            Self::Xhr {
-                method,
-                url,
-                headers,
-                body,
-                body_type,
-                progress,
-                with_credentials,
-            } => {
-                send_xhr(
-                    method,
-                    url,
-                    headers,
-                    body.as_ref(),
-                    *body_type,
-                    progress,
-                    *with_credentials,
-                )
-                .await
-            }
             Self::Node {
                 transport,
                 request_state,
                 request,
                 timeout_ms,
                 manual,
-            } => {
-                send_node(
-                    transport,
-                    request,
-                    *timeout_ms,
-                    *manual,
-                    request_state.as_deref(),
-                )
-                .await
-            }
+            } => futures_util::future::Either::Left(send_node(
+                transport,
+                request,
+                *timeout_ms,
+                *manual,
+                request_state.as_deref(),
+            )),
+            _ => futures_util::future::Either::Right(self.send_browser()),
         }
+    }
+
+    // The browser's upload, progress and timeout futures are not compiled by
+    // V8 on the first Node request. Node keeps its allocation-free poll path;
+    // only browser attempts allocate this separate future.
+    fn send_browser(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Attempt<JsValue>>> + '_>> {
+        Box::pin(async move {
+            match self {
+                Self::Fetch {
+                    upload,
+                    phases,
+                    url,
+                    init,
+                    body_type,
+                    progress,
+                    body_length,
+                    redirect,
+                    limit,
+                } => {
+                    send_fetch(
+                        url,
+                        init,
+                        *body_type,
+                        progress,
+                        *body_length,
+                        *redirect,
+                        *limit,
+                        phases.as_deref(),
+                        upload.as_ref(),
+                    )
+                    .await
+                }
+                Self::Xhr {
+                    method,
+                    url,
+                    headers,
+                    body,
+                    body_type,
+                    progress,
+                    with_credentials,
+                } => {
+                    send_xhr(
+                        method,
+                        url,
+                        headers,
+                        body.as_ref(),
+                        *body_type,
+                        progress,
+                        *with_credentials,
+                    )
+                    .await
+                }
+                Self::Node { .. } => unreachable!("Node attempts use send_node"),
+            }
+        })
     }
 }
 
