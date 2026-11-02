@@ -744,14 +744,16 @@ const COMPRESSED_SLACK = 1024 * 1024;
 
 /** Own data properties from the addon's lowercase pairs. */
 function ownHeaders(raw) {
-  // Merge with no prototype, including real __proto__ headers. Restore the
-  // public header object's prototype only after all values are own properties.
-  const headers = { __proto__: null };
+  const headers = {};
   for (let i = 0; i < raw.length; i += 2) {
     const name = raw[i];
-    headers[name] = headers[name] === undefined ? raw[i + 1] : `${headers[name]}, ${raw[i + 1]}`;
+    if (Object.hasOwn(headers, name)) headers[name] = `${headers[name]}, ${raw[i + 1]}`;
+    // Defining an own property bypasses inherited setters, readonly values and
+    // __proto__. The descriptor must ignore inherited get/set fields too.
+    else if (name in headers) Object.defineProperty(headers, name, { __proto__: null, value: raw[i + 1], writable: true, enumerable: true, configurable: true });
+    else headers[name] = raw[i + 1];
   }
-  return Object.setPrototypeOf(headers, Object.prototype);
+  return headers;
 }
 
 /** Response headers as one string per name; repeated headers joined with ", " */

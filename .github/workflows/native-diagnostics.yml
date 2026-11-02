@@ -14,6 +14,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: git worktree add historical v2.6.1
+      - run: git worktree add patched v2.6.2
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: 1.99.1
@@ -22,6 +23,7 @@ jobs:
           workspaces: |
             native
             historical/native
+            patched/native
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22
@@ -41,13 +43,17 @@ jobs:
         run: |
           npm run build:native
           node historical/scripts/build-native.mjs
+          node patched/scripts/build-native.mjs
           mkdir -p "$RUNNER_TEMP/reference"
           (cd "$RUNNER_TEMP/reference" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund rust-fetch@2.6.1)
           cp historical/wasm-module/pkg/rust-fetch-native.linux-x64.node "$RUNNER_TEMP/reference/node_modules/rust-fetch/"
+          mkdir -p "$RUNNER_TEMP/patched"
+          (cd "$RUNNER_TEMP/patched" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund rust-fetch@2.6.2)
+          cp patched/wasm-module/pkg/rust-fetch-native.linux-x64.node "$RUNNER_TEMP/patched/node_modules/rust-fetch/"
       - name: Profile native concurrency
         env:
           NATIVE_PROFILE_DIR: ${{ runner.temp }}/native-profiles
-        run: node benchmarks/native-diagnostics.mjs historical="$RUNNER_TEMP/reference/node_modules/rust-fetch" compact=control-pkg completion=completion-pkg padded=wasm-module/pkg
+        run: node benchmarks/native-diagnostics.mjs historical="$RUNNER_TEMP/reference/node_modules/rust-fetch" patched="$RUNNER_TEMP/patched/node_modules/rust-fetch" completion=completion-pkg headers=wasm-module/pkg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
