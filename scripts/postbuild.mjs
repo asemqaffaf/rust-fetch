@@ -44,6 +44,29 @@ if (!glue.includes('export class EventStream')) {
 if (!glue.includes(iterable)) {
   writeFileSync(glueUrl, `${glue}\n// Added by scripts/postbuild.mjs\n${iterable}\n`);
 }
+// wasm-streams builds its ReadableStream from a source object and a strategy that
+// inherit from Object.prototype, and the constructor reads `type`, `start`,
+// `autoAllocateChunkSize` and `size` from them by inheritance: with one of those
+// names polluted, every call returning a stream threw. The source gets them as own
+// properties and the strategy becomes a prototype-free copy.
+const construct = 'new ReadableStream(IntoUnderlyingSource.__wrap(arg0), arg1)';
+const glueNow = readFileSync(glueUrl, 'utf8');
+if (glueNow.split(construct).length !== 2) {
+  throw new Error('postbuild: expected exactly one ReadableStream construction from wasm-streams in rust_fetch.js');
+}
+writeFileSync(
+  glueUrl,
+  `${glueNow.replace(construct, 'new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), streamStrategy(arg1))')}
+// Added by scripts/postbuild.mjs
+function streamSource(source) {
+  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { value: undefined });
+  return source;
+}
+function streamStrategy(strategy) {
+  return new CountQueuingStrategy({ highWaterMark: strategy.highWaterMark });
+}
+`,
+);
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');

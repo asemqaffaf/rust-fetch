@@ -409,7 +409,7 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         Some(Some(name)) if name == "json" => true,
         Some(_) => return Err(invalid("messageType", "must be 'auto' or 'json'")),
     };
-    let end = match js_sys::Reflect::get(&options, &"end".into()).unwrap_or(JsValue::UNDEFINED) {
+    let end = match super::raw_prop(&options, "end") {
         value if value.is_undefined() => json.then(|| "[DONE]".to_string()),
         value if value.is_null() => None,
         value => Some(
@@ -419,7 +419,7 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         ),
     };
     let stream_limit = |name: &str, client| {
-        let value = js_sys::Reflect::get(&options, &name.into()).unwrap_or(JsValue::UNDEFINED);
+        let value = super::raw_prop(&options, name);
         super::parse_stream_limit(&value, client, name)
     };
     Ok(Settings {
