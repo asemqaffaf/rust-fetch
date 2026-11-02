@@ -176,6 +176,18 @@ const wsBreaks = () => new Promise((resolve) => {
     socket.onopen = () => finish(true);
   } catch { finish(true); }
 });
+// Node 20's transferable-stream descriptors inherit get/set even when the
+// source and strategy have no prototype. Excuse only scenarios that construct
+// a stream, and only when that same builtin fails without the client.
+const streamBreaks = () => {
+  try {
+    new ReadableStream({
+      __proto__: null, start(controller) { controller.close(); },
+      pull: undefined, cancel: undefined, type: undefined, autoAllocateChunkSize: undefined,
+    }, { __proto__: null, highWaterMark: 1, size: undefined });
+    return false;
+  } catch { return true; }
+};
 const nodeBreaks = () => new Promise((resolve) => {
   const agent = new http.Agent({ keepAlive: true });
   const before = crashes.length;
@@ -210,7 +222,7 @@ for (const [name, extra] of Object.entries(hostile)) {
         // The control's own late errors (its request may be left without a
         // listener when Node throws while constructing it) aren't the library's
         const mine = [...crashes];
-        broken = { http: await nodeBreaks(), websocket: await wsBreaks() };
+        broken = { http: await nodeBreaks(), websocket: await wsBreaks(), stream: streamBreaks() };
         await new Promise((resolve) => setTimeout(resolve, 150));
         crashes.length = 0;
         crashes.push(...mine);
@@ -225,7 +237,8 @@ for (const [name, extra] of Object.entries(hostile)) {
     if (dispatched.length) problems.push(`${label} sent ${dispatched[0]} to the attacker's dispatcher`);
     const actual = JSON.parse(result);
     const changed = Object.keys(expected).filter((key) => JSON.stringify(expected[key]) !== JSON.stringify(actual[key]));
-    const explained = changed.every((scenario) => (scenario === 'websocket' ? broken?.websocket : usesNodeHttp(scenario) && broken?.http));
+    const explained = changed.every((scenario) => (scenario === 'websocket' ? broken?.websocket :
+      (['upload', 'stream', 'ndjson'].includes(scenario) && broken?.stream) || (usesNodeHttp(scenario) && broken?.http)));
     if (changed.length || crashes.length) {
       if (broken && explained && (changed.length || broken.http)) { excused.push(label); continue; }
       if (changed.length) problems.push(`${label} changed ${changed.join(',')}: ${JSON.stringify(actual[changed[0]]).slice(0, 80)}`);

@@ -348,6 +348,10 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
         assert.equal(Object.hasOwn(response.headers, 'x-inherited'), false);
         assert.equal(Object.getPrototypeOf(response.headers), Object.prototype);
       }
+      // Node 20's own ReadableStream descriptors inherit get/set. Keep the
+      // buffered check above strict; stream headers still face the other pollution.
+      delete Object.prototype.get;
+      delete Object.prototype.set;
       const binary = await c.get(`http://127.0.0.1:${port}/no-type`);
       assert.ok(binary.body instanceof Uint8Array, 'an inherited MIME type must not select JSON decoding');
       const streamed = await c.get(`http://127.0.0.1:${port}/plain`, { responseType: 'stream' });
