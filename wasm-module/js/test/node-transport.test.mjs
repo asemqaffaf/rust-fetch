@@ -460,10 +460,15 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
 
     it('blocks private and reserved IP addresses before connecting', async () => {
       const blocked = ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '255.255.255.255',
-        '[::1]', '[::]', '[fd00::1]', '[fe80::1]', '[ff02::1]', '[::ffff:127.0.0.1]', '[::ffff:a9fe:a9fe]', '[64:ff9b::a9fe:a9fe]', '[64:ff9b::10.0.0.1]'];
+        '[::1]', '[::]', '[fd00::1]', '[fe80::1]', '[ff02::1]', '[::ffff:127.0.0.1]', '[::ffff:a9fe:a9fe]', '[64:ff9b::a9fe:a9fe]', '[64:ff9b::10.0.0.1]',
+        // The other ways of writing the same addresses: the URL parser normalizes IPv4 spellings (hex, octal, decimal, short)
+        '0x7f.1', '2130706433', '017700000001', '127.1', '0177.0.0.1', '0xa9fea9fe', '[0:0:0:0:0:0:0:1]', '[0000:0000:0000:0000:0000:ffff:7f00:0001]',
+        // IPv6 addresses that embed or stand in for a private IPv4 address, and reserved IPv6 ranges
+        '[::7f00:1]', '[::127.0.0.1]', '[2002:7f00:1::]', '[2002:a9fe:a9fe::1]', '[2001:0:a00:1:0:0:f5ff:fffe]', '[2001:0:4136:e378:8000:63bf:80ff:fffe]', '[::ffff:0:7f00:1]',
+        '[64:ff9b:1::1]', '[fec0::1]', '[3fff::1]', '[5f00::1]', '[100:0:0:1::1]', '[2001:db8::1]'];
       for (const host of blocked) assert.equal(await outcome(`http://${host}:9/`), 'blocked', host);
       // Public addresses are let through (these fail some other way: an unused port, a short timeout)
-      for (const host of ['1.1.1.1', '[2606:4700:4700::1111]', '[::ffff:1.1.1.1]', '[64:ff9b::101:101]']) {
+      for (const host of ['1.1.1.1', '[2606:4700:4700::1111]', '[::ffff:1.1.1.1]', '[64:ff9b::101:101]', '[2002:101:101::1]', '[2001:0:4136:e378:8000:63bf:fefe:fefe]', '[::ffff:0:101:101]']) {
         assert.equal(await outcome(`http://${host}:9/`, { timeoutMs: 50 }), 'not blocked', host);
       }
     });
@@ -499,12 +504,38 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(await outcome('http://does-not-exist.invalid/'), 'not blocked');
     });
 
-    it('checks IP-literal targets through a proxy (the proxy resolves names)', async () => {
+    it('through a proxy, checks IP-literal targets and refuses names, which the proxy would resolve unchecked', async () => {
       const proxy = await startProxy();
       try {
         const viaProxy = new WasmClient({ allowPrivateNetwork: false, proxy: proxy.url });
+        // A private IP address is blocked before it reaches the proxy
         assert.match((await rejection(viaProxy.get(server.url('/echo')))).message, /Blocked/);
-        assert.equal((await viaProxy.get(server.url('/echo').replace('127.0.0.1', 'localhost'))).status, 200);
+        // A name could resolve to a private address on the proxy's side: refused, for HTTP and HTTPS, and never sent
+        const before = proxy.seen.length;
+        for (const url of [server.url('/echo').replace('127.0.0.1', 'localhost'), 'http://public.example/', 'https://public.example/']) {
+          const error = await rejection(viaProxy.get(url));
+          assert.equal(error.kind, 'NetworkError', url);
+          assert.match(error.message, /allowPrivateNetwork: false can't check .* through a proxy/, url);
+        }
+        assert.equal(proxy.seen.length, before, 'nothing reached the proxy');
+        // A public IP address is let through to the proxy, which here answers for it
+        let asked;
+        const answering = http.createServer((req, res) => { asked = req.url; res.end('ok'); });
+        await new Promise((resolve) => answering.listen(0, '127.0.0.1', resolve));
+        try {
+          const answered = new WasmClient({ allowPrivateNetwork: false, proxy: `http://127.0.0.1:${answering.address().port}` });
+          assert.equal((await answered.get('http://93.184.216.34/echo')).status, 200);
+          assert.equal(asked, 'http://93.184.216.34/echo');
+        } finally {
+          answering.close();
+        }
+        // A host the proxy is bypassed for (NO_PROXY) is checked by this client after all
+        await withEnv({ HTTP_PROXY: proxy.url, NO_PROXY: 'localhost' }, async () => {
+          const bypassed = new WasmClient({ allowPrivateNetwork: false, proxy: 'env' });
+          assert.match((await rejection(bypassed.get(server.url('/echo').replace('127.0.0.1', 'localhost')))).message, /Blocked: /);
+        });
+        // Allowing private networks keeps names working through the proxy
+        assert.equal((await new WasmClient({ proxy: proxy.url }).get(server.url('/echo').replace('127.0.0.1', 'localhost'))).status, 200);
       } finally {
         await proxy.close();
       }
