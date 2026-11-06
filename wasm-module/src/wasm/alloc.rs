@@ -8,6 +8,9 @@
 //! by an eighth of the current size, and at least 1 MB, needs a few dozen
 //! grows instead of thousands. Memory is never returned either way.
 
+// The one place in the crate that needs unsafe code; every block is listed in docs/unsafe.md
+#![allow(unsafe_code)]
+
 use core::alloc::{GlobalAlloc, Layout};
 use core::arch::wasm32::{memory_grow, memory_size};
 use core::cell::UnsafeCell;
@@ -63,7 +66,11 @@ unsafe impl SystemAllocator for GrowInSteps {
 
 struct Allocator(UnsafeCell<Dlmalloc<GrowInSteps>>);
 
-// The module is single-threaded (no shared memory), so there's no contention
+// The module is single-threaded (no shared memory), so there's no contention.
+// `Sync` is only sound while that holds, so a build with threads must not compile.
+#[cfg(target_feature = "atomics")]
+compile_error!("the Wasm allocator is single-threaded: remove `+atomics` or give it a lock (docs/unsafe.md)");
+
 unsafe impl Sync for Allocator {}
 
 unsafe impl GlobalAlloc for Allocator {

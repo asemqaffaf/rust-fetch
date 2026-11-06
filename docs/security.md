@@ -233,3 +233,7 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
+
+## Unsafe code
+
+The only hand-written `unsafe` is the Wasm allocator. Each use and the invariant it relies on is in [`unsafe.md`](./unsafe.md), and CI fails on any other.

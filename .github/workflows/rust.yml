@@ -38,6 +38,10 @@ jobs:
           tool: cargo-llvm-cov
       - name: Check formatting
         run: cargo fmt --check
+      # Every `unsafe` is listed with its invariants in docs/unsafe.md; a new one fails here
+      - name: Unsafe inventory
+        working-directory: .
+        run: node scripts/check-unsafe.mjs
       - name: Build (wasm32)
         run: cargo build --target wasm32-unknown-unknown
       # A panic aborts the Wasm module: no unwrap/expect in library code (deny set in src/lib.rs)

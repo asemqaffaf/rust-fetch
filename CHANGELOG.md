@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Both crates now `deny(unsafe_code)`. The only `unsafe` left is the 7 keywords of the Wasm allocator, listed with their invariants in `docs/unsafe.md`; `scripts/check-unsafe.mjs` runs in CI and fails on any other. A Wasm build with the `atomics` target feature no longer compiles, because the allocator's `Sync` impl assumes one thread. Part of #230.
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
