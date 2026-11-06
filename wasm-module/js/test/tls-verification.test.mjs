@@ -92,6 +92,9 @@ function runChild(cases, { native, trust, env = {} }) {
 
 const TRANSPORTS = [['node:http', false], ...(nativeAvailable ? [['native', true]] : [])];
 const IP = '127.0.0.1';
+// OpenSSL 3.5 (Node 24) raised the default security level, so it refuses the 1024 bit RSA key that older ones accept
+const [opensslMajor, opensslMinor] = process.versions.openssl.split('.').map(Number);
+const strongDefaults = opensslMajor > 3 || (opensslMajor === 3 && opensslMinor >= 5);
 const certAt = (start, end) => ({ start: new Date(start), end: new Date(end) });
 
 // Every case: a server certificate (or TLS setting), what the client must do, and the address it connects to.
@@ -122,7 +125,7 @@ const SPECS = [
     return { key: 'self.key', cert: read('self.pem') };
   } },
   { name: 'a valid chain from a root that is not trusted', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootB, 'unknown-root'); return { key: c.key, cert: read(c.cert) }; } },
-  { name: 'a 1024 bit RSA key', expect: 'reject', gap: { 'node:http': '#244: OpenSSL security level 1 allows 1024 bit RSA' }, make: ({ ctx }) => { const c = sign(ctx.rootA, 'rsa1024', { bits: 1024 }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
+  { name: 'a 1024 bit RSA key', expect: 'reject', gap: strongDefaults ? undefined : { 'node:http': '#244: OpenSSL older than 3.5 allows 1024 bit RSA' }, make: ({ ctx }) => { const c = sign(ctx.rootA, 'rsa1024', { bits: 1024 }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
   { name: 'a SHA-1 signature', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'sha1', { md: 'sha1' }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
   { name: 'TLS 1.0 only', expect: 'reject', make: ({ good }) => ({ key: good.key, cert: read(good.cert), minVersion: 'TLSv1', maxVersion: 'TLSv1', ciphers: 'ALL:@SECLEVEL=0' }) },
   { name: 'TLS 1.1 only', expect: 'reject', make: ({ good }) => ({ key: good.key, cert: read(good.cert), minVersion: 'TLSv1.1', maxVersion: 'TLSv1.1', ciphers: 'ALL:@SECLEVEL=0' }) },

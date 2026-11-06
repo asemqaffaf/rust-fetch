@@ -250,11 +250,11 @@ See [observability](./guide/observability.md) for redaction boundaries and [reli
 | TLS 1.0 and 1.1 servers | refused | refused |
 | TLS 1.2 and 1.3 servers | accepted | accepted |
 | Name only in the subject, no `subjectAltName` | **accepted** | refused |
-| 1024 bit RSA key | **accepted** | refused |
+| 1024 bit RSA key | **accepted** with OpenSSL older than 3.5 (Node 20 and 22); refused on Node 24 | refused |
 
-The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name, and OpenSSL's default security level allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
+The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name (every version tested), and OpenSSL's default security level before 3.5 allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
 
 Also checked, on both transports: the client does not negotiate HTTP/2 when the server offers it; it sends the host name as SNI and sends no SNI for an IP address; a private root is trusted only when `NODE_EXTRA_CA_CERTS` names it; and certificates are verified through an HTTP `CONNECT` proxy (an expired, self-signed or wrong-name certificate is refused through the tunnel).
 
-Not covered: an HTTPS proxy (TLS to the proxy itself), per-client isolation of the TLS policy (there is none to isolate: trust is per process), and Node 20 and 24 differences until CI has run them.
+Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the proxy itself), and per-client isolation of the TLS policy (there is none to isolate: trust is per process).
 
