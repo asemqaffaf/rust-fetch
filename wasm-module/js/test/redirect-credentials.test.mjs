@@ -31,15 +31,24 @@ async function listen(onRequest) {
   return { server, seen, port: server.address().port };
 }
 
+const locations = new Map();
+/** The URL on server a that redirects with `status` to `location` */
+const redirectUrl = (status, location) => {
+  const id = locations.size;
+  locations.set(id, location);
+  return `http://127.0.0.1:${a.port}/r${status}?id=${id}`;
+};
+
 let a;
 let b;
 before(async () => {
-  // a answers /r<status>?to=<location> with that redirect and /hop with 200; b answers 200
+  // a answers /r<status>?id=<n> with that redirect to the location registered under n, and everything else with 200;
+  // b answers 200. Locations come from a table the tests fill, never from the request.
   a = await listen((req, res) => {
-    const match = req.url.match(/^\/r(\d+)\?to=(.*)$/s);
-    if (match) {
+    const match = req.url.match(/^\/r(\d+)\?id=(\d+)$/);
+    if (match && locations.has(Number(match[2]))) {
       res.statusCode = Number(match[1]);
-      res.setHeader('location', decodeURIComponent(match[2]));
+      res.setHeader('location', locations.get(Number(match[2])));
       res.end();
     } else if (req.url.startsWith('/loop')) {
       res.statusCode = 302;
@@ -58,7 +67,7 @@ const client = (options = {}) => new WasmClient({ retries: 0, timeoutMs: 3000, h
 /** Follow `status` from a to `location` and return the request that finally arrived */
 async function follow(status, location, method = 'POST', options) {
   clear();
-  const url = `http://127.0.0.1:${a.port}/r${status}?to=${encodeURIComponent(location)}`;
+  const url = redirectUrl(status, location);
   const init = method === 'GET' || method === 'HEAD' || method === 'DELETE' ? {} : { body: { n: 1 } };
   await client(options)[method.toLowerCase()](url, init);
   return lastHop();
@@ -131,7 +140,7 @@ describe('redirects the client refuses', () => {
   for (const location of ['file:///etc/passwd', 'ftp://127.0.0.1/x', 'javascript:alert(1)', 'data:text/plain,hi', 'blob:http://127.0.0.1/x', 'ws://127.0.0.1/x']) {
     it(`does not follow a redirect to ${location.split(':')[0]}:`, async () => {
       clear();
-      const error = await client().get(`http://127.0.0.1:${a.port}/r302?to=${encodeURIComponent(location)}`).then(() => undefined, (caught) => caught);
+      const error = await client().get(redirectUrl(302, location)).then(() => undefined, (caught) => caught);
       assert.ok(error, 'the redirect was followed');
       assert.equal(b.seen.length, 0);
     });
@@ -146,7 +155,7 @@ describe('redirects the client refuses', () => {
 
   it('follows no redirect when maxRedirects is 0', async () => {
     clear();
-    const error = await client({ maxRedirects: 0 }).get(`http://127.0.0.1:${a.port}/r302?to=${encodeURIComponent('/hop')}`).then(() => undefined, (caught) => caught);
+    const error = await client({ maxRedirects: 0 }).get(redirectUrl(302, '/hop')).then(() => undefined, (caught) => caught);
     assert.ok(error);
     assert.equal(a.seen.filter((record) => record.url === '/hop').length, 0);
   });
