@@ -2258,11 +2258,10 @@ mod tests {
             let client = Client::builder().base_url(given).build().expect(given);
             assert_eq!(client.config.base_url.as_deref(), Some(kept), "{given:?}");
             let url = resolve_url(client.config.base_url.as_deref(), None, "users", &[]).unwrap();
-            assert_eq!(
-                url.path(),
-                format!("{}/users", kept_path(kept)),
-                "{given:?}"
-            );
+            // `as_str` exists on both URL types; the Wasm wrapper has no `path`
+            let rest = url.as_str().split_once("://").map_or("", |(_, rest)| rest);
+            let path = rest.find('/').map_or("", |at| &rest[at..]);
+            assert_eq!(path, format!("{}/users", kept_path(kept)), "{given:?}");
         }
     }
 
