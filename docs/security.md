@@ -301,3 +301,6 @@ Also checked, on both transports: the client does not negotiate HTTP/2 when the 
 
 Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the proxy itself), and per-client isolation of the TLS policy (there is none to isolate: trust is per process).
 
+## Unsafe code
+
+The only hand-written `unsafe` is the Wasm allocator. Each use and the invariant it relies on is in [`unsafe.md`](./unsafe.md), and CI fails on any other.

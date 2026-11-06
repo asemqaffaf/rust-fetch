@@ -7,6 +7,8 @@
 //! most 256 connections per origin (see `pool`). Requests run on Tokio
 //! threads, so the JS thread only builds the request and decodes the body.
 
+// napi-rs expands to unsafe code that it allows itself, which `forbid` would reject; `deny` still stops any hand-written unsafe
+#![deny(unsafe_code)]
 #![warn(clippy::pedantic)]
 // napi-rs functions take their arguments by value and report errors to JS
 #![allow(clippy::needless_pass_by_value, clippy::missing_errors_doc)]
