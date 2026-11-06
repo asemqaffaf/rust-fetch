@@ -1,0 +1,94 @@
+name: Reproducible Wasm build
+# What npm serves should be what the source produces (#232). Provenance says where a package was
+# built; this says the Wasm in it can be built again from the tag, byte for byte, by anyone with
+# the pinned toolchain.
+#   twice:      two builds, in two different directories, give the same Wasm (every pull request
+#               that can change it)
+#   published:  the latest release on npm has the Wasm that its tag builds to (weekly)
+on:
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'wasm-module/Cargo.toml'
+      - 'wasm-module/Cargo.lock'
+      - 'wasm-module/src/**'
+      - 'scripts/postbuild.mjs'
+      - '.github/workflows/reproducible.yml'
+permissions:
+  contents: read
+jobs:
+  twice:
+    name: Two builds, one Wasm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
+        with:
+          toolchain: 1.99.1 # same pin as release.yml
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: wasm-pack@0.15.0 # same pin as release.yml
+      - name: Build in two directories
+        run: |
+          build() {
+            (cd "$1/wasm-module" && wasm-pack build --release --target web >/dev/null 2>&1)
+            sha256sum "$1/wasm-module/pkg/rust_fetch_bg.wasm" | cut -d' ' -f1
+          }
+          cp -r "$GITHUB_WORKSPACE" /tmp/second-checkout
+          rm -rf /tmp/second-checkout/wasm-module/pkg /tmp/second-checkout/wasm-module/target
+          first=$(build "$GITHUB_WORKSPACE")
+          second=$(build /tmp/second-checkout)
+          echo "first  build ($GITHUB_WORKSPACE): $first"
+          echo "second build (/tmp/second-checkout): $second"
+          {
+            echo "### Wasm builds"
+            echo "| Directory | sha256 |"
+            echo "| --- | --- |"
+            echo "| $GITHUB_WORKSPACE | \`$first\` |"
+            echo "| /tmp/second-checkout | \`$second\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          test -n "$first" && test "$first" = "$second"
+  published:
+    name: The published Wasm rebuilds from its tag
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
+        with:
+          toolchain: 1.99.1 # same pin as release.yml
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: wasm-pack@0.15.0 # same pin as release.yml
+      - name: Rebuild the latest release and compare it with npm
+        run: |
+          version=$(npm view rust-fetch version)
+          echo "Latest on npm: $version"
+          # The tag was built with the toolchain pinned in its own release.yml; a different pin here is not a reproducibility failure
+          tagged=$(git show "v$version:.github/workflows/release.yml" | sed -n 's/^ *toolchain: \([0-9.]*\).*/\1/p' | head -n1)
+          current=$(sed -n 's/^ *toolchain: \([0-9.]*\).*/\1/p' .github/workflows/release.yml | head -n1)
+          if [ "$tagged" != "$current" ]; then
+            echo "::notice::v$version was built with Rust $tagged and the pin is now $current: not compared"
+            exit 0
+          fi
+          git checkout --quiet "v$version"
+          (cd wasm-module && wasm-pack build --release --target web >/dev/null 2>&1)
+          built=$(sha256sum wasm-module/pkg/rust_fetch_bg.wasm | cut -d' ' -f1)
+          mkdir /tmp/npm && cd /tmp/npm
+          npm pack "rust-fetch@$version" --silent >/dev/null
+          tar -xzf ./*.tgz package/rust_fetch_bg.wasm
+          published=$(sha256sum package/rust_fetch_bg.wasm | cut -d' ' -f1)
+          echo "built from v$version: $built"
+          echo "published on npm:    $published"
+          test "$built" = "$published"
