@@ -65,21 +65,22 @@ const headers = () => ({ authorization: `Bearer ${CANARY.authorization}`, cookie
 const url = (path, targetPort = port) => `http://${CANARY.urlUser}:${CANARY.urlPassword}@127.0.0.1:${targetPort}${path}${path.includes('?') ? '&' : '?'}token=${CANARY.urlQuery}#${CANARY.urlFragment}`;
 const redactAll = (value) => { const parsed = new URL(value); parsed.username = ''; parsed.password = ''; parsed.search = ''; parsed.hash = ''; return parsed.href; };
 
+// `kind` is the error each scenario must end in, so a scenario cannot pass by failing for another reason
 const SCENARIOS = {
-  'connection refused': () => ({ target: () => url('/', closedPort) }),
-  'server error': () => ({ target: () => url('/500') }),
-  'redirect to another host name, then an error': () => ({ target: () => url('/redirect') }),
-  'timeout': () => ({ options: { timeoutMs: 150 }, target: () => url('/hang') }),
-  'retries exhausted': () => ({ options: { retries: 2, retryBudget: undefined }, target: () => url('/500') }),
-  'proxy refused': () => ({ options: { proxy: `http://proxyuser:${CANARY.proxyPassword}@127.0.0.1:${closedPort}` }, target: () => url('/') }),
-  'response too large': () => ({ options: { maxResponseBytes: 100 }, target: () => url('/big') }),
-  'private network blocked': () => ({ options: { allowPrivateNetwork: false }, target: () => url('/') }),
-  'cancelled': () => { const controller = new AbortController(); setTimeout(() => controller.abort(), 50); return { target: () => url('/hang'), request: { signal: controller.signal } }; },
+  'connection refused': () => ({ kind: 'NetworkError', target: () => url('/', closedPort) }),
+  'server error': () => ({ kind: 'HttpError', target: () => url('/500') }),
+  'redirect to another host name, then an error': () => ({ kind: 'HttpError', target: () => url('/redirect') }),
+  'timeout': () => ({ kind: 'TimeoutError', options: { timeoutMs: 150 }, target: () => url('/hang') }),
+  'retries exhausted': () => ({ kind: 'HttpError', options: { retries: 2 }, target: () => url('/500') }),
+  'proxy refused': () => ({ kind: 'NetworkError', options: { proxy: `http://proxyuser:${CANARY.proxyPassword}@127.0.0.1:${closedPort}` }, target: () => url('/') }),
+  'response too large': () => ({ kind: 'NetworkError', options: { maxResponseBytes: 100 }, target: () => url('/big') }),
+  'private network blocked': () => ({ kind: 'NetworkError', options: { allowPrivateNetwork: false }, target: () => url('/') }),
+  'cancelled': () => { const controller = new AbortController(); setTimeout(() => controller.abort(), 50); return { kind: 'CancelledError', target: () => url('/hang'), request: { signal: controller.signal } }; },
 };
 
 /** Run one request and collect every surface */
 async function run(scenario, extraOptions = {}) {
-  const { options = {}, target, request = {} } = scenario();
+  const { kind, options = {}, target, request = {} } = scenario();
   const debug = [];
   const hooks = [];
   const consoleOutput = [];
@@ -96,10 +97,10 @@ async function run(scenario, extraOptions = {}) {
     ...options, ...extraOptions,
   });
   let error;
-  try { await client.post(target(), { password: CANARY.body }, request); } catch (caught) { error = caught; } finally {
+  try { await client.post(target(), { body: { password: CANARY.body }, ...request }); } catch (caught) { error = caught; } finally {
     for (const [method, original] of Object.entries(originals)) console[method] = original;
   }
-  return { error, debug: debug.join('\n'), hooks: hooks.join('\n'), stats: JSON.stringify(client.stats?.() ?? {}), consoleOutput: consoleOutput.join('\n') };
+  return { kind, error, debug: debug.join('\n'), hooks: hooks.join('\n'), stats: JSON.stringify(client.stats?.() ?? {}), consoleOutput: consoleOutput.join('\n') };
 }
 
 describe('secrets do not leak', () => {
@@ -108,7 +109,10 @@ describe('secrets do not leak', () => {
       let result;
       before(async () => { result = await run(scenario); });
 
-      it('ends in an error (the scenario is a failing one)', () => assert.ok(result.error, 'expected the request to fail'));
+      it('ends in the error the scenario is for', () => {
+        assert.ok(result.error, 'expected the request to fail');
+        assert.equal(result.error.name, result.kind, result.error.message);
+      });
       it('keeps every secret out of debug entries', () => assert.deepEqual(found(result.debug), []));
       it('keeps every secret out of lifecycle hooks', () => assert.deepEqual(found(result.hooks), []));
       it('keeps every secret out of stats()', () => assert.deepEqual(found(result.stats), []));
