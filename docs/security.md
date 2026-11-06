@@ -52,6 +52,24 @@ await api.get('https://partner.example/data', { allowAbsoluteUrls: true }); // p
 
 `allowAbsoluteUrls` applies to requests, `client.events()` and `client.websocket()`, and can be set per request. In Rust, it's `ClientBuilder::allow_absolute_urls(false)`.
 
+## URL resolution is checked against the WHATWG URL parser
+
+Where a request goes, and which credentials go with it, is decided by the origin of the resolved URL. `scripts/fuzz-url-differential.mjs` resolves thousands of inputs (backslashes, `//host`, userinfo, tabs and newlines, IPv4 shorthand, IPv6 zones, percent-encoded hosts, other schemes) against 16 `baseUrl` shapes and compares what reaches the transport with Node's `URL`, which implements the WHATWG standard. It runs with the scheduled fuzzing workflow and on pull requests that touch the URL code. The rules it enforces:
+
+- Only `http:` and `https:` are ever sent.
+- With a `baseUrl` and `allowAbsoluteUrls: false`, anything WHATWG parses as an absolute URL is rejected and nothing is sent.
+- With a `baseUrl`, anything WHATWG does not parse as absolute stays on the origin of `baseUrl`, whatever it contains.
+- An absolute URL is sent to exactly the origin WHATWG computes for it.
+- A plain relative path is appended to the base path.
+- What is sent re-parses to the same string and holds no control character or space.
+
+**Decided differences from WHATWG resolution**
+
+- **A relative path is appended to `baseUrl`; it is not resolved against it.** `new URL('users', 'https://a.test/v1')` gives `/users`; the client sends `/v1/users`. This is what keeps `//host`, `/\host` and `\\host` on the base.
+- **Dot segments still apply after the join.** `../admin` against `https://a.test/v1` reaches `/admin`: it can leave the base path, never the origin. Do not build paths from untrusted input without encoding it.
+- **`baseUrl` may not have a query or fragment.** A path appended after one becomes part of it, so the request went to the base path itself (`https://a.test/v1?x=1/users`). `baseUrl` is now kept in its parsed form, so padding or an upper-case host never reaches the request path.
+- **Browsers refuse URLs that carry credentials** (`https://user:pass@host/`) in `fetch()`; the browser transport fails closed with `InvalidInputError`. The Node transports send them.
+
 ## Response size limits and decompression bombs
 
 A server, or anyone who controls a URL you fetch, can send an endless body, or a few kilobytes of gzip that decompress to gigabytes, and exhaust your process's memory. `fetch()` has no way to limit either. Set `maxResponseBytes`:

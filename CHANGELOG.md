@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `baseUrl` with a query or fragment (`https://api.example.com/v1?x=1`) is now refused with an `InvalidInputError` (`parameter: 'baseUrl'`). A path appended after one became part of it, so `get('users')` requested `/v1?x=1/users`, which is the base path itself, not `/v1/users`. `baseUrl` is also kept in its parsed form, so surrounding spaces, tabs or newlines, an upper-case host and a default port no longer reach the request path (`" https://api.example.com/v1 "` requested `/v1%20/users`). The origin was never affected. Found by the new URL differential check (#217).
+
 ### Security
+- Differential check of URL resolution against the WHATWG URL parser (`scripts/fuzz-url-differential.mjs`), run with the scheduled fuzzing workflow. The decided differences are listed in `docs/security.md` (#217).
 - `allowPrivateNetwork: false` now also blocks the IPv6 benchmarking block `2001:2::/48` (RFC 5180) and the deprecated ORCHID block `2001:10::/28`, which the IANA IPv6 special-purpose registry lists as not globally reachable. They are not routed on the public internet, so the exposure was small. A new test takes every not-globally-reachable block from the IANA IPv4 and IPv6 registries and checks its first, middle and last address and its neighbours, and a controlled resolver checks mixed public and private answers and repeated lookups (#225).
 
 ## [2.7.2] - 2026-11-06
