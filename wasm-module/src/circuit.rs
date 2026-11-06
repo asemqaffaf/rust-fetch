@@ -224,6 +224,10 @@ pub(crate) struct Probe {
 }
 
 impl Probe {
+    #[allow(
+        clippy::expect_used,
+        reason = "a probe holds an active slot for its origin until it settles"
+    )]
     pub(crate) fn finish(mut self, failed: bool) {
         let mut states = self
             .breaker
@@ -262,6 +266,10 @@ impl Probe {
 }
 
 impl Drop for Probe {
+    #[allow(
+        clippy::expect_used,
+        reason = "a probe holds an active slot for its origin until it settles"
+    )]
     fn drop(&mut self) {
         if self.settled {
             return;

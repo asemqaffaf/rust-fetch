@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Remove `unwrap`/`expect` calls that untrusted or caller-supplied input could reach: a `circuitBreaker` or `rateLimit` option that cannot be converted now rejects with an `InvalidInputError`, and per-origin limiting no longer assumes a URL shape. Library code now denies `clippy::unwrap_used` and `clippy::expect_used` (checked in CI for native and `wasm32`); the remaining invariants are annotated with the reason they cannot fail (#216).
+
 ## [2.7.1] - 2026-11-03
 
 Security hardening and performance fixes for 2.7.0. Public APIs and defaults are unchanged. The native transport remains an optional local build, outside the npm package.

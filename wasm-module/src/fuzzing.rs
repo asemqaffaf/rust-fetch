@@ -1,5 +1,7 @@
 //! Harnesses for the actual parsers. No networking is performed.
 #![allow(clippy::missing_panics_doc)]
+// Harnesses assert on purpose: a panic is how the fuzzer reports a bug.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 fn sse(bytes: &[u8], chunk: usize) -> (Vec<crate::sse::Event>, Option<u64>, bool) {
     let mut parser = crate::sse::Parser::with_limit(Some(4096)).event_limit(Some(16384));

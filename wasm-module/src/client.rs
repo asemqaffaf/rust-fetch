@@ -197,6 +197,10 @@ impl StreamingResponse {
     }
 
     /// Stream the body chunk by chunk, reporting progress if a callback was set
+    #[allow(
+        clippy::expect_used,
+        reason = "a body is either raw or guarded; constructors set one of them"
+    )]
     pub fn into_stream(self) -> impl Stream<Item = Result<Vec<u8>>> {
         let total = self.length;
         let progress = self.progress;
@@ -232,6 +236,10 @@ impl StreamingResponse {
     /// on their way (no download progress, no size limit); otherwise the
     /// response back, to read through [`StreamingResponse::into_stream`]
     #[cfg(target_arch = "wasm32")]
+    #[allow(
+        clippy::expect_used,
+        reason = "only guarded bodies drop the raw body, and those return early"
+    )]
     pub(crate) fn into_raw(
         self,
     ) -> std::result::Result<
@@ -708,8 +716,8 @@ impl Client {
 
         let receive = async {
             request.send().await.map_err(|error| {
-                if error.is_timeout() && phases.connect.is_some() {
-                    Error::phase_timeout(crate::TimeoutPhase::Connect, phases.connect.unwrap())
+                if let Some(connect) = phases.connect.filter(|_| error.is_timeout()) {
+                    Error::phase_timeout(crate::TimeoutPhase::Connect, connect)
                 } else {
                     Error::from(error)
                 }
@@ -1863,6 +1871,10 @@ impl RequestBuilder {
     /// Retries and the timeout apply until the headers arrive. Error
     /// responses are read fully and returned as [`Error::Http`] as usual.
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(
+        clippy::expect_used,
+        reason = "a successful streaming attempt always keeps its body unread"
+    )]
     pub async fn send_streaming(self) -> Result<StreamingResponse> {
         self.check_absolute_url()?;
         let deadline = self.effective_deadline();
