@@ -40,6 +40,8 @@
 // A panic aborts the Wasm module, so input from the network or the caller must
 // become an error. Invariants that cannot fail say why with `#[allow(..., reason)]`.
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+// The only unsafe code is the Wasm allocator, which allows it for itself (src/wasm/alloc.rs); see docs/unsafe.md
+#![deny(unsafe_code)]
 
 // Core modules
 pub mod client;

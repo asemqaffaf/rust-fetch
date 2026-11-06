@@ -70,6 +70,8 @@ When unsure, treat it as breaking.
 
 Fixes that also apply to an older major version are made on `main` first, then cherry-picked into `v1.x`.
 
+Security fixes follow [the security release checklist](docs/security-release-checklist.md): private fix, one release per supported line, advisory on publication.
+
 ## Releasing
 
 1. On a `release/X.Y.Z` branch, set the version in `wasm-module/Cargo.toml` and `package.json`. Then move the `Unreleased` changelog entries under `## [X.Y.Z] - YYYY-MM-DD`.
