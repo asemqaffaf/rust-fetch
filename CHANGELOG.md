@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- `allowPrivateNetwork: false` now also blocks the IPv6 benchmarking block `2001:2::/48` (RFC 5180) and the deprecated ORCHID block `2001:10::/28`, which the IANA IPv6 special-purpose registry lists as not globally reachable. They are not routed on the public internet, so the exposure was small. A new test takes every not-globally-reachable block from the IANA IPv4 and IPv6 registries and checks its first, middle and last address and its neighbours, and a controlled resolver checks mixed public and private answers and repeated lookups (#225).
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
