@@ -144,13 +144,8 @@ describe('where the two parsers differ', () => {
     } finally { server.close(); }
   }
 
-  it('does not reuse the connection after Content-Length together with Transfer-Encoding', { todo: native ? 'the native transport reuses it (#243; hyper drops Content-Length before the addon sees it)' : false }, async () => {
+  it('does not reuse the connection after Content-Length together with Transfer-Encoding', async () => {
     assert.equal(await connectionsUsed(), 2, 'the second request was sent on the connection the malformed response arrived on');
-  });
-
-  // node:test does not fail a suite when a todo test starts passing, so today's behaviour is pinned as well
-  it('KNOWN GAP (#243): the native transport reuses the connection', { skip: !native }, async () => {
-    assert.equal(await connectionsUsed(), 1, 'the gap seems to be closed: remove the todo marker above and this test');
   });
 });
 
