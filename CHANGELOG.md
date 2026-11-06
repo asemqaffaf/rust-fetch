@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- TLS verification matrix (#229): real certificates generated with openssl, 22 cases on node:http and the native addon (expired, not yet valid, wrong name, IP address match and mismatch, self-signed, unknown root, missing intermediate, client-auth-only, issued by a non-CA, SHA-1, TLS 1.0 to 1.3), plus ALPN, SNI for IP addresses, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED=0` and an HTTP `CONNECT` proxy. The native addon refuses every bad case. node:http accepts a certificate with the name only in the subject and a 1024 bit RSA key (#244).
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
