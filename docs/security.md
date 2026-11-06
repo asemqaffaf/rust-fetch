@@ -52,6 +52,24 @@ await api.get('https://partner.example/data', { allowAbsoluteUrls: true }); // p
 
 `allowAbsoluteUrls` applies to requests, `client.events()` and `client.websocket()`, and can be set per request. In Rust, it's `ClientBuilder::allow_absolute_urls(false)`.
 
+## URL resolution is checked against the WHATWG URL parser
+
+Where a request goes, and which credentials go with it, is decided by the origin of the resolved URL. `scripts/fuzz-url-differential.mjs` resolves thousands of inputs (backslashes, `//host`, userinfo, tabs and newlines, IPv4 shorthand, IPv6 zones, percent-encoded hosts, other schemes) against 16 `baseUrl` shapes and compares what reaches the transport with Node's `URL`, which implements the WHATWG standard. It runs with the scheduled fuzzing workflow and on pull requests that touch the URL code. The rules it enforces:
+
+- Only `http:` and `https:` are ever sent.
+- With a `baseUrl` and `allowAbsoluteUrls: false`, anything WHATWG parses as an absolute URL is rejected and nothing is sent.
+- With a `baseUrl`, anything WHATWG does not parse as absolute stays on the origin of `baseUrl`, whatever it contains.
+- An absolute URL is sent to exactly the origin WHATWG computes for it.
+- A plain relative path is appended to the base path.
+- What is sent re-parses to the same string and holds no control character or space.
+
+**Decided differences from WHATWG resolution**
+
+- **A relative path is appended to `baseUrl`; it is not resolved against it.** `new URL('users', 'https://a.test/v1')` gives `/users`; the client sends `/v1/users`. This is what keeps `//host`, `/\host` and `\\host` on the base.
+- **Dot segments still apply after the join.** `../admin` against `https://a.test/v1` reaches `/admin`: it can leave the base path, never the origin. Do not build paths from untrusted input without encoding it.
+- **`baseUrl` may not have a query or fragment.** A path appended after one becomes part of it, so the request went to the base path itself (`https://a.test/v1?x=1/users`). `baseUrl` is now kept in its parsed form, so padding or an upper-case host never reaches the request path.
+- **Browsers refuse URLs that carry credentials** (`https://user:pass@host/`) in `fetch()`; the browser transport fails closed with `InvalidInputError`. The Node transports send them.
+
 ## Response size limits and decompression bombs
 
 A server, or anyone who controls a URL you fetch, can send an endless body, or a few kilobytes of gzip that decompress to gigabytes, and exhaust your process's memory. `fetch()` has no way to limit either. Set `maxResponseBytes`:
@@ -123,16 +141,29 @@ const fetcher = new WasmClient({ allowPrivateNetwork: false, maxResponseBytes: 5
 await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, a private or reserved address" for internal targets
 ```
 
+- **Tested against the IANA registries:** `ssrf-ranges.test.mjs` takes every block the IANA IPv4 and IPv6 special-purpose registries list as not globally reachable, and tries its first, middle and last address and the addresses next to it. A resolver it controls returns mixed public and private answers, and the name is asked again for every request.
 - **Every address is checked when connecting:** the host's DNS answers (all of them), or the IP address itself. So DNS rebinding can't get past it, and each redirect is checked again.
 - **Blocked ranges:**
   - IPv4: loopback, RFC 1918 private, link-local (including the 169.254.169.254 metadata endpoint), carrier-grade NAT, "this network", multicast, reserved and documentation ranges
-  - IPv6: loopback, unspecified, unique-local, link-local, site-local, multicast and documentation ranges, the deprecated IPv4-compatible `::a.b.c.d` addresses, and local-use NAT64 (`64:ff9b:1::/48`), plus the forms that carry an IPv4 address: IPv4-mapped (`::ffff:10.0.0.1`), IPv4-translated (`::ffff:0:10.0.0.1`), NAT64 (`64:ff9b::…`), 6to4 (`2002:…`) and Teredo (`2001:0:…`) addresses are blocked when the IPv4 address inside them is
+  - IPv6: loopback, unspecified, unique-local, link-local, site-local, multicast, benchmarking (`2001:2::/48`), deprecated ORCHID (`2001:10::/28`) and documentation ranges, the deprecated IPv4-compatible `::a.b.c.d` addresses, and local-use NAT64 (`64:ff9b:1::/48`), plus the forms that carry an IPv4 address: IPv4-mapped (`::ffff:10.0.0.1`), IPv4-translated (`::ffff:0:10.0.0.1`), NAT64 (`64:ff9b::…`), 6to4 (`2002:…`) and Teredo (`2001:0:…`) addresses are blocked when the IPv4 address inside them is
   - Other spellings: the URL parser turns hexadecimal, octal, decimal and short IPv4 forms (`0x7f.1`, `2130706433`, `127.1`) into the dotted address before the check, and host names are checked by what they resolve to, so `localhost.` and `foo.localhost` are covered
 - **Separate connection pool:** checked requests never reuse a connection another client made to a private address.
 - **Proxies:** a proxy resolves host names itself, so this client can't see which address it connects to. With `allowPrivateNetwork: false` and a proxy for the target, an IP-address target is checked as usual and a host name is refused, before anything is sent, with a `NetworkError` ("allowPrivateNetwork: false can't check … through a proxy"). The same goes for a redirect to a name. Use an IP address, bypass the proxy for that host (`NO_PROXY` with `proxy: 'env'`), or enforce the rule in the proxy. Before 2.7.0, names went through the proxy unchecked.
 - **WebSockets too:** `client.websocket()` (Node's built-in WebSocket, which connects through undici rather than `node:http`) gets its own checked connection pool. An IP address that is private or reserved throws a `NetworkError` from `websocket()` before anything connects; a host name is checked on every connection, reconnections included, and a blocked one fails the attempt with the same "Blocked: …" message. Set it per connection with `websocket(url, { allowPrivateNetwork })`. It can't be combined with your own `dispatcher` (whose connections it couldn't check), and while another undici global dispatcher is installed (for example a `ProxyAgent` from `setGlobalDispatcher`) `websocket()` throws an `InvalidInputError` instead of connecting unchecked.
 - **Not covered:** in browsers this option does nothing; they enforce their own private-network rules.
 - **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
+
+## Hostile responses
+
+`response-framing.test.mjs` runs a raw TCP server against the client and checks what a malicious or broken server can do with HTTP framing. It runs on both transports: with the native addon (when built, as in CI) and, as `response-framing-js.test.mjs`, on node:http. The two parsers differ, so some cases are judged by what the client must never do rather than by one exact outcome.
+
+- **Rejected with a `NetworkError` on both transports:** conflicting `Content-Length` values, chunk sizes that are not hexadecimal, beyond 64 bits or negative, chunk data without its CRLF, a 100 kB chunk extension or trailer, a 2 MB header or status line, 5,000 headers, text that is not HTTP, an unknown HTTP version, a four digit status, and a body shorter than its `Content-Length`. Obsolete line folding, bare LF line endings, a bare CR or NUL in a header value, and spaces around header names are rejected, or if a parser accepts them, read without inventing a header.
+- **Header size:** a header block of 15 kB is accepted on both. A single header or status line of 100 kB is refused by node:http (16 kB default) and accepted by the native addon; both refuse 1 MB and above.
+- **`Content-Length` together with `Transfer-Encoding`:** node:http rejects the response. The native addon reads it as chunked and reuses the connection, which RFC 9112 section 6.3 advises against. Tracked in #243 and recorded as a `todo` test plus a pinned `KNOWN GAP` test that fails when the gap is closed.
+- **No response smuggling:** a second response written after the first, whether in the same write or later on a kept-alive connection, is never given to the next request; the next request gets its own response.
+- **Bounded waiting:** headers that arrive one line at a time end at `timeoutMs`; an endless run of `103` responses ends at `responseTimeoutMs` with no meaningful memory growth; a body that trickles forever ends at `deadlineMs`; a `Content-Length` above `maxResponseBytes` is refused before the body is read.
+
+Not covered: the browser transports, which leave framing to the browser.
 
 ## Hardened configurations
 
@@ -233,6 +264,42 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
+
+## Redirects and credentials
+
+Checked by `wasm-module/js/test/redirect-credentials.test.mjs` (Node transport, plain HTTP, two local servers on different ports):
+
+- `Authorization`, `Cookie`, `Proxy-Authorization` and every name in `sensitiveHeaders` are sent on a hop only when the target has the same origin as the request that was redirected. The expected answer is computed with Node's `URL`, so odd spellings are judged as a browser would judge them: upper-case scheme, trailing-dot host, decimal and hex IPv4, percent-encoded host, tabs, backslashes, and `user:port@host` tricks.
+- Other headers follow the redirect.
+- 303 turns every method except HEAD into GET. 301 and 302 turn POST into GET. 307 and 308 keep method and body. A request without a body keeps no `Content-Type`.
+- Redirects to `file:`, `ftp:`, `javascript:`, `data:`, `blob:` and `ws:` are refused. `maxRedirects: 0` follows nothing, and a loop stops at the limit.
+- A `Location` with user info becomes a Basic `Authorization` for that user only after the client's own `Authorization` has been dropped (cross-origin). It is never the client's secret.
+
+Not covered: https to http downgrade (needs the generated certificates from #229), the native addon, and browser transports (the browser decides redirect handling itself).
+
+## TLS verification
+
+`tls-verification.test.mjs` generates certificates with openssl, serves them over HTTPS and requests them with both Node transports (node:http, and the native addon where it is built). Trust is process-wide: the defaults are the Mozilla root certificates, `NODE_EXTRA_CA_CERTS` adds roots, and `NODE_TLS_REJECT_UNAUTHORIZED=0` turns verification off with Node's warning. `WasmClient` has no `ca` option.
+
+| Case | node:http | native |
+| --- | --- | --- |
+| Valid chain, valid name or IP address, with the intermediate | accepted | accepted |
+| Intermediate missing from the chain the server sends | refused | refused |
+| Expired, or not yet valid | refused | refused |
+| Name for another host, IP address for another address, host name certificate used for an IP address | refused | refused |
+| Self-signed, or a valid chain from a root that is not trusted | refused | refused |
+| Certificate for client authentication only, or issued by a non-CA certificate | refused | refused |
+| SHA-1 signature | refused | refused |
+| TLS 1.0 and 1.1 servers | refused | refused |
+| TLS 1.2 and 1.3 servers | accepted | accepted |
+| Name only in the subject, no `subjectAltName` | **accepted** | refused |
+| 1024 bit RSA key | **accepted** on Node 20 and 22; refused on Node 24 | refused |
+
+The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name (every version tested), and Node's default TLS security level before Node 24 allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
+
+Also checked, on both transports: the client does not negotiate HTTP/2 when the server offers it; it sends the host name as SNI and sends no SNI for an IP address; a private root is trusted only when `NODE_EXTRA_CA_CERTS` names it; and certificates are verified through an HTTP `CONNECT` proxy (an expired, self-signed or wrong-name certificate is refused through the tunnel).
+
+Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the proxy itself), and per-client isolation of the TLS policy (there is none to isolate: trust is per process).
 
 ## Unsafe code
 
