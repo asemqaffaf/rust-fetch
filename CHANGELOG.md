@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Secret-leak canary test: unique strings in the URL (user, password, query, fragment), headers, a proxy password and the body are sent through nine failing scenarios (refused, server error, redirect, timeout, retries exhausted, proxy refused, response too large, blocked address, cancelled), and everything the application can observe is searched for them. Debug entries, lifecycle hooks, `stats()` and console output are clean in every scenario, and so are errors for headers, the proxy password and the body. Two gaps are recorded as expected failures: error objects carry the URL password and fragment (#238), and `redactUrl` is not applied to `error.cause.url` (#239). Part of #227.
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
