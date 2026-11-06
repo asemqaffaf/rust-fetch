@@ -36,7 +36,7 @@ You will receive an acknowledgement within 48 to 72 hours. Validated vulnerabili
 
 ## Security architecture and built-in protections
 
-`rust-fetch` provides built-in defenses against common client-side and server-side network attacks. Detailed configuration examples and threat models are documented in the [Security Guide](https://asemqaffaf.github.io/rust-fetch/security).
+`rust-fetch` provides built-in defenses against common client-side and server-side network attacks. Detailed configuration examples are in the [Security Guide](https://asemqaffaf.github.io/rust-fetch/security), and what the library defends against and what it leaves to you is in the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model).
 
 ### Zero dependencies and supply-chain security
 

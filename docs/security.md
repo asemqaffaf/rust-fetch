@@ -18,6 +18,8 @@ Network access is expected: requests, redirects, Server-Sent Events, and WebSock
 
 Package ratings combine different signals. A capability alert such as network access needs review in the context of an HTTP client, while popularity and community ratings depend on adoption and participation. A rating or an absence of known vulnerabilities does not replace a review of the application's configuration and trust boundaries.
 
+What the library defends against, per adapter, and what it leaves to you: the [threat model](./threat-model.md).
+
 ## Security compared with `fetch()` and axios
 
 The same attacks against each client, with the protections it offers turned on (`npm run security:compare`; Node.js 22.13, axios 1.20). Each rust-fetch row is also a regression test in CI (`wasm-module/js/test/security.test.mjs`), named after the advisories it covers.
@@ -340,6 +342,8 @@ Tests run on node:http and on the native addon unless noted. Browser transports 
 | C25 | Hooks and logs redact URLs, credentials and response bodies | `wasm-module/js/test/observability.test.mjs::redacts URLs, credentials, custom secrets and response bodies in hooks/logs` | partial: errors the client throws still carry a URL password (#238, #239) |
 | C26 | Each native adapter owns its TLS configuration, pool and cancellation scope | none | stated: design; no multi-thread test |
 | C27 | Of fetch, axios and rust-fetch, only rust-fetch has a built-in SSRF check | `wasm-module/js/test/security.test.mjs::with allowPrivateNetwork: false, blocks` | partial: rust-fetch's half is tested; the other two are measured by `npm run security:compare` with Node.js 22.13 and axios 1.20 (see the table above), not by CI |
+| C28 | A redirect to `file:`, `ftp:`, `javascript:` or another non-HTTP scheme is refused | `wasm-module/js/test/security.test.mjs::refuses a redirect to` | tested |
+| C29 | Workflows are linted, dependencies are audited weekly, and the code is scanned | `.github/workflows/workflow-lint.yml::zizmor`, `.github/workflows/audit.yml::cargo-deny-action`, `.github/workflows/codeql.yml::CodeQL` | process |
 
 Words such as "never", "only" and "always" elsewhere on this page describe the rows above. Where no row backs one, the sentence is a claim without a test and should be reworded or given a row.
 
