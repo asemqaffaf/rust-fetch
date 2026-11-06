@@ -93,25 +93,11 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       return u.href;
     } catch { return String(value); }
   }
-  // Without `redactUrl` an error keeps its URL as passed, apart from the password and the fragment:
-  // the password is the most sensitive part of a URL and the fragment never reaches a server (#238).
-  const maskUrl = (value) => {
-    try { const u = new URL(value); if (u.password) u.password = '***'; u.hash = ''; return u.href; }
-    catch { return typeof value === 'string' ? '[invalid URL]' : value; }
-  };
-  // Transports tag the errors they raise with `url`, and the core wraps them as `cause`: apply the
-  // same redaction to every error in the chain (#239)
+  // Errors keep their URL minus the password and fragment (#238); redactUrl applies to every error in the cause chain (#239)
+  const maskUrl = (v) => { try { const u = new URL(v); if (u.password) u.password = '***'; u.hash = ''; return u.href; } catch { return '[invalid URL]'; } };
   function scrubUrls(error, redact) {
-    const seen = new Set();
-    for (let e = error, depth = 0; e && typeof e === 'object' && !seen.has(e) && depth < 16; e = e.cause, depth++) {
-      seen.add(e);
-      try {
-        const shown = e.url;
-        if (typeof shown !== 'string') continue;
-        let next;
-        if (redact) { try { next = String(redact(shown)); } catch { next = safeUrl(shown); } } else next = maskUrl(shown);
-        if (next !== shown) Object.defineProperty(e, 'url', { value: next, writable: true, configurable: true, enumerable: Object.getOwnPropertyDescriptor(e, 'url')?.enumerable ?? true });
-      } catch {}
+    for (let e = error, i = 0; e && typeof e === 'object' && i < 16; e = e.cause, i++) {
+      try { if (typeof e.url === 'string') e.url = redact ? String(redact(e.url)) : maskUrl(e.url); } catch { try { e.url = safeUrl(e.url); } catch {} }
     }
   }
   function context(error, method, url, attempts, redact) {
