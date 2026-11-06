@@ -39,3 +39,11 @@ it('the claims that were reworded because nothing tests them say so', () => {
   assert.match(security, /by design, not yet tested across threads/);
   assert.match(security, /#238 and #239/);
 });
+
+it('every claim is placed in the threat model, and every ID the threat model uses is a claim', () => {
+  const model = readFileSync(`${root}docs/threat-model.md`, 'utf8');
+  const claimIds = rows.map(([id]) => id);
+  const used = new Set(model.match(/\bC\d{2}\b/g) ?? []);
+  assert.deepEqual(claimIds.filter((id) => !used.has(id)), [], 'claims the threat model never mentions');
+  assert.deepEqual([...used].filter((id) => !claimIds.includes(id)), [], 'IDs in the threat model that are not claims');
+});
