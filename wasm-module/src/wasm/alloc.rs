@@ -69,7 +69,9 @@ struct Allocator(UnsafeCell<Dlmalloc<GrowInSteps>>);
 // The module is single-threaded (no shared memory), so there's no contention.
 // `Sync` is only sound while that holds, so a build with threads must not compile.
 #[cfg(target_feature = "atomics")]
-compile_error!("the Wasm allocator is single-threaded: remove `+atomics` or give it a lock (docs/unsafe.md)");
+compile_error!(
+    "the Wasm allocator is single-threaded: remove `+atomics` or give it a lock (docs/unsafe.md)"
+);
 
 unsafe impl Sync for Allocator {}
 
