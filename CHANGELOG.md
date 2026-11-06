@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - Redirect and credential handling is now checked against the WHATWG definition of origin (#226): 90 spellings of same-origin and cross-origin `Location` values across 301, 302, 303, 307 and 308, the method and body rules for every status, refused schemes and redirect loops. No defect found.
+- TLS verification matrix (#229): real certificates generated with openssl, 22 cases on node:http and the native addon (expired, not yet valid, wrong name, IP address match and mismatch, self-signed, unknown root, missing intermediate, client-auth-only, issued by a non-CA, SHA-1, TLS 1.0 to 1.3), plus ALPN, SNI for IP addresses, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED=0` and an HTTP `CONNECT` proxy. The native addon refuses every bad case. node:http accepts a certificate with the name only in the subject and a 1024 bit RSA key (#244).
 
 ## [2.7.2] - 2026-11-06
 

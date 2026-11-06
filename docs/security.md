@@ -276,3 +276,28 @@ Checked by `wasm-module/js/test/redirect-credentials.test.mjs` (Node transport, 
 - A `Location` with user info becomes a Basic `Authorization` for that user only after the client's own `Authorization` has been dropped (cross-origin). It is never the client's secret.
 
 Not covered: https to http downgrade (needs the generated certificates from #229), the native addon, and browser transports (the browser decides redirect handling itself).
+
+## TLS verification
+
+`tls-verification.test.mjs` generates certificates with openssl, serves them over HTTPS and requests them with both Node transports (node:http, and the native addon where it is built). Trust is process-wide: the defaults are the Mozilla root certificates, `NODE_EXTRA_CA_CERTS` adds roots, and `NODE_TLS_REJECT_UNAUTHORIZED=0` turns verification off with Node's warning. `WasmClient` has no `ca` option.
+
+| Case | node:http | native |
+| --- | --- | --- |
+| Valid chain, valid name or IP address, with the intermediate | accepted | accepted |
+| Intermediate missing from the chain the server sends | refused | refused |
+| Expired, or not yet valid | refused | refused |
+| Name for another host, IP address for another address, host name certificate used for an IP address | refused | refused |
+| Self-signed, or a valid chain from a root that is not trusted | refused | refused |
+| Certificate for client authentication only, or issued by a non-CA certificate | refused | refused |
+| SHA-1 signature | refused | refused |
+| TLS 1.0 and 1.1 servers | refused | refused |
+| TLS 1.2 and 1.3 servers | accepted | accepted |
+| Name only in the subject, no `subjectAltName` | **accepted** | refused |
+| 1024 bit RSA key | **accepted** on Node 20 and 22; refused on Node 24 | refused |
+
+The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name (every version tested), and Node's default TLS security level before Node 24 allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
+
+Also checked, on both transports: the client does not negotiate HTTP/2 when the server offers it; it sends the host name as SNI and sends no SNI for an IP address; a private root is trusted only when `NODE_EXTRA_CA_CERTS` names it; and certificates are verified through an HTTP `CONNECT` proxy (an expired, self-signed or wrong-name certificate is refused through the tunnel).
+
+Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the proxy itself), and per-client isolation of the TLS policy (there is none to isolate: trust is per process).
+
