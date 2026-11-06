@@ -51,6 +51,10 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=
 
 `node scripts/check-package.mjs --strict` runs the release's own check, against npm's `latest`.
 
+## Static analysis
+
+CodeQL (`security-extended` queries) analyzes the JavaScript/TypeScript, Rust and GitHub Actions sources on pushes to `main`, on pull requests and weekly; results appear in the repository's Security tab. The `Workflow security lint` job runs [zizmor](https://docs.zizmor.sh/) on every change under `.github/` to catch template injection, excessive permissions, unpinned actions and persisted credentials. Fix a finding, or dismiss it with a written reason, before merging.
+
 ## Panics
 
 A panic aborts the Wasm module, so input from the network or the caller must become an error. `src/lib.rs` denies `clippy::unwrap_used` and `clippy::expect_used` outside tests, and CI runs `cargo clippy --lib` for the native and `wasm32` targets. An invariant that cannot fail may keep an `expect` with `#[allow(clippy::expect_used, reason = "...")]` that says why. The byte-slicing in the SSE and line parsers is bounded by positions found in the same buffer and is covered by the fuzz targets; the budget ring index is reduced modulo its length.
