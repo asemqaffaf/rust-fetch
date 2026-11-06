@@ -947,11 +947,11 @@ export interface InitOutput {
     readonly websocketconnection_sendJson: (a: number, b: any) => [number, number];
     readonly websocketconnection_state: (a: number) => any;
     readonly websocketconnection_url: (a: number) => [number, number];
-    readonly wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___js_sys_becbaa0f305191ad___Function_fn_wasm_bindgen_e6efeab14c3ffd08___JsValue_____wasm_bindgen_e6efeab14c3ffd08___sys__Undefined___js_sys_becbaa0f305191ad___Function_fn_wasm_bindgen_e6efeab14c3ffd08___JsValue_____wasm_bindgen_e6efeab14c3ffd08___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___wasm_bindgen_e6efeab14c3ffd08___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_e6efeab14c3ffd08___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___wasm_bindgen_e6efeab14c3ffd08___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke___web_sys_4e3cca8ece9fff4b___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_e6efeab14c3ffd08___convert__closures_____invoke_______true_: (a: number, b: number) => void;
+    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___js_sys_f4e9d3fa7962a758___Function_fn_wasm_bindgen_ed44100cd7efa7ca___JsValue_____wasm_bindgen_ed44100cd7efa7ca___sys__Undefined___js_sys_f4e9d3fa7962a758___Function_fn_wasm_bindgen_ed44100cd7efa7ca___JsValue_____wasm_bindgen_ed44100cd7efa7ca___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___wasm_bindgen_ed44100cd7efa7ca___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_ed44100cd7efa7ca___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___wasm_bindgen_ed44100cd7efa7ca___JsValue______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___web_sys_50b1796554f11e47___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
