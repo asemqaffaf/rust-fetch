@@ -1345,21 +1345,40 @@ impl ClientBuilder {
                 reason: "must be at least 1".to_string(),
             });
         }
-        if let Some(base) = &self.base_url {
-            let parsed = crate::url::Url::parse(base).map_err(|e| Error::InvalidInput {
-                parameter: "baseUrl".to_string(),
-                reason: format!("'{base}' is not a valid absolute URL: {e}"),
-            })?;
-            if !matches!(parsed.scheme(), "http" | "https") {
-                return Err(Error::InvalidInput {
+        // Keep the parsed form: request paths are appended to this string, so
+        // it must be the URL that was checked (without the stray spaces,
+        // tabs, newlines or upper-case host the parser removes), not the
+        // text that was passed in.
+        let base_url = match &self.base_url {
+            Some(base) => {
+                let parsed = crate::url::Url::parse(base).map_err(|e| Error::InvalidInput {
                     parameter: "baseUrl".to_string(),
-                    reason: format!(
-                        "unsupported scheme '{}'; only http and https are supported",
-                        parsed.scheme()
-                    ),
-                });
+                    reason: format!("'{base}' is not a valid absolute URL: {e}"),
+                })?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    return Err(Error::InvalidInput {
+                        parameter: "baseUrl".to_string(),
+                        reason: format!(
+                            "unsupported scheme '{}'; only http and https are supported",
+                            parsed.scheme()
+                        ),
+                    });
+                }
+                // In a serialized URL a '?' or '#' can only start the query or
+                // fragment. A path appended after one would become part of it
+                // and the request would go to the base path itself.
+                if parsed.as_str().contains(['?', '#']) {
+                    return Err(Error::InvalidInput {
+                        parameter: "baseUrl".to_string(),
+                        reason: format!(
+                            "'{base}' has a query or fragment; request paths cannot be appended after one. Pass query parameters with each request"
+                        ),
+                    });
+                }
+                Some(parsed.as_str().to_string())
             }
-        }
+            None => None,
+        };
 
         let (follow, max) = self.redirect.config(self.max_redirects);
         let inner = http_client((follow, max, RedirectGuards::default(), self.phases.connect))?;
@@ -1372,7 +1391,7 @@ impl ClientBuilder {
                 timeout: self.timeout,
                 phases: self.phases,
                 retry_config: self.retry_config,
-                base_url: self.base_url,
+                base_url,
                 redirect: self.redirect,
                 max_redirects: self.max_redirects,
                 allow_absolute_urls: self.allow_absolute_urls,
@@ -2198,6 +2217,59 @@ mod tests {
             let error = Client::builder().base_url(base).build().err().expect(base);
             assert_eq!(invalid_parameter(&error), Some("baseUrl"));
         }
+    }
+
+    /// A path appended to a base with a query or fragment would end up inside
+    /// it ("https://a.test/v1?x=1/users"), so the request would go to the base
+    /// path itself. Found by the URL differential check (#217).
+    #[test]
+    fn test_builder_rejects_base_url_with_query_or_fragment() {
+        for base in [
+            "https://api.example.com/v1?x=1",
+            "https://api.example.com/v1#frag",
+            "https://api.example.com?x=1",
+            "https://api.example.com#frag",
+            "https://api.example.com/v1?",
+            "https://api.example.com/v1#",
+            " https://api.example.com/v1?x=1 ",
+        ] {
+            let error = Client::builder().base_url(base).build().err().expect(base);
+            assert_eq!(invalid_parameter(&error), Some("baseUrl"), "{base}");
+        }
+    }
+
+    /// The base is kept as the URL that was checked, so padding, an upper-case
+    /// host or a default port cannot leak into the request path.
+    #[test]
+    fn test_builder_keeps_the_parsed_base_url() {
+        for (given, kept) in [
+            (" https://api.example.com/v1 ", "https://api.example.com/v1"),
+            (
+                "\thttps://api.example.com/v1\n",
+                "https://api.example.com/v1",
+            ),
+            (
+                "HTTPS://API.EXAMPLE.COM:443/v1/",
+                "https://api.example.com/v1/",
+            ),
+            ("https://api.example.com", "https://api.example.com/"),
+            ("https://api.example.com\\v1", "https://api.example.com/v1"),
+        ] {
+            let client = Client::builder().base_url(given).build().expect(given);
+            assert_eq!(client.config.base_url.as_deref(), Some(kept), "{given:?}");
+            let url = resolve_url(client.config.base_url.as_deref(), None, "users", &[]).unwrap();
+            assert_eq!(
+                url.path(),
+                format!("{}/users", kept_path(kept)),
+                "{given:?}"
+            );
+        }
+    }
+
+    fn kept_path(kept: &str) -> String {
+        let path = kept.split_once("://").map_or("", |(_, rest)| rest);
+        let path = path.find('/').map_or("", |at| &path[at..]);
+        path.trim_end_matches('/').to_string()
     }
 
     #[test]
