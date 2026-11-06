@@ -122,10 +122,9 @@ describe('secrets do not leak', () => {
         assert.deepEqual(leaked, []);
       });
 
-      // Documented: the error keeps the URL as passed. A password in it still ends up wherever the
-      // application logs errors, so this is what should hold; it does not yet (#238).
-      it('keeps the URL password out of the error', { todo: '#238: the URL password appears in errors' }, () => {
-        assert.deepEqual(found(describeError(result.error)).filter((part) => part === 'urlPassword'), []);
+      // Without redactUrl the error keeps the URL as passed, minus the password and the fragment (#238)
+      it('keeps the URL password and fragment out of the error', () => {
+        assert.deepEqual(found(describeError(result.error)).filter((part) => part === 'urlPassword' || part === 'urlFragment'), []);
       });
 
       it('keeps all URL parts out of the error itself when redactUrl is set', async () => {
@@ -134,7 +133,7 @@ describe('secrets do not leak', () => {
         assert.deepEqual(found(describeError(redacted.error, { cause: false })).filter((part) => URL_PARTS.includes(part)), []);
       });
 
-      it('keeps all URL parts out of the error cause when redactUrl is set', { todo: '#239: redactUrl is not applied to error.cause.url' }, async () => {
+      it('keeps all URL parts out of the error cause when redactUrl is set', async () => {
         const redacted = await run(scenario, { redactUrl: redactAll });
         assert.ok(redacted.error);
         assert.deepEqual(found(describeError(redacted.error)).filter((part) => URL_PARTS.includes(part)), []);

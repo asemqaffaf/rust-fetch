@@ -10,7 +10,7 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
   'rust_fetch_bg.wasm': { raw: 445_000, gzip: 181_000, brotli: 148_000 }, // includes opt-in observability and WebSocket idle timers; lowered after #179 and #180
-  'rust_fetch.js': { raw: 100_000, gzip: 19_700, brotli: 17_000 }, // includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload, diagnostics and stream records (#191)
+  'rust_fetch.js': { raw: 100_600, gzip: 19_900, brotli: 17_200 }, // includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload, diagnostics and stream records (#191) // raised by 0.6 kB for redacting the error cause chain (#239)
   'node.js': { raw: 59_800, gzip: 19_200, brotli: 16_800 }, // Node transports, prototype-pollution hardening (#191), and the compact native entry with a full-policy fallback (#181); not loaded by browsers.
 };
 

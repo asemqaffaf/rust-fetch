@@ -37,7 +37,7 @@ it('every test or check a claim names still exists', () => {
 it('the claims that were reworded because nothing tests them say so', () => {
   const security = readFileSync(`${root}SECURITY.md`, 'utf8');
   assert.match(security, /by design, not yet tested across threads/);
-  assert.match(security, /#238 and #239/);
+  assert.match(security, /without its password and fragment/);
 });
 
 it('every claim is placed in the threat model, and every ID the threat model uses is a claim', () => {
