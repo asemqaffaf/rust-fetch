@@ -134,6 +134,17 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 - **Not covered:** in browsers this option does nothing; they enforce their own private-network rules.
 - **Combine it with limits:** use `maxResponseBytes`, `timeoutMs` and `allowAbsoluteUrls` (above) when fetching anything untrusted.
 
+## Hostile responses
+
+`response-framing.test.mjs` runs a raw TCP server against the client and checks what a malicious or broken server can do with HTTP framing. On the node:http transport the message is parsed by Node's HTTP parser, so this also fails if a Node release becomes more lenient.
+
+- **Rejected with a `NetworkError`:** conflicting `Content-Length` values, `Content-Length` together with `Transfer-Encoding`, chunk sizes that are not hexadecimal, beyond 64 bits or negative, chunk data without its CRLF, a 100 kB chunk extension, trailer, header or status line, 5,000 headers, text that is not HTTP, an unknown HTTP version, a four digit status, bytes after the declared length, and a body shorter than its `Content-Length`. Obsolete line folding, bare LF line endings, a bare CR or NUL in a header value, and spaces around header names are rejected, or if a parser accepts them, read without inventing a header.
+- **Header limit:** a header block of 15 kB is accepted and 100 kB is refused (Node's 16 kB default; set the same on every transport).
+- **No response smuggling:** a second response written to a kept-alive connection after the first is never given to the next request; the next request gets its own response.
+- **Bounded waiting:** headers that arrive one line at a time end at `timeoutMs`; an endless run of `103` responses ends at `responseTimeoutMs` with no meaningful memory growth; a body that trickles forever ends at `deadlineMs`; a `Content-Length` above `maxResponseBytes` is refused before the body is read.
+
+Not covered: the native addon's parser (it is not built in CI for these tests) and the browser transports, which leave framing to the browser.
+
 ## Hardened configurations
 
 The protections above are off by default, so upgrading doesn't change behaviour. These three configurations turn them on for common cases. Each is checked by a test that reads it from this page ([`hardened.test.mjs`](https://github.com/asemqaffaf/rust-fetch/blob/main/wasm-module/js/test/hardened.test.mjs)) and exercises every protection its comments claim, so the documentation can't drift from what the client does.
