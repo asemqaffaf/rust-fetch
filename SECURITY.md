@@ -94,6 +94,7 @@ When fetching user-supplied URLs on Node.js (webhooks, proxies, link previews), 
 ## Distribution and release security
 
 - **Dist-tags and release discipline:** The `latest` dist-tag on npm is strictly reserved for the current minor release line (`2.7.x`). Backported security patches for older release lines (`2.1.x`–`2.6.x`) are published to dedicated dist-tags (`release-2.1` through `release-2.6`) so that consumer dependencies using caret ranges (`^2.x`) will not unexpectedly downgrade.
+- **Verify what you install:** in a project that has installed `rust-fetch`, run `npm audit signatures`. It checks the registry signature and the provenance attestation of every installed package that has one, and exits non-zero if either is invalid. `npm view rust-fetch@<version> dist.attestations` shows the attestation, whose source is this repository's `release.yml` workflow run for the tag `v<version>`. Provenance proves where a package was built, not that the source is free of defects, and the Wasm module is not yet verified to rebuild byte for byte from source (#232).
 - **Provenance and integrity:** Every release is built on GitHub Actions with pinned toolchains, signed with npm provenance attestations, and verified after publication. Tarballs are tested in clean environments against size, API, and benchmark regression gates before publishing.
 
 ## Package contents and expected capabilities
