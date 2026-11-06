@@ -307,6 +307,10 @@ Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the pro
 
 The only hand-written `unsafe` is the Wasm allocator. Each use and the invariant it relies on is in [`unsafe.md`](./unsafe.md), and CI fails on any other.
 
+## Content Security Policy
+
+The browser build (`rust_fetch.js` and `rust_fetch_bg.wasm`) needs `script-src 'wasm-unsafe-eval'` to compile the WebAssembly module, and nothing else beyond loading its own two files from your origin. It does not use `eval`, `new Function`, string timers or dynamic imports of computed names, and it writes no HTML, so it needs neither `'unsafe-eval'` nor `'unsafe-inline'` and creates no Trusted Types policy. `csp-static.test.mjs` scans the shipped glue for those constructs and fails on any of them (C30). It is a scan, not a browser test: nobody has yet loaded the build in a browser under a strict policy and watched it work (#233).
+
 ## Claims and the tests behind them
 
 Every protection this page and `SECURITY.md` state, with the test that checks it. `wasm-module/js/test/claims.test.mjs` fails when a test named here no longer exists, so a claim cannot outlive its evidence. Status: **tested** means a test fails if the claim stops being true; **partial** says what is not covered; **process** is checked by a release step, not by a test; **stated** has no test, and the claim is worded as a design or a source review.
@@ -344,6 +348,7 @@ Tests run on node:http and on the native addon unless noted. Browser transports 
 | C27 | Of fetch, axios and rust-fetch, only rust-fetch has a built-in SSRF check | `wasm-module/js/test/security.test.mjs::with allowPrivateNetwork: false, blocks` | partial: rust-fetch's half is tested; the other two are measured by `npm run security:compare` with Node.js 22.13 and axios 1.20 (see the table above), not by CI |
 | C28 | A redirect to `file:`, `ftp:`, `javascript:` or another non-HTTP scheme is refused | `wasm-module/js/test/security.test.mjs::refuses a redirect to` | tested |
 | C29 | Workflows are linted, dependencies are audited weekly, and the code is scanned | `.github/workflows/workflow-lint.yml::zizmor`, `.github/workflows/audit.yml::cargo-deny-action`, `.github/workflows/codeql.yml::CodeQL` | process |
+| C30 | The browser build uses no `eval`, `new Function`, string timers, HTML or script injection, so it runs under a Content Security Policy without `'unsafe-eval'` | `wasm-module/js/test/csp-static.test.mjs::asks for nothing a strict Content Security Policy blocks` | partial: a scan of the shipped glue; no test in a browser under a policy |
 
 Words such as "never", "only" and "always" elsewhere on this page describe the rows above. Where no row backs one, the sentence is a claim without a test and should be reworded or given a row.
 
