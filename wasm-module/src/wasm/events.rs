@@ -226,6 +226,10 @@ impl EventStream {
     }
 
     /// The next buffered event (async iterator protocol)
+    #[allow(
+        clippy::expect_used,
+        reason = "the Promise executor runs synchronously"
+    )]
     pub fn next(&self) -> NextEventPromise {
         let mut pending = None;
         let promise = js_sys::Promise::new(&mut |resolve, reject| {

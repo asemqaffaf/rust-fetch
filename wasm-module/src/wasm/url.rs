@@ -36,6 +36,10 @@ impl Url {
         parsed(web_sys::Url::new_with_base(input, &self.href))
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "serialization of a parsed URL parses again"
+    )]
     fn js(&self) -> web_sys::Url {
         web_sys::Url::new(&self.href).expect("a parsed URL parses again")
     }

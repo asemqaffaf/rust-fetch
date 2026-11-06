@@ -51,6 +51,10 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=
 
 `node scripts/check-package.mjs --strict` runs the release's own check, against npm's `latest`.
 
+## Panics
+
+A panic aborts the Wasm module, so input from the network or the caller must become an error. `src/lib.rs` denies `clippy::unwrap_used` and `clippy::expect_used` outside tests, and CI runs `cargo clippy --lib` for the native and `wasm32` targets. An invariant that cannot fail may keep an `expect` with `#[allow(clippy::expect_used, reason = "...")]` that says why. The byte-slicing in the SSE and line parsers is bounded by positions found in the same buffer and is covered by the fuzz targets; the budget ring index is reduced modulo its length.
+
 ## Parser and boundary fuzzing
 
 The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line parsers, Retry-After, URL/base/redirect resolution, header validation and multipart encoding. Chunked parser results must match whole-input results under 4 KiB line and 16 KiB event limits. The `fuzzing` feature exposes harness entry points and is disabled in published Wasm builds.

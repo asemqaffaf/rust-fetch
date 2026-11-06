@@ -239,6 +239,10 @@ pub enum Body {
 
 impl Body {
     /// Convert to bytes
+    #[allow(
+        clippy::expect_used,
+        reason = "a JSON Value and string form pairs always serialize"
+    )]
     pub fn to_bytes(&self) -> Result<Vec<u8>, crate::error::Error> {
         match self {
             Body::Text(s) => Ok(s.as_bytes().to_vec()),

@@ -103,7 +103,9 @@ impl Limiter {
 
 /// The URL has already been normalized/validated by the request builder.
 pub(crate) fn origin(url: &str) -> String {
-    let (scheme, rest) = url.split_once("://").expect("validated HTTP URL");
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     format!(
         "{scheme}://{}",
@@ -211,7 +213,12 @@ impl Ticket {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *state.queue.get_mut(&self.id).expect("queued ticket exists") = Some(cx.waker().clone());
+        #[allow(
+            clippy::expect_used,
+            reason = "a ticket stays queued until it is dropped"
+        )]
+        let slot = state.queue.get_mut(&self.id).expect("queued ticket exists");
+        *slot = Some(cx.waker().clone());
         if state.queue.first_key_value().map(|(id, _)| *id) != Some(self.id)
             || self
                 .gate
@@ -312,6 +319,16 @@ mod tests {
     use super::*;
     use futures_util::{task::noop_waker, StreamExt};
     use std::future::Future;
+
+    #[test]
+    fn origin_drops_userinfo_path_and_never_panics() {
+        assert_eq!(
+            origin("https://user:pw@api.test:8443/a?b#c"),
+            "https://api.test:8443"
+        );
+        // Callers pass validated URLs; anything else is used as is, not a panic (#216)
+        assert_eq!(origin("not a url"), "not a url");
+    }
 
     #[tokio::test]
     async fn fifo_cancellation_tokens_pauses_and_stream_lifetimes() {

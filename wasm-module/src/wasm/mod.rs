@@ -1379,7 +1379,12 @@ fn rare_client_options(
             .transpose()?
             .unwrap_or(Duration::from_secs(30));
         builder = builder.circuit_breaker(crate::CircuitBreaker::new(
-            u32::try_from(threshold).unwrap(),
+            u32::try_from(threshold).map_err(|_| {
+                invalid(
+                    "circuitBreaker.failureThreshold",
+                    "must be a positive integer",
+                )
+            })?,
             reset,
         ));
     }
@@ -1403,7 +1408,8 @@ fn rare_client_options(
             prop(&limit, "requests").ok_or_else(|| invalid("rateLimit.requests", "is required"))?;
         let per = prop(&limit, "perMs").ok_or_else(|| invalid("rateLimit.perMs", "is required"))?;
         builder = builder.rate_limit(crate::RateLimit::new(
-            u32::try_from(positive_u32(&requests, "rateLimit.requests")?).unwrap(),
+            u32::try_from(positive_u32(&requests, "rateLimit.requests")?)
+                .map_err(|_| invalid("rateLimit.requests", "must be a positive integer"))?,
             parse_delay(&per, "rateLimit.perMs")?,
         ));
     }
