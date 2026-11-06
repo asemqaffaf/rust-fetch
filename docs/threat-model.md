@@ -77,4 +77,4 @@ These are not defended against, so add your own controls:
 
 ## Known gaps
 
-Open items that weaken a row above: #244 (node:http certificate leniency), #223 (no external review), #232 (reproducible builds). The security guide and this page should change in the same pull request as any of them.
+Open items that weaken a row above: #223 (no external review), #232 (reproducible builds). The security guide and this page should change in the same pull request as any of them.

@@ -453,22 +453,25 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
   describe('HTTPS', () => {
     let secure;
     let misnamed; // serves a certificate for example.com
+    let nameOnly; // serves a certificate for localhost with a common name and no subjectAltName
     let dir;
     before(async () => {
       // A self-signed certificate for 127.0.0.1, trusted by nothing by default
       dir = mkdtempSync(join(tmpdir(), 'rust-fetch-tls-'));
       const certificate = (name, subjectAltName) =>
         execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
-          '-subj', `/CN=${name}`, '-addext', `subjectAltName=${subjectAltName}`, '-keyout', join(dir, name), '-out', join(dir, `${name}.crt`)], { stdio: 'ignore' });
+          '-subj', `/CN=${name}`, ...(subjectAltName ? ['-addext', `subjectAltName=${subjectAltName}`] : []), '-keyout', join(dir, name), '-out', join(dir, `${name}.crt`)], { stdio: 'ignore' });
       certificate('127.0.0.1', 'IP:127.0.0.1');
       certificate('example.com', 'DNS:example.com');
+      certificate('localhost');
       const serve = (name) => https.createServer({ key: readFileSync(join(dir, name)), cert: readFileSync(join(dir, `${name}.crt`)) }, (req, res) => json(res, { headers: req.headers }));
       secure = serve('127.0.0.1');
       misnamed = serve('example.com');
-      await Promise.all([secure, misnamed].map((s) => new Promise((resolve) => s.listen(0, '127.0.0.1', resolve))));
+      nameOnly = serve('localhost');
+      await Promise.all([secure, misnamed, nameOnly].map((s) => new Promise((resolve) => s.listen(0, '127.0.0.1', resolve))));
     });
     after(() => {
-      for (const s of [secure, misnamed]) {
+      for (const s of [secure, misnamed, nameOnly]) {
         s.closeAllConnections();
         s.close();
       }
@@ -572,6 +575,11 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
     it('still checks the name of a trusted certificate', async () => {
       const result = await getInProcess({ NODE_EXTRA_CA_CERTS: join(dir, 'example.com.crt') }, url(misnamed));
       assert.deepEqual(result, { error: 'NetworkError' });
+    });
+
+    it('does not fall back to the common name when a trusted certificate has no subjectAltName (#244)', async () => {
+      const target = `https://localhost:${nameOnly.address().port}/`;
+      assert.deepEqual(await getInProcess({ NODE_EXTRA_CA_CERTS: join(dir, 'localhost.crt') }, target), { error: 'NetworkError' });
     });
 
     it('tunnels HTTPS through a proxy with CONNECT, reusing the tunnel', async () => {
