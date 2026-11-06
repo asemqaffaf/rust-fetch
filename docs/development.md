@@ -55,6 +55,10 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=
 
 CodeQL (`security-extended` queries) analyzes the JavaScript/TypeScript, Rust and GitHub Actions sources on pushes to `main`, on pull requests and weekly; results appear in the repository's Security tab. The `Workflow security lint` job runs [zizmor](https://docs.zizmor.sh/) on every change under `.github/` to catch template injection, excessive permissions, unpinned actions and persisted credentials. Fix a finding, or dismiss it with a written reason, before merging.
 
+## Panics
+
+A panic aborts the Wasm module, so input from the network or the caller must become an error. `src/lib.rs` denies `clippy::unwrap_used` and `clippy::expect_used` outside tests, and CI runs `cargo clippy --lib` for the native and `wasm32` targets. An invariant that cannot fail may keep an `expect` with `#[allow(clippy::expect_used, reason = "...")]` that says why. The byte-slicing in the SSE and line parsers is bounded by positions found in the same buffer and is covered by the fuzz targets; the budget ring index is reduced modulo its length.
+
 ## Parser and boundary fuzzing
 
 The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line parsers, Retry-After, URL/base/redirect resolution, header validation and multipart encoding. Chunked parser results must match whole-input results under 4 KiB line and 16 KiB event limits. The `fuzzing` feature exposes harness entry points and is disabled in published Wasm builds.
@@ -62,5 +66,9 @@ The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line pars
 Run `cargo +nightly-2026-10-28 fuzz run sse -- -max_total_time=180` from `wasm-module` (replace `sse` with `lines`, `retry_after`, `urls`, `headers` or `multipart`). cargo-fuzz 0.13.2 and lockfiles are pinned in CI. `FUZZ_SEED` and `FUZZ_CASES` control `npm run fuzz:js`; fetch is stubbed so generated values cannot contact the network. Failures print a reproducible seed/case.
 
 The scheduled fuzz workflow runs each target for three minutes, with short pull-request smoke runs. Crashes are uploaded as artifacts and scheduled failures open a deduplicated issue. Minimize a reproducer, fix it and add a unit/JS regression before closing. Keep intentional seeds under `corpus/<target>/seed` or `regression-*`; generated mutation corpora and artifacts are ignored.
+
+## Scheduled dependency audit
+
+CI audits dependencies on pushes and pull requests. The `Scheduled dependency audit` workflow repeats the advisory checks every Monday (`cargo deny check advisories` for `wasm-module` and `native`, and `npm audit` for the root, `docs` and `examples` lockfiles), so an advisory published against a dependency we already ship is noticed without waiting for the next change. A scheduled failure opens one deduplicated `security` issue. Update the dependency, or record why the advisory does not apply in `wasm-module/deny.toml`, before closing it. Run it on demand from the Actions tab.
 
 The reliability comparison uses loopback fault fixtures, pinned development-only client dependencies, three rounds, full body consumption and a separate abort watchdog. Run npm run reliability:compare to regenerate its raw JSON and report. Transport conformance includes the same fault classes in native, node:http, fetch and real Chromium/Firefox/WebKit.

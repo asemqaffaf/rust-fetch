@@ -267,6 +267,7 @@ impl<T, S: futures_util::Stream<Item = Result<T>>> futures_util::Stream for Abor
 /// Complete a JS promise while holding its Rust future once. The async
 /// adapter in future_to_promise retained both its argument and await state,
 /// doubling pending request memory when new optional policies enlarged it.
+#[allow(clippy::expect_used, reason = "the Promise executor runs exactly once")]
 pub(crate) fn promise<F>(future: F) -> js_sys::Promise
 where
     F: Future<Output = std::result::Result<JsValue, JsValue>> + 'static,

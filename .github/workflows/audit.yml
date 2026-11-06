@@ -1,0 +1,65 @@
+name: Scheduled dependency audit
+# New advisories appear against dependencies we already ship, with no change on
+# our side. CI only audits on pushes and pull requests, so this catches them
+# between changes.
+on:
+  schedule:
+    - cron: '43 5 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/audit.yml'
+permissions:
+  contents: read
+jobs:
+  rust:
+    name: Rust advisories (${{ matrix.manifest }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest: [wasm-module, native]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: ${{ matrix.manifest }}/Cargo.toml
+          command: check advisories
+          arguments: --all-features --config wasm-module/deny.toml
+  npm:
+    name: JavaScript advisories (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [".", "docs", "examples"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      # Audit the committed graph without installing packages or running scripts.
+      - name: Check all locked dependencies for known vulnerabilities
+        working-directory: ${{ matrix.directory }}
+        run: npm audit --package-lock-only --audit-level=low
+  report:
+    needs: [rust, npm]
+    if: always() && github.event_name == 'schedule' && (needs.rust.result == 'failure' || needs.npm.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report scheduled failures without executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="Scheduled dependency audit failure"
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
+          if [ "$existing" = 0 ]; then
+            report="$RUNNER_TEMP/audit-report.md"
+            printf 'The weekly dependency advisory audit failed.\n\nRun and logs: %s/%s/actions/runs/%s\n\nUpdate or replace the affected dependency (or document why an advisory does not apply in `wasm-module/deny.toml`) before closing.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$report"
+            gh issue create --title "$title" --label security --body-file "$report"
+          fi

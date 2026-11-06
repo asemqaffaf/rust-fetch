@@ -29,7 +29,7 @@ jobs:
         with:
           toolchain: 1.99.1 # pinned: bump deliberately (sizes and rustfmt output change with it)
           targets: wasm32-unknown-unknown
-          components: llvm-tools-preview, rustfmt
+          components: llvm-tools-preview, rustfmt, clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: wasm-module
@@ -40,6 +40,11 @@ jobs:
         run: cargo fmt --check
       - name: Build (wasm32)
         run: cargo build --target wasm32-unknown-unknown
+      # A panic aborts the Wasm module: no unwrap/expect in library code (deny set in src/lib.rs)
+      - name: Panic lints (native and wasm32)
+        run: |
+          cargo clippy --lib -- -A clippy::all -A clippy::pedantic
+          cargo clippy --lib --target wasm32-unknown-unknown -- -A clippy::all -A clippy::pedantic
       - name: Unit + integration tests with coverage
         # JS-only code (src/wasm, src/http.rs) needs a JS engine and is
         # covered by the wasm and JS jobs below. Coverage is measured
