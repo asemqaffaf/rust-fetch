@@ -44,6 +44,8 @@ Retry entries include `reason` (the error kind), HTTP `status` where available, 
 
 Error objects delivered to application code retain their normal messages/bodies and full URLs by default, including query strings. Use redactUrl to redact error URLs before an application logs them. The callback also receives the already-sanitized URL used by diagnostics. It should be synchronous and idempotent; for example, parse the URL, clear search, username and password, and return href. A failing diagnostic redactor yields a safe URL rather than exposing its input.
 
+`wasm-module/js/test/secret-canary.test.mjs` checks this: it sends unique canary strings in the URL, headers, a proxy password and the body through failing, timed-out, redirected, retried and cancelled requests, and searches debug entries, hooks, `stats()`, console output and error objects for them. Two known gaps, tracked as expected failures in that test: error objects carry the URL password and fragment (#238), and `redactUrl` is not applied to `error.cause.url` (#239).
+
 These protections cover the library's own observers, not an application's interceptor, custom logger or arbitrary serialization of error bodies/causes. Avoid logging entire error objects from an untrusted upstream.
 
 ## W3C trace context
