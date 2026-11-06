@@ -68,15 +68,20 @@ pub fn fuzz_urls(bytes: &[u8]) {
         .split_once('\n')
         .unwrap_or(("https://example.test/base", value));
     let query = [("q".to_string(), value.to_string())];
-    if let Ok(url) = crate::client::resolve_url(Some(base), None, path, &query) {
-        assert!(matches!(url.scheme(), "http" | "https"));
-        assert!(crate::url::Url::parse(url.as_str()).is_ok());
+    // Exercise both configured-base and browser-page resolution. Only HTTP(S)
+    // bases are supported by the client; directly joining arbitrary file: bases
+    // instead reaches an upstream url crate panic (servo/rust-url#1114, #207).
+    let page = crate::url::Url::parse(base)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"));
+    for (base, page) in [(Some(base), None), (None, page)] {
+        if let Ok(url) = crate::client::resolve_url(base, page, path, &query) {
+            assert!(matches!(url.scheme(), "http" | "https"));
+            assert!(crate::url::Url::parse(url.as_str()).is_ok());
+        }
     }
     if crate::url::Url::parse(path).is_ok() {
         assert!(crate::client::check_absolute_url(Some(base), path, false).is_err());
-    }
-    if let Ok(base) = crate::url::Url::parse(base) {
-        let _ = base.join(path);
     }
 }
 
@@ -127,6 +132,16 @@ pub fn fuzz_multipart(bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn urls_file_base_regression_207() {
+        for input in [
+            include_bytes!("../fuzz/corpus/urls/regression-207-file-base").as_slice(),
+            b"\x08file:/2/e:\n../o\0f/\0Xe/oe",
+        ] {
+            super::fuzz_urls(input);
+        }
+    }
+
     #[test]
     fn corpus() {
         for input in [
