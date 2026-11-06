@@ -349,6 +349,8 @@ for (const [address, prefix] of [
   ['::', 96], // unspecified, loopback and the deprecated IPv4-compatible addresses
   ['100::', 64], // discard
   ['100:0:0:1::', 64], // dummy prefix
+  ['2001:2::', 48], // benchmarking (RFC 5180)
+  ['2001:10::', 28], // ORCHID, deprecated (RFC 4843)
   ['2001:db8::', 32], // documentation
   ['3fff::', 20], // documentation
   ['5f00::', 16], // segment routing SIDs

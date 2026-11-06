@@ -52,6 +52,24 @@ await api.get('https://partner.example/data', { allowAbsoluteUrls: true }); // p
 
 `allowAbsoluteUrls` applies to requests, `client.events()` and `client.websocket()`, and can be set per request. In Rust, it's `ClientBuilder::allow_absolute_urls(false)`.
 
+## URL resolution is checked against the WHATWG URL parser
+
+Where a request goes, and which credentials go with it, is decided by the origin of the resolved URL. `scripts/fuzz-url-differential.mjs` resolves thousands of inputs (backslashes, `//host`, userinfo, tabs and newlines, IPv4 shorthand, IPv6 zones, percent-encoded hosts, other schemes) against 16 `baseUrl` shapes and compares what reaches the transport with Node's `URL`, which implements the WHATWG standard. It runs with the scheduled fuzzing workflow and on pull requests that touch the URL code. The rules it enforces:
+
+- Only `http:` and `https:` are ever sent.
+- With a `baseUrl` and `allowAbsoluteUrls: false`, anything WHATWG parses as an absolute URL is rejected and nothing is sent.
+- With a `baseUrl`, anything WHATWG does not parse as absolute stays on the origin of `baseUrl`, whatever it contains.
+- An absolute URL is sent to exactly the origin WHATWG computes for it.
+- A plain relative path is appended to the base path.
+- What is sent re-parses to the same string and holds no control character or space.
+
+**Decided differences from WHATWG resolution**
+
+- **A relative path is appended to `baseUrl`; it is not resolved against it.** `new URL('users', 'https://a.test/v1')` gives `/users`; the client sends `/v1/users`. This is what keeps `//host`, `/\host` and `\\host` on the base.
+- **Dot segments still apply after the join.** `../admin` against `https://a.test/v1` reaches `/admin`: it can leave the base path, never the origin. Do not build paths from untrusted input without encoding it.
+- **`baseUrl` may not have a query or fragment.** A path appended after one becomes part of it, so the request went to the base path itself (`https://a.test/v1?x=1/users`). `baseUrl` is now kept in its parsed form, so padding or an upper-case host never reaches the request path.
+- **Browsers refuse URLs that carry credentials** (`https://user:pass@host/`) in `fetch()`; the browser transport fails closed with `InvalidInputError`. The Node transports send them.
+
 ## Response size limits and decompression bombs
 
 A server, or anyone who controls a URL you fetch, can send an endless body, or a few kilobytes of gzip that decompress to gigabytes, and exhaust your process's memory. `fetch()` has no way to limit either. Set `maxResponseBytes`:
@@ -123,10 +141,11 @@ const fetcher = new WasmClient({ allowPrivateNetwork: false, maxResponseBytes: 5
 await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, a private or reserved address" for internal targets
 ```
 
+- **Tested against the IANA registries:** `ssrf-ranges.test.mjs` takes every block the IANA IPv4 and IPv6 special-purpose registries list as not globally reachable, and tries its first, middle and last address and the addresses next to it. A resolver it controls returns mixed public and private answers, and the name is asked again for every request.
 - **Every address is checked when connecting:** the host's DNS answers (all of them), or the IP address itself. So DNS rebinding can't get past it, and each redirect is checked again.
 - **Blocked ranges:**
   - IPv4: loopback, RFC 1918 private, link-local (including the 169.254.169.254 metadata endpoint), carrier-grade NAT, "this network", multicast, reserved and documentation ranges
-  - IPv6: loopback, unspecified, unique-local, link-local, site-local, multicast and documentation ranges, the deprecated IPv4-compatible `::a.b.c.d` addresses, and local-use NAT64 (`64:ff9b:1::/48`), plus the forms that carry an IPv4 address: IPv4-mapped (`::ffff:10.0.0.1`), IPv4-translated (`::ffff:0:10.0.0.1`), NAT64 (`64:ff9b::…`), 6to4 (`2002:…`) and Teredo (`2001:0:…`) addresses are blocked when the IPv4 address inside them is
+  - IPv6: loopback, unspecified, unique-local, link-local, site-local, multicast, benchmarking (`2001:2::/48`), deprecated ORCHID (`2001:10::/28`) and documentation ranges, the deprecated IPv4-compatible `::a.b.c.d` addresses, and local-use NAT64 (`64:ff9b:1::/48`), plus the forms that carry an IPv4 address: IPv4-mapped (`::ffff:10.0.0.1`), IPv4-translated (`::ffff:0:10.0.0.1`), NAT64 (`64:ff9b::…`), 6to4 (`2002:…`) and Teredo (`2001:0:…`) addresses are blocked when the IPv4 address inside them is
   - Other spellings: the URL parser turns hexadecimal, octal, decimal and short IPv4 forms (`0x7f.1`, `2130706433`, `127.1`) into the dotted address before the check, and host names are checked by what they resolve to, so `localhost.` and `foo.localhost` are covered
 - **Separate connection pool:** checked requests never reuse a connection another client made to a private address.
 - **Proxies:** a proxy resolves host names itself, so this client can't see which address it connects to. With `allowPrivateNetwork: false` and a proxy for the target, an IP-address target is checked as usual and a host name is refused, before anything is sent, with a `NetworkError` ("allowPrivateNetwork: false can't check … through a proxy"). The same goes for a redirect to a name. Use an IP address, bypass the proxy for that host (`NO_PROXY` with `proxy: 'env'`), or enforce the rule in the proxy. Before 2.7.0, names went through the proxy unchecked.
