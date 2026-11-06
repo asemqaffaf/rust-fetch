@@ -51,6 +51,10 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=
 
 `node scripts/check-package.mjs --strict` runs the release's own check, against npm's `latest`.
 
+## Static analysis
+
+CodeQL (`security-extended` queries) analyzes the JavaScript/TypeScript, Rust and GitHub Actions sources on pushes to `main`, on pull requests and weekly; results appear in the repository's Security tab. The `Workflow security lint` job runs [zizmor](https://docs.zizmor.sh/) on every change under `.github/` to catch template injection, excessive permissions, unpinned actions and persisted credentials. Fix a finding, or dismiss it with a written reason, before merging.
+
 ## Parser and boundary fuzzing
 
 The six cargo-fuzz targets in `wasm-module/fuzz` exercise the real SSE/line parsers, Retry-After, URL/base/redirect resolution, header validation and multipart encoding. Chunked parser results must match whole-input results under 4 KiB line and 16 KiB event limits. The `fuzzing` feature exposes harness entry points and is disabled in published Wasm builds.
