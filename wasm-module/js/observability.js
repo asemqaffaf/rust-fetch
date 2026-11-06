@@ -93,9 +93,17 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       return u.href;
     } catch { return String(value); }
   }
+  // Errors keep their URL minus the password and fragment (#238); redactUrl applies to every error in the cause chain (#239)
+  const maskUrl = (v) => { try { const u = new URL(v); if (u.password) u.password = '***'; u.hash = ''; return u.href; } catch { return '[invalid URL]'; } };
+  function scrubUrls(error, redact) {
+    for (let e = error, i = 0; e && typeof e === 'object' && i < 16; e = e.cause, i++) {
+      try { if (typeof e.url === 'string') e.url = redact ? String(redact(e.url)) : maskUrl(e.url); } catch { try { e.url = safeUrl(e.url); } catch {} }
+    }
+  }
   function context(error, method, url, attempts, redact) {
     if (error && typeof error === 'object') {
-      try { error.method ??= method; error.url ??= url; error.attempts ??= attempts; if (redact) { try { error.url = String(redact(error.url)); } catch { error.url = safeUrl(error.url); } } } catch {}
+      try { error.method ??= method; error.url ??= url; error.attempts ??= attempts; } catch {}
+      scrubUrls(error, redact);
     }
     return error;
   }
@@ -107,7 +115,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     const streaming = ['stream', 'ndjson'].includes(own(input, 'responseType'));
     if (!c.enabled && !streaming) {
       const promise = raw.apply(client, args);
-      return c.redactUrl ? promise.catch((e) => { throw context(e, method, inputUrl, 0, c.redactUrl); }) : promise;
+      return promise.catch((e) => { if (c.redactUrl) throw context(e, method, inputUrl, 0, c.redactUrl); scrubUrls(e); throw e; });
     }
     const options = input && typeof input === 'object' ? copy(input) : input == null ? {} : input;
     let url = resolve(state.options, inputUrl, own(options, 'params'));
