@@ -33,7 +33,7 @@ The Rust core, compiled to Wasm, holds the policy (validation, URL resolution, r
 | **Wasm core** | Node.js, browsers | Its caller, which can be T2's data; its transport, for framing | Validation and URL rules (C17, C18), retry and timeout policy (C24), response and line limits (C19, C21), load shedding (C22) |
 | **node:http** | Node.js | Node's HTTP parser (llhttp) and TLS (OpenSSL) | The SSRF check at connect time (C09, C10, C11, C12), cross-origin credential stripping (C14, C15, C16), refused redirect schemes (C28) |
 | **Native addon** | Node.js, when built | hyper for HTTP/1.1, rustls for TLS | The same redirect and limit rules, and a TLS configuration, pool and cancellation scope of its own per adapter (C26: by design, not tested across threads). It is not used when `allowPrivateNetwork: false`, a proxy, streaming bodies or progress callbacks are in play: those requests take node:http even when the addon is loaded |
-| **Browser `fetch()`** | Browsers | The browser: CORS, mixed content, TLS, redirect credential rules | Size limits and timeouts in the core. `allowPrivateNetwork` does nothing here, because a browser tab cannot see the address it connects to |
+| **Browser `fetch()`** | Browsers | The browser: CORS, mixed content, TLS, redirect credential rules | Size limits and timeouts in the core. `allowPrivateNetwork` does nothing here, because a browser tab cannot see the address it connects to. The build asks for nothing a strict Content Security Policy blocks, except `'wasm-unsafe-eval'` (C30) |
 | **Browser XMLHttpRequest** | Browsers | The same browser rules | Used for upload progress; same limits as `fetch()` |
 | **WebSocket** | Node.js (built-in WebSocket, through undici), browsers | The runtime's WebSocket | A checked connection pool with the SSRF rule on every connection and reconnection (C13), bounded send queues (C23) |
 
@@ -46,7 +46,7 @@ Each threat names a protection with its claim ID, or says why there is none.
 | TM01 | T1 | A response bigger than memory, including a decompression bomb | `maxResponseBytes` (C19) | Opt-in: the default is no limit. Only gzip has a bomb test |
 | TM02 | T1 | An endless line or event in a stream | `maxLineBytes`, `maxEventBytes` (C21) | Defaults apply to streams only |
 | TM03 | T1 | A server that never finishes: trickled headers or body, endless `1xx`, endless redirect body | Phase timeouts and `deadlineMs` (C24), redirect body limit (C20) | Opt-in timers; `timeoutMs` has a default |
-| TM04 | T1 | Malformed HTTP framing: conflicting lengths, bad chunks, smuggled second response | Rejected by llhttp on node:http, bounded by hyper on the addon. The next request never receives an earlier response | The addon accepts `Content-Length` with `Transfer-Encoding` and reuses the connection (#243) |
+| TM04 | T1 | Malformed HTTP framing: conflicting lengths, bad chunks, smuggled second response | Rejected by llhttp on node:http, bounded by hyper on the addon. The next request never receives an earlier response | The addon accepts `Content-Length` with `Transfer-Encoding`, reads it as chunked and closes the connection afterwards (#243) |
 | TM05 | T1 | A redirect to another origin to collect credentials | Cross-origin stripping (C14, C15), `allowInsecureRedirects: false` (C16), refused schemes (C28) | `allowInsecureRedirects` defaults to following https to http; browsers follow their own rules |
 | TM06 | T1 | A redirect or DNS answer that moves a request to an internal address | The SSRF check on every resolved address and every hop (C09, C10, C13) | Opt-in, Node.js only. In browsers, none |
 | TM07 | T2 | A user-supplied URL aimed at the host's network (SSRF) | `allowPrivateNetwork: false` (C09 to C13) | Opt-in. Ranges are tested by sample; a full range test is pending (#237). A proxy that resolves names is refused for names (C12) |
@@ -77,4 +77,4 @@ These are not defended against, so add your own controls:
 
 ## Known gaps
 
-Open items that weaken a row above: #243 (native `Content-Length` with `Transfer-Encoding`), #244 (node:http certificate leniency), #223 (no external review), #232 (reproducible builds). The security guide and this page should change in the same pull request as any of them.
+Open items that weaken a row above: #223 (no external review), #232 (reproducible builds). The security guide and this page should change in the same pull request as any of them.

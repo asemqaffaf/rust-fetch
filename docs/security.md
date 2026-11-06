@@ -161,7 +161,7 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 
 - **Rejected with a `NetworkError` on both transports:** conflicting `Content-Length` values, chunk sizes that are not hexadecimal, beyond 64 bits or negative, chunk data without its CRLF, a 100 kB chunk extension or trailer, a 2 MB header or status line, 5,000 headers, text that is not HTTP, an unknown HTTP version, a four digit status, and a body shorter than its `Content-Length`. Obsolete line folding, bare LF line endings, a bare CR or NUL in a header value, and spaces around header names are rejected, or if a parser accepts them, read without inventing a header.
 - **Header size:** a header block of 15 kB is accepted on both. A single header or status line of 100 kB is refused by node:http (16 kB default) and accepted by the native addon; both refuse 1 MB and above.
-- **`Content-Length` together with `Transfer-Encoding`:** node:http rejects the response. The native addon reads it as chunked and reuses the connection, which RFC 9112 section 6.3 advises against. Tracked in #243 and recorded as a `todo` test plus a pinned `KNOWN GAP` test that fails when the gap is closed.
+- **`Content-Length` together with `Transfer-Encoding`:** node:http rejects the response. The native addon reads it as chunked, as RFC 9112 section 6.3 requires, and closes the connection afterwards instead of offering it to the next request (#243).
 - **No response smuggling:** a second response written after the first, whether in the same write or later on a kept-alive connection, is never given to the next request; the next request gets its own response.
 - **Bounded waiting:** headers that arrive one line at a time end at `timeoutMs`; an endless run of `103` responses ends at `responseTimeoutMs` with no meaningful memory growth; a body that trickles forever ends at `deadlineMs`; a `Content-Length` above `maxResponseBytes` is refused before the body is read.
 
@@ -294,10 +294,10 @@ Not covered: https to http downgrade (needs the generated certificates from #229
 | SHA-1 signature | refused | refused |
 | TLS 1.0 and 1.1 servers | refused | refused |
 | TLS 1.2 and 1.3 servers | accepted | accepted |
-| Name only in the subject, no `subjectAltName` | **accepted** | refused |
-| 1024 bit RSA key | **accepted** on Node 20 and 22; refused on Node 24 | refused |
+| Name only in the subject, no `subjectAltName` | refused | refused |
+| 1024 bit RSA key | refused | refused |
 
-The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name (every version tested), and Node's default TLS security level before Node 24 allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
+Both transports apply the same policy (#244). Node's own defaults would accept a certificate whose name is only in the subject (it falls back to the common name) and, before Node 24, a 1024 bit RSA key. The node:http transport therefore requires a `subjectAltName` and connects at OpenSSL security level 2, which also refuses SHA-1 signatures and Diffie-Hellman below 2048 bits. A server with such a certificate, usually an old intranet server, must be reissued: there is no option to relax this.
 
 Also checked, on both transports: the client does not negotiate HTTP/2 when the server offers it; it sends the host name as SNI and sends no SNI for an IP address; a private root is trusted only when `NODE_EXTRA_CA_CERTS` names it; and certificates are verified through an HTTP `CONNECT` proxy (an expired, self-signed or wrong-name certificate is refused through the tunnel).
 
@@ -306,6 +306,10 @@ Checked on Node 20, 22 and 24 in CI. Not covered: an HTTPS proxy (TLS to the pro
 ## Unsafe code
 
 The only hand-written `unsafe` is the Wasm allocator. Each use and the invariant it relies on is in [`unsafe.md`](./unsafe.md), and CI fails on any other.
+
+## Content Security Policy
+
+The browser build (`rust_fetch.js` and `rust_fetch_bg.wasm`) needs `script-src 'wasm-unsafe-eval'` to compile the WebAssembly module, and nothing else beyond loading its own two files from your origin. It does not use `eval`, `new Function`, string timers or dynamic imports of computed names, and it writes no HTML, so it needs neither `'unsafe-eval'` nor `'unsafe-inline'` and creates no Trusted Types policy. `csp-static.test.mjs` scans the shipped glue for those constructs and fails on any of them (C30). It is a scan, not a browser test: nobody has yet loaded the build in a browser under a strict policy and watched it work (#233).
 
 ## Claims and the tests behind them
 
@@ -344,6 +348,7 @@ Tests run on node:http and on the native addon unless noted. Browser transports 
 | C27 | Of fetch, axios and rust-fetch, only rust-fetch has a built-in SSRF check | `wasm-module/js/test/security.test.mjs::with allowPrivateNetwork: false, blocks` | partial: rust-fetch's half is tested; the other two are measured by `npm run security:compare` with Node.js 22.13 and axios 1.20 (see the table above), not by CI |
 | C28 | A redirect to `file:`, `ftp:`, `javascript:` or another non-HTTP scheme is refused | `wasm-module/js/test/security.test.mjs::refuses a redirect to` | tested |
 | C29 | Workflows are linted, dependencies are audited weekly, and the code is scanned | `.github/workflows/workflow-lint.yml::zizmor`, `.github/workflows/audit.yml::cargo-deny-action`, `.github/workflows/codeql.yml::CodeQL` | process |
+| C30 | The browser build uses no `eval`, `new Function`, string timers, HTML or script injection, so it runs under a Content Security Policy without `'unsafe-eval'` | `wasm-module/js/test/csp-static.test.mjs::asks for nothing a strict Content Security Policy blocks` | partial: a scan of the shipped glue; no test in a browser under a policy |
 
 Words such as "never", "only" and "always" elsewhere on this page describe the rows above. Where no row backs one, the sentence is a claim without a test and should be reworded or given a row.
 

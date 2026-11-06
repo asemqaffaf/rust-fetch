@@ -92,9 +92,6 @@ function runChild(cases, { native, trust, env = {} }) {
 
 const TRANSPORTS = [['node:http', false], ...(nativeAvailable ? [['native', true]] : [])];
 const IP = '127.0.0.1';
-// Node 24 raised the default TLS security level, so it refuses the 1024 bit RSA key that Node 20 and 22 accept
-// (not a matter of the OpenSSL version: Node 22 ships OpenSSL 3.5 and still accepts it)
-const strongDefaults = Number(process.versions.node.split('.')[0]) >= 24;
 const certAt = (start, end) => ({ start: new Date(start), end: new Date(end) });
 
 // Every case: a server certificate (or TLS setting), what the client must do, and the address it connects to.
@@ -110,7 +107,7 @@ const SPECS = [
   { name: 'a certificate for another host name', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'other-name', { cn: 'other.test', san: 'DNS:other.test' }); return { key: c.key, cert: read(c.cert) }; } },
   { name: 'an IP address certificate for another address', expect: 'reject', host: IP, make: ({ ctx }) => { const c = sign(ctx.rootA, 'ip-other', { cn: '127.0.0.2', san: 'IP:127.0.0.2' }); return { key: c.key, cert: read(c.cert) }; } },
   { name: 'a host name certificate used for an IP address', expect: 'reject', host: IP, make: ({ ctx }) => { const c = sign(ctx.rootA, 'name-for-ip', { san: 'DNS:localhost' }); return { key: c.key, cert: read(c.cert) }; } },
-  { name: 'a certificate with the name only in the subject', expect: 'reject', gap: { 'node:http': '#244: Node falls back to the subject common name' }, make: ({ ctx }) => { const c = sign(ctx.rootA, 'cn-only', { san: null }); return { key: c.key, cert: read(c.cert) }; } },
+  { name: 'a certificate with the name only in the subject', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'cn-only', { san: null }); return { key: c.key, cert: read(c.cert) }; } },
   { name: 'a certificate that may only be used by clients', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'client-auth', { ext: ['basicConstraints=CA:FALSE', 'extendedKeyUsage=clientAuth', 'subjectAltName=DNS:localhost,IP:127.0.0.1'] }); return { key: c.key, cert: read(c.cert) }; } },
   { name: 'a certificate issued by a non-CA certificate', expect: 'reject', make: ({ ctx }) => {
     const leaf = sign(ctx.rootA, 'leaf-ca', { san: 'DNS:localhost' });
@@ -125,7 +122,7 @@ const SPECS = [
     return { key: 'self.key', cert: read('self.pem') };
   } },
   { name: 'a valid chain from a root that is not trusted', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootB, 'unknown-root'); return { key: c.key, cert: read(c.cert) }; } },
-  { name: 'a 1024 bit RSA key', expect: 'reject', gap: strongDefaults ? undefined : { 'node:http': '#244: Node older than 24 allows 1024 bit RSA' }, make: ({ ctx }) => { const c = sign(ctx.rootA, 'rsa1024', { bits: 1024 }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
+  { name: 'a 1024 bit RSA key', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'rsa1024', { bits: 1024 }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
   { name: 'a SHA-1 signature', expect: 'reject', make: ({ ctx }) => { const c = sign(ctx.rootA, 'sha1', { md: 'sha1' }); return { key: c.key, cert: read(c.cert), ciphers: 'DEFAULT:@SECLEVEL=0' }; } },
   { name: 'TLS 1.0 only', expect: 'reject', make: ({ good }) => ({ key: good.key, cert: read(good.cert), minVersion: 'TLSv1', maxVersion: 'TLSv1', ciphers: 'ALL:@SECLEVEL=0' }) },
   { name: 'TLS 1.1 only', expect: 'reject', make: ({ good }) => ({ key: good.key, cert: read(good.cert), minVersion: 'TLSv1.1', maxVersion: 'TLSv1.1', ciphers: 'ALL:@SECLEVEL=0' }) },
