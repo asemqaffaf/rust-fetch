@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       rust-dependencies:
         patterns: ["*"]
@@ -15,7 +15,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       native-dependencies:
         patterns: ["*"]
@@ -25,7 +25,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
     ignore:
       # This alias tests our minimum supported TypeScript version, not latest.
       - dependency-name: typescript-5.2
@@ -42,7 +42,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
