@@ -2182,7 +2182,7 @@ mod tests {
 
     #[test]
     fn test_builder_rejects_invalid_base_url() {
-        for base in ["example.com", "not a url", "ftp://example.com"] {
+        for base in ["example.com", "not a url", "ftp://example.com", "file:2/e:"] {
             let error = Client::builder().base_url(base).build().err().expect(base);
             assert_eq!(invalid_parameter(&error), Some("baseUrl"));
         }
@@ -2296,6 +2296,7 @@ mod tests {
         for (base, page, url) in [
             (None, None, "/no/base"),
             (Some("https://api.com"), None, "ftp://a.com/x"),
+            (Some("file:2/e:"), None, ".."), // Minimized fuzz seed from #207
             (Some("not a base"), None, "users"),
             (
                 None,
