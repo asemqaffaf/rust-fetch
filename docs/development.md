@@ -59,4 +59,8 @@ Run `cargo +nightly-2026-10-28 fuzz run sse -- -max_total_time=180` from `wasm-m
 
 The scheduled fuzz workflow runs each target for three minutes, with short pull-request smoke runs. Crashes are uploaded as artifacts and scheduled failures open a deduplicated issue. Minimize a reproducer, fix it and add a unit/JS regression before closing. Keep intentional seeds under `corpus/<target>/seed` or `regression-*`; generated mutation corpora and artifacts are ignored.
 
+## Scheduled dependency audit
+
+CI audits dependencies on pushes and pull requests. The `Scheduled dependency audit` workflow repeats the advisory checks every Monday (`cargo deny check advisories` for `wasm-module` and `native`, and `npm audit` for the root, `docs` and `examples` lockfiles), so an advisory published against a dependency we already ship is noticed without waiting for the next change. A scheduled failure opens one deduplicated `security` issue. Update the dependency, or record why the advisory does not apply in `wasm-module/deny.toml`, before closing it. Run it on demand from the Actions tab.
+
 The reliability comparison uses loopback fault fixtures, pinned development-only client dependencies, three rounds, full body consumption and a separate abort watchdog. Run npm run reliability:compare to regenerate its raw JSON and report. Transport conformance includes the same fault classes in native, node:http, fetch and real Chromium/Firefox/WebKit.
