@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
-- Hostile-response test: a raw TCP server sends malformed framing (conflicting or duplicate `Content-Length`, `Content-Length` with `Transfer-Encoding`, bad or oversized chunks, trailers and headers, bare LF, folded headers, garbage), a second response on a kept-alive connection, slow headers, an endless run of `103` responses, a trickled body and a huge `Content-Length`. All are rejected or bounded on the node:http transport. Part of #228.
+- Hostile-response test: a raw TCP server sends malformed framing (conflicting or duplicate `Content-Length`, `Content-Length` with `Transfer-Encoding`, bad or oversized chunks, trailers and headers, bare LF, folded headers, garbage), a second response on a kept-alive connection, slow headers, an endless run of `103` responses, a trickled body and a huge `Content-Length`. Run against both the native addon and node:http. All are rejected or bounded except one on the native addon: `Content-Length` with `Transfer-Encoding` is accepted and the connection reused (#243). Part of #228.
 
 ## [2.7.2] - 2026-11-06
 

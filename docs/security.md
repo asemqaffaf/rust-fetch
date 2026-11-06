@@ -136,14 +136,15 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 
 ## Hostile responses
 
-`response-framing.test.mjs` runs a raw TCP server against the client and checks what a malicious or broken server can do with HTTP framing. On the node:http transport the message is parsed by Node's HTTP parser, so this also fails if a Node release becomes more lenient.
+`response-framing.test.mjs` runs a raw TCP server against the client and checks what a malicious or broken server can do with HTTP framing. It runs on both transports: with the native addon (when built, as in CI) and, as `response-framing-js.test.mjs`, on node:http. The two parsers differ, so some cases are judged by what the client must never do rather than by one exact outcome.
 
-- **Rejected with a `NetworkError`:** conflicting `Content-Length` values, `Content-Length` together with `Transfer-Encoding`, chunk sizes that are not hexadecimal, beyond 64 bits or negative, chunk data without its CRLF, a 100 kB chunk extension, trailer, header or status line, 5,000 headers, text that is not HTTP, an unknown HTTP version, a four digit status, bytes after the declared length, and a body shorter than its `Content-Length`. Obsolete line folding, bare LF line endings, a bare CR or NUL in a header value, and spaces around header names are rejected, or if a parser accepts them, read without inventing a header.
-- **Header limit:** a header block of 15 kB is accepted and 100 kB is refused (Node's 16 kB default; set the same on every transport).
-- **No response smuggling:** a second response written to a kept-alive connection after the first is never given to the next request; the next request gets its own response.
+- **Rejected with a `NetworkError` on both transports:** conflicting `Content-Length` values, chunk sizes that are not hexadecimal, beyond 64 bits or negative, chunk data without its CRLF, a 100 kB chunk extension or trailer, a 2 MB header or status line, 5,000 headers, text that is not HTTP, an unknown HTTP version, a four digit status, and a body shorter than its `Content-Length`. Obsolete line folding, bare LF line endings, a bare CR or NUL in a header value, and spaces around header names are rejected, or if a parser accepts them, read without inventing a header.
+- **Header size:** a header block of 15 kB is accepted on both. A single header or status line of 100 kB is refused by node:http (16 kB default) and accepted by the native addon; both refuse 1 MB and above.
+- **`Content-Length` together with `Transfer-Encoding`:** node:http rejects the response. The native addon reads it as chunked and reuses the connection, which RFC 9112 section 6.3 advises against. Tracked in #243 and recorded as a `todo` test.
+- **No response smuggling:** a second response written after the first, whether in the same write or later on a kept-alive connection, is never given to the next request; the next request gets its own response.
 - **Bounded waiting:** headers that arrive one line at a time end at `timeoutMs`; an endless run of `103` responses ends at `responseTimeoutMs` with no meaningful memory growth; a body that trickles forever ends at `deadlineMs`; a `Content-Length` above `maxResponseBytes` is refused before the body is read.
 
-Not covered: the native addon's parser (it is not built in CI for these tests) and the browser transports, which leave framing to the browser.
+Not covered: the browser transports, which leave framing to the browser.
 
 ## Hardened configurations
 
