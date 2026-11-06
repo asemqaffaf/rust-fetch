@@ -93,9 +93,31 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       return u.href;
     } catch { return String(value); }
   }
+  // Without `redactUrl` an error keeps its URL as passed, apart from the password and the fragment:
+  // the password is the most sensitive part of a URL and the fragment never reaches a server (#238).
+  const maskUrl = (value) => {
+    try { const u = new URL(value); if (u.password) u.password = '***'; u.hash = ''; return u.href; }
+    catch { return typeof value === 'string' ? '[invalid URL]' : value; }
+  };
+  // Transports tag the errors they raise with `url`, and the core wraps them as `cause`: apply the
+  // same redaction to every error in the chain (#239)
+  function scrubUrls(error, redact) {
+    const seen = new Set();
+    for (let e = error, depth = 0; e && typeof e === 'object' && !seen.has(e) && depth < 16; e = e.cause, depth++) {
+      seen.add(e);
+      try {
+        const shown = e.url;
+        if (typeof shown !== 'string') continue;
+        let next;
+        if (redact) { try { next = String(redact(shown)); } catch { next = safeUrl(shown); } } else next = maskUrl(shown);
+        if (next !== shown) Object.defineProperty(e, 'url', { value: next, writable: true, configurable: true, enumerable: Object.getOwnPropertyDescriptor(e, 'url')?.enumerable ?? true });
+      } catch {}
+    }
+  }
   function context(error, method, url, attempts, redact) {
     if (error && typeof error === 'object') {
-      try { error.method ??= method; error.url ??= url; error.attempts ??= attempts; if (redact) { try { error.url = String(redact(error.url)); } catch { error.url = safeUrl(error.url); } } } catch {}
+      try { error.method ??= method; error.url ??= url; error.attempts ??= attempts; } catch {}
+      scrubUrls(error, redact);
     }
     return error;
   }
@@ -107,7 +129,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     const streaming = ['stream', 'ndjson'].includes(own(input, 'responseType'));
     if (!c.enabled && !streaming) {
       const promise = raw.apply(client, args);
-      return c.redactUrl ? promise.catch((e) => { throw context(e, method, inputUrl, 0, c.redactUrl); }) : promise;
+      return promise.catch((e) => { if (c.redactUrl) throw context(e, method, inputUrl, 0, c.redactUrl); scrubUrls(e); throw e; });
     }
     const options = input && typeof input === 'object' ? copy(input) : input == null ? {} : input;
     let url = resolve(state.options, inputUrl, own(options, 'params'));
