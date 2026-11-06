@@ -264,3 +264,15 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
+
+## Redirects and credentials
+
+Checked by `wasm-module/js/test/redirect-credentials.test.mjs` (Node transport, plain HTTP, two local servers on different ports):
+
+- `Authorization`, `Cookie`, `Proxy-Authorization` and every name in `sensitiveHeaders` are sent on a hop only when the target has the same origin as the request that was redirected. The expected answer is computed with Node's `URL`, so odd spellings are judged as a browser would judge them: upper-case scheme, trailing-dot host, decimal and hex IPv4, percent-encoded host, tabs, backslashes, and `user:port@host` tricks.
+- Other headers follow the redirect.
+- 303 turns every method except HEAD into GET. 301 and 302 turn POST into GET. 307 and 308 keep method and body. A request without a body keeps no `Content-Type`.
+- Redirects to `file:`, `ftp:`, `javascript:`, `data:`, `blob:` and `ws:` are refused. `maxRedirects: 0` follows nothing, and a loop stops at the limit.
+- A `Location` with user info becomes a Basic `Authorization` for that user only after the client's own `Authorization` has been dropped (cross-origin). It is never the client's secret.
+
+Not covered: https to http downgrade (needs the generated certificates from #229), the native addon, and browser transports (the browser decides redirect handling itself).

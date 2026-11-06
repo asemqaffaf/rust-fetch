@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Secret-leak canary test: unique strings in the URL (user, password, query, fragment), headers, a proxy password and the body are sent through nine failing scenarios (refused, server error, redirect, timeout, retries exhausted, proxy refused, response too large, blocked address, cancelled), and everything the application can observe is searched for them. Debug entries, lifecycle hooks, `stats()` and console output are clean in every scenario, and so are errors for headers, the proxy password and the body. Two gaps are recorded as expected failures: error objects carry the URL password and fragment (#238), and `redactUrl` is not applied to `error.cause.url` (#239). Part of #227.
 - Hostile-response test: a raw TCP server sends malformed framing (conflicting or duplicate `Content-Length`, `Content-Length` with `Transfer-Encoding`, bad or oversized chunks, trailers and headers, bare LF, folded headers, garbage), a second response on a kept-alive connection, slow headers, an endless run of `103` responses, a trickled body and a huge `Content-Length`. Run against both the native addon and node:http. All are rejected or bounded except one on the native addon: `Content-Length` with `Transfer-Encoding` is accepted and the connection reused (#243). Part of #228.
 
+### Tests
+- Redirect and credential handling is now checked against the WHATWG definition of origin (#226): 90 spellings of same-origin and cross-origin `Location` values across 301, 302, 303, 307 and 308, the method and body rules for every status, refused schemes and redirect loops. No defect found.
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
