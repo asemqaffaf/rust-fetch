@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-11-06
+
+Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
+
 ### Security
 - Remove `unwrap`/`expect` calls that untrusted or caller-supplied input could reach: a `circuitBreaker` or `rateLimit` option that cannot be converted now rejects with an `InvalidInputError`, and per-origin limiting no longer assumes a URL shape. Library code now denies `clippy::unwrap_used` and `clippy::expect_used` (checked in CI for native and `wasm32`); the remaining invariants are annotated with the reason they cannot fail (#216).
+- Fix the scheduled fuzzing failure (#207): the URL fuzz target joined arbitrary `file:` bases, which panics inside the `url` crate (servo/rust-url#1114). The client only accepts http(s) bases, so the library was not affected; the target now exercises the client's own resolution, with a regression test and corpus seed (#213).
+
+### Changed
+- Repository checks, not part of the npm package: a weekly dependency advisory audit (#214), CodeQL code scanning and zizmor workflow lint (#215). The release workflow no longer uses a build cache, workflow checkouts no longer persist credentials, and Dependabot waits seven days before proposing new versions.
 
 ## [2.7.1] - 2026-11-03
 
@@ -356,7 +364,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.2...HEAD
+[2.7.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.1...v2.7.0
 [2.6.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.0...v2.6.1

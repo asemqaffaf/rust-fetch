@@ -6,7 +6,7 @@ Each active `2.x` release line receives security patch releases. General bug fix
 
 | Version | Supported | Latest patch | Distribution tag | Notes |
 | --- | --- | --- | --- | --- |
-| 2.7.x | Yes | 2.7.1 | `latest` | Current release line. Receives feature updates, bug fixes, and security patches. |
+| 2.7.x | Yes | 2.7.2 | `latest` | Current release line. Receives feature updates, bug fixes, and security patches. |
 | 2.6.x | Security fixes only | 2.6.2 | `release-2.6` | Backported security fixes only. |
 | 2.5.x | Security fixes only | 2.5.3 | `release-2.5` | Backported security fixes only. |
 | 2.4.x | Security fixes only | 2.4.2 | `release-2.4` | Backported security fixes only. |
