@@ -33,7 +33,7 @@ The same attacks against each client, with the protections it offers turned on (
 | Request to the cloud metadata endpoint `169.254.169.254` (SSRF) | **blocked** with `allowPrivateNetwork: false` | no built-in check | no built-in check |
 | Runtime dependencies | none | built in | 4 |
 
-Only rust-fetch blocks SSRF before connecting, and rejects header injection instead of altering the header. Like axios, and unlike `fetch()`, it can bound a response's size. Every protection that isn't on by default (absolute URLs, size, private networks) is one option away.
+Of these three clients, only rust-fetch has a built-in check that blocks SSRF before connecting; axios strips a CR/LF header silently where rust-fetch and `fetch()` reject it. Like axios, and unlike `fetch()`, it can bound a response's size. The table was measured with the versions above; other clients (got, ky, undici used directly) were not compared here. Every protection that isn't on by default (absolute URLs, size, private networks) is one option away.
 
 ## Absolute URLs and `baseUrl`
 
@@ -233,3 +233,42 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
+
+## Claims and the tests behind them
+
+Every protection this page and `SECURITY.md` state, with the test that checks it. `wasm-module/js/test/claims.test.mjs` fails when a test named here no longer exists, so a claim cannot outlive its evidence. Status: **tested** means a test fails if the claim stops being true; **partial** says what is not covered; **process** is checked by a release step, not by a test; **stated** has no test, and the claim is worded as a design or a source review.
+
+Tests run on node:http and on the native addon unless noted. Browser transports hand most of these to the browser.
+
+| ID | Claim | Evidence | Status |
+| --- | --- | --- | --- |
+| C01 | The published package has no runtime dependencies | `scripts/check-package.mjs::The package has runtime dependencies` | tested (release gate and CI) |
+| C02 | The package ships exactly the runtime files and policies | `wasm-module/js/test/package.test.mjs::ships exactly the runtime files and project policies` | tested |
+| C03 | No install scripts | `wasm-module/js/test/package.test.mjs::ships exactly the runtime files and project policies` | partial: the file list is checked; the manifest's `scripts` field is not asserted |
+| C04 | Releases carry npm provenance, and the signature is verified after publishing | `.github/workflows/release.yml::npm audit signatures` | process |
+| C05 | Importing the Node.js entry makes no outbound request | `wasm-module/js/test/no-startup-network.test.mjs::importing the Node.js entry and creating a client makes no JavaScript-visible network call` | partial: the native addon's own sockets are not visible to the test |
+| C06 | No usage telemetry or update check | none | stated: source review |
+| C07 | Prototype pollution cannot redirect requests (`proxy`, `dispatcher`, `ca`) or alter options | `wasm-module/js/test/prototype-pollution.test.mjs::never sends a request, its credentials or its body to an inherited proxy or dispatcher`, `wasm-module/js/test/prototype-pollution.test.mjs::leaves the private-network rule, TLS verification and the response limit in force` | tested |
+| C08 | Response headers named `__proto__` are kept as data | `wasm-module/js/test/node-transport.test.mjs::uses actual response headers under prototype pollution, including framing and decompression` | tested |
+| C09 | `allowPrivateNetwork: false` checks the resolved address when connecting, and again on every redirect | `wasm-module/js/test/security.test.mjs::rechecks every redirect hop` | tested |
+| C10 | A checked request never reuses a connection made to a private address | `wasm-module/js/test/security.test.mjs::never reuses a connection an unchecked request made to a private address` | tested |
+| C11 | The listed IPv4 and IPv6 ranges are blocked | `wasm-module/js/test/security.test.mjs::blocks` | partial: representative addresses; the full range table has its own test only once `ssrf-ranges.test.mjs` is merged (#237) |
+| C12 | Through a proxy, IP targets are checked and names are refused | `wasm-module/js/test/node-transport.test.mjs::through a proxy, checks IP-literal targets and refuses names` | tested |
+| C13 | WebSocket reconnections are checked again | `wasm-module/js/test/websocket.test.mjs::checks every reconnection again (DNS rebinding)` | tested |
+| C14 | `Authorization`, `Cookie` and `Proxy-Authorization` are dropped on a cross-origin redirect | `wasm-module/js/test/security.test.mjs::drops Authorization, Cookie and Proxy-Authorization on a cross-origin` | tested on Node transports; browsers follow `fetch()` |
+| C15 | `sensitiveHeaders` are dropped too | `wasm-module/js/test/security.test.mjs::drops sensitiveHeaders on a cross-origin redirect` | tested |
+| C16 | `allowInsecureRedirects: false` refuses https to http | `wasm-module/js/test/security.test.mjs::refuses the redirect with allowInsecureRedirects: false` | tested |
+| C17 | `allowAbsoluteUrls: false` keeps requests on the base host; path tricks stay on it | `wasm-module/js/test/security.test.mjs::with allowAbsoluteUrls: false, an absolute URL never reaches another host`, `wasm-module/js/test/security.test.mjs::keeps path-relative and protocol-relative-looking paths on the base host` | tested |
+| C18 | Header names and values with CR or LF are rejected before sending | `wasm-module/js/test/security.test.mjs::header injection (CRLF` | tested |
+| C19 | `maxResponseBytes` stops decompression one byte past the limit | `wasm-module/js/test/security.test.mjs::a body exactly at maxResponseBytes is accepted; one byte more is not`, `wasm-module/js/test/security.test.mjs::with maxResponseBytes, a 256 MB gzip bomb fails without expanding in memory` | partial: the bomb test uses gzip; brotli, deflate and zstd decode correctly but have no bomb test |
+| C20 | A redirect with an endless body is dropped promptly and its connection closed | `wasm-module/js/test/security.test.mjs::follows a redirect with an endless body promptly, and closes its connection` | tested |
+| C21 | `maxLineBytes` and `maxEventBytes` end an oversized stream | `wasm-module/js/test/events.test.mjs::ends the stream at a line over maxLineBytes`, `wasm-module/js/test/events.test.mjs::maxEventBytes limits an event` | tested |
+| C22 | `maxPendingRequests` sheds load | `wasm-module/js/test/hardened.test.mjs::sheds load beyond 256 pending requests` | tested |
+| C23 | WebSocket send queues are bounded | `wasm-module/js/test/websocket.test.mjs::limits messages queued before the connection opens, by count and by bytes` | tested |
+| C24 | Idle and deadline timeouts end stalled streams | `wasm-module/js/test/events.test.mjs::reconnects after idle timeouts and closes at a deadline during backoff` | partial: events only; the other phase timers are checked in `response-framing.test.mjs` once #241 is merged |
+| C25 | Hooks and logs redact URLs, credentials and response bodies | `wasm-module/js/test/observability.test.mjs::redacts URLs, credentials, custom secrets and response bodies in hooks/logs` | partial: errors the client throws still carry a URL password (#238, #239) |
+| C26 | Each native adapter owns its TLS configuration, pool and cancellation scope | none | stated: design; no multi-thread test |
+| C27 | Of fetch, axios and rust-fetch, only rust-fetch has a built-in SSRF check | `wasm-module/js/test/security.test.mjs::with allowPrivateNetwork: false, blocks` | partial: rust-fetch's half is tested; the other two are measured by `npm run security:compare` with Node.js 22.13 and axios 1.20 (see the table above), not by CI |
+
+Words such as "never", "only" and "always" elsewhere on this page describe the rows above. Where no row backs one, the sentence is a claim without a test and should be reworded or given a row.
+

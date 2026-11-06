@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- Security claims audit (#224): `docs/security.md` now has a table of 27 claims, each with the test that checks it or a status saying why not (tested, partial, process, stated). `claims.test.mjs` fails when a named test disappears. New test that importing the Node.js entry makes no outbound network call. Reworded: "Safe with servers and URLs you don't control" is now "Guards against ...", "Only rust-fetch blocks SSRF" names the three clients and versions compared, and the SECURITY.md lines on observability redaction and native adapter isolation state what is and is not tested (#238, #239).
+
 ## [2.7.2] - 2026-11-06
 
 Security-first patch for 2.7.x: fewer panics in the Wasm core and stronger automated checks on dependencies, workflows and parsers. Public APIs and defaults are unchanged.
