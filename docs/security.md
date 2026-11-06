@@ -294,10 +294,10 @@ Not covered: https to http downgrade (needs the generated certificates from #229
 | SHA-1 signature | refused | refused |
 | TLS 1.0 and 1.1 servers | refused | refused |
 | TLS 1.2 and 1.3 servers | accepted | accepted |
-| Name only in the subject, no `subjectAltName` | **accepted** | refused |
-| 1024 bit RSA key | **accepted** on Node 20 and 22; refused on Node 24 | refused |
+| Name only in the subject, no `subjectAltName` | refused | refused |
+| 1024 bit RSA key | refused | refused |
 
-The two accepted rows are a difference between the transports, tracked in #244: Node still falls back to the subject common name (every version tested), and Node's default TLS security level before Node 24 allows 1024 bit RSA. Neither has been issued by a public CA for years, so the exposure is a private or compromised authority.
+Both transports apply the same policy (#244). Node's own defaults would accept a certificate whose name is only in the subject (it falls back to the common name) and, before Node 24, a 1024 bit RSA key. The node:http transport therefore requires a `subjectAltName` and connects at OpenSSL security level 2, which also refuses SHA-1 signatures and Diffie-Hellman below 2048 bits. A server with such a certificate, usually an old intranet server, must be reissued: there is no option to relax this.
 
 Also checked, on both transports: the client does not negotiate HTTP/2 when the server offers it; it sends the host name as SNI and sends no SNI for an IP address; a private root is trusted only when `NODE_EXTRA_CA_CERTS` names it; and certificates are verified through an HTTP `CONNECT` proxy (an expired, self-signed or wrong-name certificate is refused through the tunnel).
 
