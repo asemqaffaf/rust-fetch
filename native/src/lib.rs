@@ -28,7 +28,7 @@ use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH,
-    HOST, LOCATION, USER_AGENT,
+    HOST, LOCATION, TRANSFER_ENCODING, USER_AGENT,
 };
 use hyper::Method;
 use napi::bindgen_prelude::{Buffer, External, Uint8Array};
@@ -450,6 +450,11 @@ impl Transport {
                 )
                 .await?;
                 let status = response.status().as_u16();
+                // Content-Length together with Transfer-Encoding is a request smuggling / response
+                // splitting signal (RFC 9112 section 6.1): the body is read as chunked, and the connection
+                // is closed afterwards instead of being offered to the next request (#243)
+                let reusable = !(response.headers().contains_key(CONTENT_LENGTH)
+                    && response.headers().contains_key(TRANSFER_ENCODING));
 
                 if let (true, Some(location)) = (
                     !manual && matches!(status, 301 | 302 | 303 | 307 | 308),
@@ -459,6 +464,7 @@ impl Transport {
                     let drained =
                         http_body_util::Limited::new(response.into_body(), REDIRECT_DRAIN);
                     if upload.is_none()
+                        && reusable
                         && timeouts::until(response_deadline, response_timeout, async {
                             drained.collect().await.map_err(|error| error.to_string())
                         })
@@ -513,8 +519,10 @@ impl Transport {
                     if let Some(upload) = &upload {
                         upload.finished().await?;
                     }
-                    connection.release();
-                } else if upload.is_none() {
+                    if reusable {
+                        connection.release();
+                    }
+                } else if upload.is_none() && reusable {
                     connection.release();
                 }
                 let body = match encoding {
