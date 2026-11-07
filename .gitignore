@@ -43,6 +43,7 @@ next-env.d.ts
 /wasm-module/target
 /native/target
 /wasm-module/pkg/*.node
+/wasm-module/pkg/*.wasm
 lcov-js.info
 
 # The documentation site

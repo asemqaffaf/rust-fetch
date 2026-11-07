@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The built `wasm-module/pkg/rust_fetch_bg.wasm` is no longer committed (#232, OpenSSF Scorecard Binary-Artifacts). The repository holds only the source; `npm run build` produces the module, and CI, the release and the reproducibility check already built it. After cloning, run `npm run build` before the JavaScript tests.
+
 ### Security
 - OpenSSF Scorecard findings (#232): `release.yml` no longer grants `contents: write` to the whole workflow, only to its one job; the two fuzzing Dockerfiles pin their base image by digest, and Dependabot now updates those digests; each release attaches the published npm tarball and its Sigstore signature (`rust-fetch-X.Y.Z.tgz.sigstore.json`, verify with `cosign verify-blob`) to the GitHub release.
 
