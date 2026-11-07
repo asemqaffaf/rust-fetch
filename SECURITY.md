@@ -47,7 +47,7 @@ Automated checks, all in GitHub Actions:
 | CodeQL | JavaScript, TypeScript, Rust and workflow code |
 | Workflow lint | Security lint of the workflow files themselves |
 | Fuzzing | Parsers and the JavaScript boundary, with a corpus kept between runs, and a differential check of URL resolution against the WHATWG URL parser |
-| Memory safety | `deny(unsafe_code)` in both crates; the only `unsafe` is the Wasm allocator, listed with its invariants in `docs/unsafe.md` and checked in CI; Miri and AddressSanitizer |
+| Memory safety | `deny(unsafe_code)` in both crates; the only `unsafe` is the Wasm allocator, listed with its invariants in `docs/unsafe.md` and checked in CI; Miri and AddressSanitizer, including the native addon |
 | Reproducible Wasm build | The published Wasm file is rebuilt and compared on pull requests that touch it |
 | OpenSSF Scorecard | Repository and release practices, weekly |
 | Release | npm provenance for every release, size, API and benchmark gates, and verification after publishing |
