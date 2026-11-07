@@ -14,6 +14,7 @@ import init, {
   isParseError,
   isRustFetchError,
   isTimeoutError,
+  isValidationError,
 } from '../../pkg/node.js';
 import { rejection, startServer } from './helpers.mjs';
 
@@ -26,6 +27,7 @@ const GUARDS = {
   CancelledError: isCancelledError,
   CircuitOpenError: isCircuitOpenError,
   JsInteropError: isJsInteropError,
+  ValidationError: isValidationError,
 };
 
 let server;
@@ -52,6 +54,7 @@ describe('error type guards', () => {
       InvalidInputError: await rejection(client.get('not a url')),
       TimeoutError: await rejection(client.get(server.url('/slow'), { timeoutMs: 30 })),
       CancelledError: await rejection(client.get(server.url('/slow'), { signal: AbortSignal.abort() })),
+      ValidationError: await rejection(client.get(server.url('/ok'), { schema: { '~standard': { version: 1, vendor: 'test', validate: () => ({ issues: [{ message: 'no' }] }) } } })),
       NetworkError: await rejection(new WasmClient({ retries: 0 }).get('http://127.0.0.1:1/')),
       CircuitOpenError: await (async () => {
         const breaker = new WasmClient({ retries: 0, circuitBreaker: { failureThreshold: 1, resetAfterMs: 60_000 } });

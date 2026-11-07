@@ -380,7 +380,28 @@ export interface ClientOptions extends BrowserRequestOptions {
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
+/** The Standard Schema interface (https://standardschema.dev), implemented by Zod, Valibot, ArkType and others. rust-fetch depends on none of them. */
+export interface StandardSchema<Output = unknown> {
+  readonly '~standard': {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly validate: (value: unknown) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+    readonly types?: { readonly input: unknown; readonly output: Output } | undefined;
+  };
+}
+export type StandardSchemaResult<Output> =
+  | { readonly value: Output; readonly issues?: undefined }
+  | { readonly issues: ReadonlyArray<StandardSchemaIssue> };
+export interface StandardSchemaIssue {
+  readonly message: string;
+  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
+}
+/** The type a schema validates to */
+export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
+
 export interface RequestOptions extends BrowserRequestOptions {
+  /** Validate the response body with a Standard Schema (Zod, Valibot, ArkType…). The body of the response becomes the schema's output; a body that fails rejects with a `ValidationError` (not retried). Not with `responseType: 'stream'` or `'ndjson'`. */
+  schema?: StandardSchema;
   headers?: HeadersLike;
   params?: QueryParams;
   /** Overrides the client timeout for this request, in ms. `0` disables it. */
@@ -480,7 +501,8 @@ export type RustFetchErrorKind =
   | 'TimeoutError'
   | 'InvalidInputError'
   | 'JsInteropError'
-  | 'CancelledError';
+  | 'CancelledError'
+  | 'ValidationError';
 
 export interface RustFetchError extends Error {
   method?: string;
@@ -510,6 +532,8 @@ export interface RustFetchError extends Error {
   maxEventBytes?: number;
   /** CancelledError: the signal's abort reason (`controller.abort(reason)`; an `AbortError` by default, a `TimeoutError` for `AbortSignal.timeout()`). Also `cause`. */
   reason?: unknown;
+  /** ValidationError: what the schema reported */
+  issues?: ReadonlyArray<StandardSchemaIssue>;
   /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
   retryBudgetExhausted?: boolean;
   /** CircuitOpenError: the origin whose circuit refused the request */
@@ -530,6 +554,7 @@ export type RustFetchErrorOf<K extends RustFetchErrorKind> = RustFetchError & { 
   K extends 'TimeoutError' ? { timeoutMs: number } :
   K extends 'InvalidInputError' ? { parameter: string } :
   K extends 'CircuitOpenError' ? { origin: string; retryAfterMs: number } :
+  K extends 'ValidationError' ? { issues: ReadonlyArray<StandardSchemaIssue>; status: number } :
   {}
 );
 export type RustFetchHttpError = RustFetchErrorOf<'HttpError'>;
@@ -540,6 +565,7 @@ export type RustFetchInvalidInputError = RustFetchErrorOf<'InvalidInputError'>;
 export type RustFetchCancelledError = RustFetchErrorOf<'CancelledError'>;
 export type RustFetchCircuitOpenError = RustFetchErrorOf<'CircuitOpenError'>;
 export type RustFetchJsInteropError = RustFetchErrorOf<'JsInteropError'>;
+export type RustFetchValidationError = RustFetchErrorOf<'ValidationError'>;
 
 /** `true` for an error thrown by rust-fetch, whichever realm or copy of the package made it; with `kind`, only for that kind. */
 export function isRustFetchError(value: unknown): value is RustFetchError;
@@ -552,6 +578,7 @@ export function isInvalidInputError(value: unknown): value is RustFetchInvalidIn
 export function isCancelledError(value: unknown): value is RustFetchCancelledError;
 export function isCircuitOpenError(value: unknown): value is RustFetchCircuitOpenError;
 export function isJsInteropError(value: unknown): value is RustFetchJsInteropError;
+export function isValidationError(value: unknown): value is RustFetchValidationError;
 "#;
 
 #[wasm_bindgen]

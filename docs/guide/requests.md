@@ -140,3 +140,21 @@ for await (const page of client.paginate('/events', {
 - A next URL on **another origin** throws an `InvalidInputError` unless you set `crossOrigin: true`, so a server cannot send your requests, and the credentials in them, to another host. A server that links back to a page it already sent ends the iteration.
 - A failing page rejects the iteration with its error, after the earlier pages were yielded. Use a plain object for `params` when you merge a cursor into them.
 
+## Validating responses
+
+`schema` takes any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType and others implement it; rust-fetch depends on none of them). The body of the response becomes the schema's output, typed as such.
+
+```ts
+import { z } from 'zod';
+
+const User = z.object({ id: z.number(), name: z.string() });
+const response = await client.get('/users/42', { schema: User });
+response.body.name; // string, validated
+```
+
+- A body that fails rejects with a `ValidationError` carrying `issues`, the `method`, `url` and `status`. It is not retried: the response was fine, its content was not. `error.message` only counts the issues, because validators such as Valibot quote the received value in theirs and error messages end up in logs; read the values from `issues` when you need them.
+- Async validators and transforms work: the output is whatever the schema returns.
+- It works with every method that takes request options (`get`, `post`, `post_json`, `request`, `fetch`…). It cannot be combined with `responseType: 'stream'` or `'ndjson'` (an `InvalidInputError`).
+- The type guard is `isValidationError(error)`.
+- `ValidationError` is a new `kind`, and it only appears when you pass `schema`. If you handle errors in a `switch` over `error.kind` with an exhaustive check, add a case for it.
+

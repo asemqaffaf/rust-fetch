@@ -4,7 +4,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,10 @@ before(async () => {
     cwd: project,
     stdio: 'ignore',
   });
+  // The validators the type tests import: the repository's own dev dependencies, linked rather than installed
+  for (const validator of ['zod', 'valibot']) {
+    symlinkSync(fileURLToPath(new URL(`../../../node_modules/${validator}`, import.meta.url)), join(project, 'node_modules', validator), 'dir');
+  }
   server = await startServer((req, res) => json(res, { hello: 'world', path: req.url }));
 });
 
@@ -133,7 +137,7 @@ describe('published package', () => {
     writeFileSync(
       join(project, 'consumer.ts'),
       `import init, { WasmClient, fetch_json, type HttpResponse, type RustFetchError, type ClientOptions,
-         type RequestOptions, type FetchInit, type DownloadProgress, type InterceptedRequest } from 'rust-fetch';
+         type RequestOptions, type FetchInit, type DownloadProgress, type InterceptedRequest, type StandardSchema, isValidationError } from 'rust-fetch';
        import { createMockTransport, type MockCall } from 'rust-fetch/testing';
        interface User { id: number; name: string }
        await init();
@@ -197,6 +201,20 @@ describe('published package', () => {
        }
        // @ts-expect-error maxPages is a number
        client.paginate('/users', { maxPages: '5' });
+       const handWritten: StandardSchema<{ id: number; name: string }> = { '~standard': { version: 1, vendor: 'test', validate: (value) => ({ value: value as { id: number; name: string } }) } };
+       const validated = await client.get('/users/42', { schema: handWritten });
+       const validName: string = validated.body.name;
+       // @ts-expect-error the body is a validated user, not a string
+       const wrongType: string = validated.body;
+       const viaJson = await client.post_json('/users', {}, { schema: handWritten });
+       const jsonName: string = viaJson.body.name;
+       const viaFetchSchema = await client.fetch("/users", { method: "POST", body: {}, schema: handWritten });
+       const fetchId: number = viaFetchSchema.body.id;
+       const plain = await client.get('/users/42');
+       const anyBody: number = plain.body;
+       try { await client.get('/x', { schema: handWritten }); } catch (error) {
+         if (isValidationError(error)) { const first: string | undefined = error.issues[0]?.message; const status: number = error.status; }
+       }
        // @ts-expect-error a transport is a function
        new WasmClient({ transport: 'mock' });`,
     );
@@ -248,6 +266,32 @@ describe('published package', () => {
       const result = spawnSync(process.execPath, [tsc, ...args], { cwd: project, encoding: 'utf8' });
       assert.equal(result.status, 0, `${compiler}: ${result.stdout}${result.stderr}`);
     }
+  });
+
+  it('infers the body type from Zod and Valibot schemas, with TypeScript 7', () => {
+    // Zod 4's own types need TypeScript 5.4, so this runs on the current compiler only
+    writeFileSync(
+      join(project, 'validators.ts'),
+      `import { WasmClient } from 'rust-fetch';
+       import { z } from 'zod';
+       import * as v from 'valibot';
+       const client = new WasmClient();
+       const User = z.object({ id: z.number(), name: z.string() });
+       const zoded = await client.get('/users/42', { schema: User });
+       const zodName: string = zoded.body.name;
+       // @ts-expect-error the body is a validated user, not a string
+       const wrongZod: string = zoded.body;
+       const transformed = await client.get('/users/42', { schema: User.transform((u) => u.id) });
+       const asNumber: number = transformed.body;
+       const valibot = await client.post('/users', { body: {}, schema: v.object({ id: v.number() }) });
+       const valibotId: number = valibot.body.id;
+       // @ts-expect-error the body has no \`name\`
+       valibot.body.name;`,
+    );
+    const args = ['--noEmit', '--strict', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--lib', 'es2022,dom', 'validators.ts'];
+    const tsc = fileURLToPath(new URL('../../../node_modules/typescript/bin/tsc', import.meta.url));
+    const result = spawnSync(process.execPath, [tsc, ...args], { cwd: project, encoding: 'utf8' });
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   });
 
   it('ships TypeScript definitions for the public API', () => {

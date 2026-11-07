@@ -182,7 +182,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
         m.samples[m.next++ % 1024] = timings.totalMs; m.count++; m.sum += timings.totalMs; m.min = Math.min(m.min, timings.totalMs); m.max = Math.max(m.max, timings.totalMs);
         if (bucket) { bucket.active--; bucket.completed++; bucket.failed += Number(failed); }
       }
-      const entry = summary('requestEnd', { status: response?.status ?? error?.status, error: failed ? { kind: ['NetworkError','HttpError','TimeoutError','ParseError','InvalidInputError','CancelledError','CircuitOpenError','JsInteropError'].includes(error?.kind) ? error.kind : undefined, status: typeof error?.status === 'number' ? error.status : undefined, phase: ['connect','response','idle','total'].includes(error?.phase) ? error.phase : undefined } : undefined, timings });
+      const entry = summary('requestEnd', { status: response?.status ?? error?.status, error: failed ? { kind: ['NetworkError','HttpError','TimeoutError','ParseError','InvalidInputError','CancelledError','CircuitOpenError','JsInteropError','ValidationError'].includes(error?.kind) ? error.kind : undefined, status: typeof error?.status === 'number' ? error.status : undefined, phase: ['connect','response','idle','total'].includes(error?.phase) ? error.phase : undefined } : undefined, timings });
       call(c.onRequestEnd, entry); log(c, entry);
     };
     let pending;
