@@ -39,7 +39,7 @@ try {
 }
 ```
 
-`controller.abort()` without an argument gives a `DOMException` named `AbortError`; `controller.abort(value)` gives `value`. This covers requests, retry delays and response streams (`stream` and `ndjson`). `events()` and `websocket()` are not covered yet.
+`controller.abort()` without an argument gives a `DOMException` named `AbortError`; `controller.abort(value)` gives `value`. This covers requests, retry delays, response streams (`stream` and `ndjson`) and the `opened` promise of `events()` and `websocket()` when the signal aborts before they open. A signal that aborts an open `events()` or `websocket()` connection closes it cleanly, so nothing rejects.
 
 With a [retry budget](/guide/timeouts-and-retries#retries), an error whose retry the budget refused also has `retryBudgetExhausted: true`, whatever its `kind`.
 

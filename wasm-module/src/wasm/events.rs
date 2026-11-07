@@ -323,7 +323,13 @@ impl WasmClient {
         if let Some(signal) = prop(&shared.settings.options, "signal") {
             let signal: web_sys::AbortSignal = signal.unchecked_into();
             if signal.aborted() {
-                finish(&shared, Some(Error::Cancelled.into_js()));
+                finish(
+                    &shared,
+                    Some(super::with_abort_reason(
+                        Error::Cancelled.into_js(),
+                        Some(signal.as_ref()),
+                    )),
+                );
                 return Ok(EventStream { shared });
             }
             let weak = Rc::downgrade(&shared);
@@ -808,12 +814,15 @@ fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
         let _ = room.call0(&JsValue::UNDEFINED);
     }
     shared.closer.abort();
-    if let Some((signal, listener)) = listener {
+    let signal = listener.map(|(signal, listener)| {
         let _ =
             signal.remove_event_listener_with_callback("abort", listener.as_ref().unchecked_ref());
-    }
+        signal
+    });
     if let Some(reject) = reject_opened {
-        let reason = error.clone().unwrap_or_else(|| Error::Cancelled.into_js());
+        let reason = error.clone().unwrap_or_else(|| {
+            super::with_abort_reason(Error::Cancelled.into_js(), signal.as_ref().map(AsRef::as_ref))
+        });
         let _ = reject.call1(&JsValue::UNDEFINED, &reason);
     }
     // The first waiting `next()` gets the error; an iterator started later gets it from `next()`

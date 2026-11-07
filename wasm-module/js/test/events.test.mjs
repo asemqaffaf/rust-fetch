@@ -452,8 +452,13 @@ describe('events', () => {
 
   it('closes when the signal aborts', async () => {
     const aborted = client().events('/feed', { signal: AbortSignal.abort() });
-    assert.equal((await rejection(aborted.opened)).kind, 'CancelledError');
+    const error = await rejection(aborted.opened);
+    assert.equal(error.kind, 'CancelledError');
+    assert.equal(error.reason.name, 'AbortError');
+    assert.equal(error.cause, error.reason);
     assert.equal(aborted.state, 'closed');
+    const custom = client().events('/feed', { signal: AbortSignal.abort('custom') });
+    assert.equal((await rejection(custom.opened)).reason, 'custom');
 
     const controller = new AbortController();
     let closedCalls = 0;

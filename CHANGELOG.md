@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `CancelledError` carries the abort signal's reason as `reason` and as the standard `cause` (#80), for requests, retry delays and `stream`/`ndjson` response bodies: a `TimeoutError` `DOMException` for `AbortSignal.timeout()`, an `AbortError` for `abort()`, or whatever you passed to `abort(reason)`. `kind` and `name` are unchanged. `events()` and `websocket()` do not carry it yet. The Wasm module grows by about 1.2 kB raw, so its size budget rises deliberately from 453.5 to 455.0 kB.
+- `CancelledError` carries the abort signal's reason as `reason` and as the standard `cause` (#80), for requests, retry delays and `stream`/`ndjson` response bodies: a `TimeoutError` `DOMException` for `AbortSignal.timeout()`, an `AbortError` for `abort()`, or whatever you passed to `abort(reason)`. `kind` and `name` are unchanged. It is also on the `opened` rejection of `events()` and `websocket()` when the signal aborts first. The Wasm module grows by about 1.2 kB raw, so its size budget rises deliberately from 453.5 to 455.0 kB.
 
 ### Changed
 - The built `wasm-module/pkg/rust_fetch_bg.wasm` is no longer committed (#232, OpenSSF Scorecard Binary-Artifacts). The repository holds only the source; `npm run build` produces the module, and CI, the release and the reproducibility check already built it. After cloning, run `npm run build` before the JavaScript tests.
