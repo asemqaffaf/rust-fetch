@@ -82,6 +82,7 @@ function streamStrategy(strategy) {
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
+const blob = readFileSync(new URL('wasm-module/js/blob.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
 const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
 const dedupe = readFileSync(new URL('wasm-module/js/dedupe.js', root), 'utf8');
@@ -92,6 +93,7 @@ const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
 ${upload.trimEnd()}
 ${observability.trimEnd()}
+${blob.trimEnd()}
 ${transport.trimEnd()}
 ${auth.trimEnd()}
 ${dedupe.trimEnd()}

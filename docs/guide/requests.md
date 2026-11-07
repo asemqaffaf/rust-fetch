@@ -27,7 +27,7 @@ Relative URLs need a `baseUrl`. In a browser page without one, they resolve agai
 | `timeoutMs` | number | Overrides the client timeout; `0` disables it |
 | `retries` | number or `RetryOptions` | Replaces the client's retry policy; `0` disables retries. Omitted object fields use standard defaults. See [Retries](/guide/timeouts-and-retries#retries) |
 | `idempotencyKey`, `idempotencyHeader` | boolean or string, string | Opt in to keyed POST/PATCH retries with server deduplication; see [Idempotency keys](/guide/timeouts-and-retries#idempotency-keys) |
-| `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'stream'` \| `'ndjson'` | See [Responses](#responses) |
+| `responseType` | `'auto'` \| `'json'` \| `'text'` \| `'binary'` \| `'blob'` \| `'stream'` \| `'ndjson'` | See [Responses](#responses) |
 | `signal` | `AbortSignal` | See [Cancellation](/guide/timeouts-and-retries#cancellation) |
 | `onDownloadProgress` | `({ loaded, total }) => void` | See [Download progress](/guide/streaming#download-progress) |
 | `onUploadProgress` | `({ loaded, total }) => void` | See [Upload progress](/guide/uploads#upload-progress) |
@@ -114,7 +114,9 @@ With the default `responseType: 'auto'`, `body` is:
 - **a `Uint8Array`** for anything else
 - **`null`** when the body is empty (e.g. `204` or `HEAD`)
 
-Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'`, `'stream'` or `'ndjson'` (see [Streaming](/guide/streaming#streaming)). JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
+`responseType: 'blob'` gives a `Blob` typed with the response's `Content-Type`, for object URLs, image previews and saving files: `link.href = URL.createObjectURL((await client.get('/invoice.pdf', { responseType: 'blob' })).body)`. It works wherever `Blob` exists (browsers, workers, Node.js 20+), with download progress, and is built from the binary body (one copy into the `Blob`).
+
+Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'`, `'blob'`, `'stream'` or `'ndjson'` (see [Streaming](/guide/streaming#streaming)). JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
 
 ## Pagination
 
