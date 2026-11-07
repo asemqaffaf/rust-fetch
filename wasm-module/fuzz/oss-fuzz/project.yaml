@@ -1,0 +1,10 @@
+homepage: "https://github.com/asemqaffaf/rust-fetch"
+language: rust
+primary_contact: "asem@qaffaf.com"
+main_repo: "https://github.com/asemqaffaf/rust-fetch"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+architectures:
+  - x86_64
