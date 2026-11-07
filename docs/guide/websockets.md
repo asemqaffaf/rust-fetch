@@ -46,6 +46,16 @@ Failures are typed like request errors: a refused or failed connection is a `Net
 
 `send()` takes a string, `ArrayBuffer`, typed array, `DataView` or `Blob`; `sendJson()` takes any JSON value. `close(code, reason)` takes 1000 (the default) or 3000–4999.
 
+## Request and response
+
+`websocket()` has no built-in request/response, because there is no standard for it: servers name the id field and shape their replies differently (`id`, `requestId`, `ack`…), and what a reconnect should do with a request in flight depends on whether resending it is safe. The [`request.mjs` recipe](https://github.com/asemqaffaf/rust-fetch/blob/main/examples/websocket-chat/request.mjs) is about sixty lines and tested in CI: it adds an id to each outgoing message, resolves with the first reply carrying it, passes every other message to your `onMessage`, and rejects (never hangs) on a timeout, an abort, a drop (the message may have been delivered, so it is never resent for you), a close, or too many pending requests. Rename `idField` to match your server and copy it into your project.
+
+```js
+const { socket, request } = requestSocket(client, '/rpc', { idField: 'requestId', reconnect: true });
+await socket.opened;
+const reply = await request({ type: 'getUser', userId: 42 }, { timeoutMs: 3000 });
+```
+
 ## Compared with Socket.IO
 
 `client.websocket()` speaks the standard WebSocket protocol. [Socket.IO](https://socket.io/docs/v4/) does not: its documentation says it is "NOT a WebSocket implementation", and that a WebSocket client cannot connect to a Socket.IO server, nor a Socket.IO client to a plain WebSocket server. So the first question is what is on the other end.
@@ -56,7 +66,7 @@ Failures are typed like request errors: a refused or failed connection is a `Net
 | Server | Any WebSocket server | A Socket.IO server (Node.js is the reference implementation; others exist) |
 | Fallback when WebSocket is blocked | None | Falls back to HTTP long-polling |
 | Reconnection | Opt-in, with jittered exponential backoff | Automatic, with exponential backoff |
-| Acknowledgements (reply to a message) | No ([#153](https://github.com/asemqaffaf/rust-fetch/issues/153), not planned yet) | Yes, a callback on `emit()` |
+| Acknowledgements (reply to a message) | No built-in; a [tested recipe](#request-and-response) covers it ([#153](https://github.com/asemqaffaf/rust-fetch/issues/153)) | Yes, a callback on `emit()` |
 | Rooms, namespaces, broadcast | No ([#154](https://github.com/asemqaffaf/rust-fetch/issues/154), under evaluation); broadcast is a server job | Yes (rooms and broadcast are server-side concepts) |
 | Also an HTTP client | Yes: one client for requests, Server-Sent Events and WebSockets, with the same retries, timeouts and typed errors | No |
 | Clients | Browsers, Web Workers and Node.js | JavaScript (browsers, Node.js, React Native) and implementations in other languages, some by third parties |

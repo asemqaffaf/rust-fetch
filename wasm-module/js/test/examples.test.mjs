@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { json, startServer, startWebSocketServer } from './helpers.mjs';
+import { json, rejection, startServer, startWebSocketServer } from './helpers.mjs';
 
 // The examples import 'rust-fetch' as an application would; point it at the package built in this repository
 const examples = fileURLToPath(new URL('../../../examples/', import.meta.url));
@@ -85,5 +85,65 @@ describe('websocket-chat', { skip: typeof WebSocket === 'undefined' && 'needs a 
     assert.deepEqual(results.received, [{ n: 1 }, { n: 2 }]);
     assert.ok(results.reconnects >= 1);
     assert.equal(results.closeCode, 1000);
+  });
+});
+
+describe('websocket-chat: request and response', { skip: typeof WebSocket === 'undefined' && 'needs a global WebSocket (Node.js 22+)' }, () => {
+  let rpc;
+  let connections = 0;
+  before(async () => {
+    rpc = await startWebSocketServer((peer, req) => {
+      connections++;
+      const path = new URL(req.url, 'http://x').pathname;
+      peer.onmessage = (raw) => {
+        const message = JSON.parse(raw);
+        if (path === '/silent') return; // never answers
+        if (path === '/drop') return setTimeout(() => peer.drop(), 10); // takes the request, then the connection goes
+        if (message.type === 'push') peer.send(JSON.stringify({ type: 'news' })); // a message that is not a reply
+        peer.send(JSON.stringify({ id: message.id, echo: message.type }));
+      };
+    });
+  });
+  after(() => rpc.close());
+
+  it('resolves each request with the reply carrying its id, in any order, and passes pushes through', async () => {
+    const { requestSocket } = await import(pathToFileURL(`${examples}websocket-chat/request.mjs`).href);
+    const { default: init, WasmClient } = await import('../../pkg/node.js');
+    await init();
+    const pushes = [];
+    const { socket, request } = requestSocket(new WasmClient(), rpc.url('/'), { onMessage: (m) => pushes.push(m) });
+    await socket.opened;
+    const replies = await Promise.all([request({ type: 'a' }), request({ type: 'push' }), request({ type: 'c' })]);
+    assert.deepEqual(replies.map((r) => r.echo), ['a', 'push', 'c']);
+    assert.deepEqual(pushes, [{ type: 'news' }]);
+    socket.close();
+    await socket.closed;
+  });
+
+  it('times out, cancels, bounds pending requests, and fails them when the connection drops or closes', async () => {
+    const { requestSocket } = await import(pathToFileURL(`${examples}websocket-chat/request.mjs`).href);
+    const { default: init, WasmClient } = await import('../../pkg/node.js');
+    await init();
+    const silent = requestSocket(new WasmClient(), rpc.url('/silent'), { timeoutMs: 60, maxPending: 2 });
+    await silent.socket.opened;
+    assert.equal((await rejection(silent.request({ type: 'x' }))).kind, 'TimeoutError');
+    const controller = new AbortController();
+    const cancelled = rejection(silent.request({ type: 'x' }, { signal: controller.signal, timeoutMs: 5000 }));
+    controller.abort();
+    assert.equal((await cancelled).kind, 'CancelledError');
+    const first = rejection(silent.request({ type: 'x' }, { timeoutMs: 5000 }));
+    const second = rejection(silent.request({ type: 'x' }, { timeoutMs: 5000 }));
+    assert.match((await rejection(silent.request({ type: 'x' }))).message, /More than 2 requests/);
+    assert.equal(silent.pending, 2);
+    silent.socket.close();
+    assert.deepEqual([(await first).kind, (await second).kind], ['CancelledError', 'CancelledError']);
+    assert.equal(silent.pending, 0);
+
+    const dropping = requestSocket(new WasmClient(), rpc.url('/drop'), { reconnect: { initialDelayMs: 20 } });
+    await dropping.socket.opened;
+    const lost = await rejection(dropping.request({ type: 'x' }, { timeoutMs: 5000 }));
+    assert.equal(lost.kind, 'NetworkError');
+    assert.match(lost.message, /may have been delivered/);
+    dropping.socket.close();
   });
 });
