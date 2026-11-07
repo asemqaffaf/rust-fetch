@@ -54,7 +54,7 @@ Each threat names a protection with its claim ID, or says why there is none.
 | TM09 | T2 | CR or LF in a header name or value | Rejected before sending (C18) | None known |
 | TM10 | T3 | Inherited properties redirect requests (`proxy`, `dispatcher`, `ca`) or change options | Prototype-free state and own-property options (C07, C08) | Tested for the options the project knows. A new Node.js option name is a risk until added |
 | TM11 | T4 | A malicious npm dependency | No runtime dependencies (C01, C02, C03) | Rust dependencies: audited weekly (C29), `unsafe` inventory pending (#246) |
-| TM12 | T4, T5 | A compromised workflow, action or release | Pinned actions, workflow lint, dependency audit, provenance verified after publish (C04, C29) | A maintainer account compromise is outside the checks. Reproducible builds are not yet verified (#232) |
+| TM12 | T4, T5 | A compromised workflow, action or release | Pinned actions, workflow lint, dependency audit, provenance verified after publish (C04, C29) | A maintainer account compromise is outside the checks. The Wasm is rebuilt twice before every release and the latest release is rebuilt weekly and compared with npm (#232) |
 | TM13 | T1, T3 | Secrets copied into logs, traces or errors | Redaction in hooks and logs (C25) | Thrown errors keep no URL password or fragment, and `redactUrl` covers the `cause` chain (#238, #239). **Residual:** the query string stays in `error.url` unless `redactUrl` is set |
 | TM14 | T6 | Interception of traffic or a forged certificate | TLS verification on by default on both Node transports, with Node's warning when turned off. The per-case TLS table comes with the matrix test (#245) | node:http accepts a name only in the subject, and on Node 20 and 22 a 1024 bit RSA key (#244). Not yet merged: the matrix test |
 | TM16 | T4, T5 | The package itself does something unexpected: a request at import, telemetry, an update check | No request at import (C05). No telemetry or update check in the source (C06) | C06 is a source review, not a test. The native addon's sockets are outside C05's check |
@@ -77,4 +77,4 @@ These are not defended against, so add your own controls:
 
 ## Known gaps
 
-Open items that weaken a row above: #223 (no external review), #232 (reproducible builds). The security guide and this page should change in the same pull request as any of them.
+Open items that weaken a row above: #223 (no external review). The security guide and this page should change in the same pull request as any of them.
