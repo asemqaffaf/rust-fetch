@@ -115,3 +115,28 @@ With the default `responseType: 'auto'`, `body` is:
 - **`null`** when the body is empty (e.g. `204` or `HEAD`)
 
 Force a type with `responseType: 'json'` (fails with a `ParseError` if the body isn't JSON), `'text'`, `'binary'`, `'stream'` or `'ndjson'` (see [Streaming](/guide/streaming#streaming)). JSON is parsed by the JS engine's `JSON.parse`, exactly like `Response.json()`.
+
+## Pagination
+
+`client.paginate(url, options)` is an async iterator over the pages of a paginated API, or over its items when you give `items`. Each page is a normal `GET`, with the client's retries, timeouts and interceptors.
+
+```js
+// Link headers (GitHub-style): the default
+for await (const repo of client.paginate('/orgs/acme/repos', { items: (response) => response.body })) {
+  console.log(repo.name);
+}
+
+// A cursor in the body
+for await (const page of client.paginate('/events', {
+  params: { limit: 100 },
+  next: (response) => response.body.nextCursor && { params: { cursor: response.body.nextCursor } },
+})) {
+  console.log(page.body.events.length);
+}
+```
+
+- `next(response)` returns the next page: a URL (relative ones resolve against the page's URL), `{ url?, params? }` (`params` merge into the request's), or nothing for the last page. The default reads the `Link` header's `rel="next"`.
+- The other options are the request options of every page (`headers`, `params`, `signal`, `timeoutMs`…). `maxPages` (default 1000) stops early; so does `break`, and no further page is requested. A `signal` that aborts rejects with a `CancelledError`.
+- A next URL on **another origin** throws an `InvalidInputError` unless you set `crossOrigin: true`, so a server cannot send your requests, and the credentials in them, to another host. A server that links back to a page it already sent ends the iteration.
+- A failing page rejects the iteration with its error, after the earlier pages were yielded. Use a plain object for `params` when you merge a cursor into them.
+

@@ -75,6 +75,7 @@ const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
 const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
+const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
@@ -83,6 +84,7 @@ ${observability.trimEnd()}
 ${transport.trimEnd()}
 ${auth.trimEnd()}
 ${extend.trimEnd()}
+${paginate.trimEnd()}
 ${guards.trimEnd()}
 `);
 types = types.replace(
@@ -94,9 +96,9 @@ if (!types.includes('[Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;')
 }
 
 // extend() is added in JavaScript (wasm-module/js/extend.js)
-types = types.replace(/(export class WasmClient \{\n)/, '$1    /** A new client with this client\'s options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */\n    extend(overrides?: ClientOptions | null): WasmClient;\n');
-if (!types.includes('extend(overrides?: ClientOptions | null): WasmClient;')) {
-  throw new Error('postbuild: could not declare WasmClient.extend');
+types = types.replace(/(export class WasmClient \{\n)/, '$1    /** A new client with this client\'s options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */\n    extend(overrides?: ClientOptions | null): WasmClient;\n    /** Pages of a paginated API, or its items with `items`. Follows the `Link: rel="next"` header unless `next` says otherwise; each page is a normal GET. */\n    paginate<T>(url: string, options: PaginateOptions & { items: (response: HttpResponse) => Iterable<T> | Promise<Iterable<T>> }): AsyncGenerator<T, void, undefined>;\n    paginate(url: string, options?: PaginateOptions): AsyncGenerator<HttpResponse, void, undefined>;\n');
+if (!types.includes('extend(overrides?: ClientOptions | null): WasmClient;') || !types.includes('paginate<T>(')) {
+  throw new Error('postbuild: could not declare WasmClient.extend and paginate');
 }
 
 writeFileSync(typesUrl, types);

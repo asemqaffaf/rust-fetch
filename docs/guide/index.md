@@ -27,6 +27,7 @@ const client = new WasmClient({ baseUrl: 'https://api.example.com/v1' });
 | `websocket(url, options?)` | `WebSocketConnection` | [WebSockets](/guide/websockets#websockets) |
 | `addRequestInterceptor(fn)`, `addResponseInterceptor(onFulfilled?, onRejected?)` | an id | [Interceptors](/guide/interceptors#interceptors) |
 | `ejectInterceptor(id)`, `clearInterceptors()` | | [Interceptors](/guide/interceptors#interceptors) |
+| `paginate(url, options?)` | `AsyncGenerator` | Pages or items of a paginated API; see [Pagination](/guide/requests#pagination) |
 | `extend(overrides?)` | `WasmClient` | A client that shares this one's options and interceptors; see [Derived clients](/guide/configuration#derived-clients) |
 | `retriesRefused` | number | Retries the [retry budget](/guide/timeouts-and-retries#retries) refused |
 | `stats()` | `ClientStats` | Detached request, latency and Node connection-pool snapshots; enables collection for subsequent requests. See [Observability](/guide/observability#metrics) |
