@@ -37,11 +37,15 @@ jobs:
       - name: Run the unit tests of the modules that parse, limit and retry under Miri
         working-directory: wasm-module
         env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check # with isolation, Miri's clock is virtual, so the 20 ms circuit cooldowns do not expire while the interpreter is slow
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check
         run: |
           cargo miri setup
-          # test_error_chain builds a reqwest client, whose TLS backend (aws-lc) is C code Miri cannot run
-          cargo miri test --lib -- budget:: circuit:: idempotency:: limiter:: lines:: sse:: timeouts:: url:: error:: types:: --skip test_error_chain
+          # Skipped, each for one reason (they all run natively in rust.yml and under AddressSanitizer here):
+          #   test_error_chain: builds a reqwest client, whose TLS backend (aws-lc) is C code Miri cannot run
+          #   epochs_one_probe_failure_recovery_and_cancelled_probe, deadlines_close_unpolled_bodies_and_wake_waiting_readers:
+          #   assert on 20 ms deadlines, which pass while Miri's interpreter is still working through a few lines
+          cargo miri test --lib -- budget:: circuit:: idempotency:: limiter:: lines:: sse:: timeouts:: url:: error:: types:: \
+            --skip test_error_chain --skip epochs_one_probe_failure_recovery_and_cancelled_probe --skip deadlines_close_unpolled_bodies_and_wake_waiting_readers
   asan:
     name: AddressSanitizer (host tests)
     runs-on: ubuntu-latest
