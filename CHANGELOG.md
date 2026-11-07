@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `baseUrl` with a query or fragment (`https://api.example.com/v1?x=1`) is now refused with an `InvalidInputError` (`parameter: 'baseUrl'`). A path appended after one became part of it, so `get('users')` requested `/v1?x=1/users`, which is the base path itself, not `/v1/users`. `baseUrl` is also kept in its parsed form, so surrounding spaces, tabs or newlines, an upper-case host and a default port no longer reach the request path (`" https://api.example.com/v1 "` requested `/v1%20/users`). The origin was never affected. Found by the new URL differential check (#217).
 
 ### Security
+- OpenSSF Scorecard (#232, `.github/workflows/scorecard.yml`): weekly and on pushes to main, uploaded to code scanning, not published to the public Scorecard API.
 - Memory-safety CI (#230, `.github/workflows/memory-safety.yml`): Miri on the unit tests of the pure Rust modules and AddressSanitizer on the whole host test suite, on pull requests that touch the Rust source and weekly. The native addon is not covered by either.
 - Strict-CSP browser test (#233, `browser-csp.test.mjs`): the browser build loads and makes requests in Chromium, Firefox and WebKit under `script-src 'self' 'wasm-unsafe-eval'` with Trusted Types required, and any policy violation fails the test.
 - Fuzzing keeps its corpus between scheduled runs (#231) and `wasm-module/fuzz/oss-fuzz/` holds the files for an OSS-Fuzz application, which has not been submitted.
