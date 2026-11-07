@@ -230,6 +230,8 @@ export interface WasmClient {
 }
 
 export interface ClientOptions extends BrowserRequestOptions {
+  /** Answer this client's buffered requests from your own code instead of the network, keeping the retry, timeout and error behaviour. Streamed responses, `events()` and `websocket()` do not use it. Build one with `createMockTransport()` from `rust-fetch/testing`. */
+  transport?: (request: any) => PromiseLike<any>;
   /** Collect attempt and logical-request timings. Off by default. */
   timings?: boolean;
   /** Collect bounded per-client latency/count samples from construction. Off by default. */
@@ -1079,6 +1081,15 @@ impl<'a> Options<'a> {
         }
     }
 
+    /// The option if the object itself has it: nothing inherited counts. For
+    /// options that can redirect requests, which `Object.prototype` must not supply.
+    fn own(&self, name: &str) -> Option<JsValue> {
+        (self.value.is_object()
+            && js_sys::Object::has_own(self.value.unchecked_ref::<js_sys::Object>(), &name.into()))
+        .then(|| self.get(name))
+        .flatten()
+    }
+
     /// The option as it is, `null` included (`undefined` when unset)
     fn raw(&self, name: &str) -> JsValue {
         if self.has(name) {
@@ -1202,6 +1213,7 @@ pub(crate) fn send_request<'a>(
     {
         builder.retry_refused = Some(std::sync::Arc::clone(refused));
         builder.observer = options.get("__observe").and_then(|v| v.dyn_into().ok());
+        builder.transport = options.own("__transport").and_then(|v| v.dyn_into().ok());
     }
     let deadline = builder.effective_deadline();
     builder.deadline = deadline.map(Box::new);

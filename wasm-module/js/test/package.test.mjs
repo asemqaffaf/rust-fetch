@@ -63,6 +63,8 @@ describe('published package', () => {
       'rust_fetch.js',
       'rust_fetch_bg.wasm',
       'rust_fetch_bg.wasm.d.ts',
+      'testing.d.ts',
+      'testing.js',
     ]);
   });
 
@@ -132,6 +134,7 @@ describe('published package', () => {
       join(project, 'consumer.ts'),
       `import init, { WasmClient, fetch_json, type HttpResponse, type RustFetchError, type ClientOptions,
          type RequestOptions, type FetchInit, type DownloadProgress, type InterceptedRequest } from 'rust-fetch';
+       import { createMockTransport, type MockCall } from 'rust-fetch/testing';
        interface User { id: number; name: string }
        await init();
        const options: ClientOptions = { baseUrl: 'https://api.example.com', timeoutMs: 1000, retries: { maxRetries: 2, retryOn: [503] },
@@ -176,7 +179,14 @@ describe('published package', () => {
        const derived: WasmClient = client.extend({ headers: { authorization: 'Bearer x' }, baseUrl: 'https://api.example.com/v2', retries: 0 });
        const again: WasmClient = derived.extend();
        // @ts-expect-error overrides are ClientOptions
-       client.extend({ timeoutMs: 'soon' });`,
+       client.extend({ timeoutMs: 'soon' });
+       // the mock transport
+       const mock = createMockTransport().on('GET', '/users/42', { status: 200, body: { id: 42 } }).on('POST', '/users', ({ body }) => ({ status: 201, body })).onAny({ status: 503 });
+       const mocked = new WasmClient({ baseUrl: 'https://api.test', transport: mock });
+       const calls: MockCall[] = mock.calls;
+       const firstPath: string = calls[0]?.path ?? '';
+       // @ts-expect-error a transport is a function
+       new WasmClient({ transport: 'mock' });`,
     );
     // The current compiler, and the oldest one the README supports
     const args = ['--noEmit', '--strict', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--lib', 'es2022,dom', 'consumer.ts'];

@@ -152,6 +152,8 @@ pub(crate) struct TransportOptions<'a> {
     pub(crate) phases: &'a crate::PhaseTimeouts,
     pub(crate) upload: Option<&'a super::upload::Upload>,
     pub(crate) observer: Option<&'a js_sys::Function>,
+    /// The client's `transport` option, used instead of the runtime's own
+    pub(crate) transport: Option<&'a js_sys::Function>,
     pub(crate) request_state: Option<&'a std::sync::Arc<super::RequestState>>,
 }
 
@@ -224,7 +226,7 @@ impl PreparedRequest {
         let method = config.method.to_reqwest();
         let redirect = redirect_mode(config);
 
-        if let Some(transport) = node_transport() {
+        if let Some(transport) = options.transport.cloned().or_else(node_transport) {
             let request = node_request(
                 url,
                 method.as_str(),
@@ -456,7 +458,7 @@ impl StreamingRequest {
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
         let redirect = redirect_mode(config);
         let method = config.method.to_reqwest();
-        if let Some(transport) = node_transport() {
+        if let Some(transport) = options.transport.cloned().or_else(node_transport) {
             let request = node_request(
                 url,
                 method.as_str(),

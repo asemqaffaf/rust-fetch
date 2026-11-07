@@ -109,6 +109,10 @@ The rust-fetch column describes the JavaScript API; the Rust crate has no interc
 The documentation is in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/main/docs) and published from it on every change to `main`.
 
 
+## Testing your code
+
+`createMockTransport()` (from `rust-fetch/testing`) answers a client's requests from routes you write, with no server or network, while the real retry, timeout and error behaviour runs: `new WasmClient({ baseUrl, transport: createMockTransport().on('GET', '/users/42', { body: { id: 42 } }) })`. See [Testing your code](https://asemqaffaf.github.io/rust-fetch/guide/testing).
+
 ## Observability
 
 Opt in with `timings: true`, `metrics: true`, `onRequestStart` / `onRequestEnd`, or `debug: true` (a debug callback also works). Node supports `DEBUG=rust-fetch`. Timings include queueing, attempts, headers, retry delays and total time; `client.stats()` returns bounded latency samples and request/pool snapshots. Streamed lifecycles finish at EOF or cancellation.

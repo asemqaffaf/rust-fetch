@@ -205,6 +205,8 @@ export interface WasmClient {
 }
 
 export interface ClientOptions extends BrowserRequestOptions {
+    /** Answer this client's buffered requests from your own code instead of the network, keeping the retry, timeout and error behaviour. Streamed responses, `events()` and `websocket()` do not use it. Build one with `createMockTransport()` from `rust-fetch/testing`. */
+    transport?: (request: any) => PromiseLike<any>;
     /** Collect attempt and logical-request timings. Off by default. */
     timings?: boolean;
     /** Collect bounded per-client latency/count samples from construction. Off by default. */
