@@ -4,7 +4,7 @@
 
 | Environment | Status |
 | --- | --- |
-| Browsers, Web Workers and service workers | Supported, directly or through bundlers like Vite and webpack; call `init()` first. Tested in CI in Chromium, Firefox and WebKit (Safari's engine), on pages, in dedicated workers and in module service workers. [`fetch()` options](/guide/requests#browser-request-options) such as `credentials` and `cache` are passed through |
+| Browsers, Web Workers and service workers | Supported, directly or through bundlers; call `init()` first. Bundlers tested in CI, by building a small app and running the build in Chromium: Vite 8 (production build and dev server) and webpack 5 (production build), both with no configuration beyond resolving `rust-fetch`; the `.wasm` is emitted as an asset and found through `new URL(…, import.meta.url)`. Not tested yet: Next.js, esbuild, Rollup and SSR builds ([#71](https://github.com/asemqaffaf/rust-fetch/issues/71)). Tested in CI in Chromium, Firefox and WebKit (Safari's engine), on pages, in dedicated workers and in module service workers. [`fetch()` options](/guide/requests#browser-request-options) such as `credentials` and `cache` are passed through |
 | Node.js 20, 22 and 24 | Supported and tested in CI; Node.js 20 is the minimum |
 | TypeScript | Definitions included; TypeScript 5.2 or newer |
 | Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 20 (with that flag), 22 and 24 |
