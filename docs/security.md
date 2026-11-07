@@ -165,7 +165,7 @@ await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, 
 - **No response smuggling:** a second response written after the first, whether in the same write or later on a kept-alive connection, is never given to the next request; the next request gets its own response.
 - **Bounded waiting:** headers that arrive one line at a time end at `timeoutMs`; an endless run of `103` responses ends at `responseTimeoutMs` with no meaningful memory growth; a body that trickles forever ends at `deadlineMs`; a `Content-Length` above `maxResponseBytes` is refused before the body is read.
 
-Not covered: the browser transports, which leave framing to the browser.
+The same raw responses are sent to every adapter, browsers included, in the "Hostile responses" table of [CONFORMANCE.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CONFORMANCE.md), with each difference explained. Browsers do their own framing, so rust-fetch cannot tighten it there: they read bare LF, obsolete line folding and a space before the header colon, and Firefox hands the raw bytes of a response that is not HTTP to the page.
 
 ## Hardened configurations
 

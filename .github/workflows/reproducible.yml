@@ -15,6 +15,7 @@ on:
       - 'wasm-module/Cargo.lock'
       - 'wasm-module/src/**'
       - 'scripts/postbuild.mjs'
+      - 'scripts/check-wasm-reproducible.sh'
       - '.github/workflows/reproducible.yml'
 permissions:
   contents: read
@@ -35,25 +36,7 @@ jobs:
         with:
           tool: wasm-pack@0.15.0 # same pin as release.yml
       - name: Build in two directories
-        run: |
-          build() {
-            (cd "$1/wasm-module" && wasm-pack build --release --target web >/dev/null 2>&1)
-            sha256sum "$1/wasm-module/pkg/rust_fetch_bg.wasm" | cut -d' ' -f1
-          }
-          cp -r "$GITHUB_WORKSPACE" /tmp/second-checkout
-          rm -rf /tmp/second-checkout/wasm-module/pkg /tmp/second-checkout/wasm-module/target
-          first=$(build "$GITHUB_WORKSPACE")
-          second=$(build /tmp/second-checkout)
-          echo "first  build ($GITHUB_WORKSPACE): $first"
-          echo "second build (/tmp/second-checkout): $second"
-          {
-            echo "### Wasm builds"
-            echo "| Directory | sha256 |"
-            echo "| --- | --- |"
-            echo "| $GITHUB_WORKSPACE | \`$first\` |"
-            echo "| /tmp/second-checkout | \`$second\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          test -n "$first" && test "$first" = "$second"
+        run: scripts/check-wasm-reproducible.sh
   published:
     name: The published Wasm rebuilds from its tag
     if: github.event_name != 'pull_request'
