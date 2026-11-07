@@ -107,11 +107,12 @@ async function redirect() {
     if (/[\r\n\0]/.test(location)) continue; // not a valid header value: refused by the server, not a client input
     locations.set(id, location);
     const before = { a: a.seen.length, b: b.seen.length };
-    await run('redirect', i, location, () => new WasmClient({ retries: 0, timeoutMs: 500, maxRedirects: 2 }).get(`${base}/?id=${id}`, { headers: { authorization: 'Bearer S', cookie: 'sid=S', 'x-api-key': 'S' }, sensitiveHeaders: ['x-api-key'] }));
+    await run('redirect', i, location, () => new WasmClient({ retries: 0, timeoutMs: 500, maxRedirects: 2, headers: { authorization: 'Bearer S', cookie: 'sid=S', 'x-api-key': 'S' }, sensitiveHeaders: ['x-api-key'] }).get(`${base}/?id=${id}`));
     // Credentials may only ever reach the origin the request started at: a's own host and port
     for (const server of [a, b]) {
       for (const request of server.seen.slice(before[server === a ? 'a' : 'b'])) {
-        const leaked = request.headers.authorization || request.headers.cookie || request.headers['x-api-key'];
+        // By value: a `Location` with user info legitimately becomes a Basic Authorization for that user, which is not the client's secret
+        const leaked = request.headers.authorization === 'Bearer S' || request.headers.cookie === 'sid=S' || request.headers['x-api-key'] === 'S';
         if (leaked && request.headers.host !== `127.0.0.1:${a.port}`) fail('redirect', i, `credentials sent to host ${request.headers.host} for Location ${JSON.stringify(location)}`, location);
       }
     }
