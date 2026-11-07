@@ -18,7 +18,8 @@ Dates aren't promised; the order is.
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
 | [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
-| [2.8.0](#280-data-and-developer-experience) | Data and developer experience | Planned |
+| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Ready to release (two open items below) |
+| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Planned |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
 
@@ -160,7 +161,33 @@ Released 2026-11-02. All 13 features are implemented, but the original "no measu
 
 The conformance suite checks 69 behaviors across six adapters (414 observations). Dedicated tests cover phase timeouts, cancellation, overload, SSE/WebSocket stalls and reconnect storms. CI also checks Rust and Node transport coverage, API compatibility, dependencies and package size. Performance results include the measured observability startup and bundle costs; they do not establish zero overhead. See [development and verification](docs/development.md) and the [changelog](CHANGELOG.md#unreleased).
 
-## 2.8.0: data and developer experience
+## 2.8.0: security verification
+
+*Goal: every security claim has a test, and the project says plainly what has not been reviewed by anyone else.* Tracking issue: [#235](https://github.com/asemqaffaf/rust-fetch/issues/235). This release was the first half of the former 2.8.0; the data and developer experience work moved to [2.9.0](#290-data-and-developer-experience).
+
+| Item | Issue | Status |
+| --- | --- | --- |
+| Threat model: assets, trust boundaries and attackers per adapter | [#222](https://github.com/asemqaffaf/rust-fetch/issues/222) | Done: [threat model](docs/threat-model.md) |
+| Independent security review: open call, scope and results | [#223](https://github.com/asemqaffaf/rust-fetch/issues/223) | Open: the call is published in [security review](docs/security-review.md); no reviewer yet |
+| Every security claim audited against a test or softened | [#224](https://github.com/asemqaffaf/rust-fetch/issues/224) | Done: [claims table](docs/security.md) |
+| SSRF guard: every IANA special-purpose range, DNS rebinding, mixed A/AAAA | [#225](https://github.com/asemqaffaf/rust-fetch/issues/225) | Done |
+| Redirects: differential test of origin matching and credential stripping | [#226](https://github.com/asemqaffaf/rust-fetch/issues/226) | Done |
+| Secret-leak canary across every output surface | [#227](https://github.com/asemqaffaf/rust-fetch/issues/227) | Done |
+| Response framing and header parsing: hostile server responses | [#228](https://github.com/asemqaffaf/rust-fetch/issues/228) | Done |
+| TLS verification test matrix with generated certificates | [#229](https://github.com/asemqaffaf/rust-fetch/issues/229) | Done |
+| Memory safety: `unsafe` inventory, Miri and AddressSanitizer (native addon included) | [#230](https://github.com/asemqaffaf/rust-fetch/issues/230) | Done: [unsafe inventory](docs/unsafe.md) |
+| Continuous fuzzing: ClusterFuzzLite, persistent corpus, Node transport targets | [#231](https://github.com/asemqaffaf/rust-fetch/issues/231) | Done (OSS-Fuzz files prepared, not submitted) |
+| Release and supply chain: reproducible Wasm, provenance, Scorecard, branch rules | [#232](https://github.com/asemqaffaf/rust-fetch/issues/232) | Done |
+| Browser build: strict CSP and Trusted Types, tested | [#233](https://github.com/asemqaffaf/rust-fetch/issues/233) | Done |
+| Vulnerability response drill: reporting path, advisory, backports and CVE | [#234](https://github.com/asemqaffaf/rust-fetch/issues/234) | Open: dry run done; a second person has not been named |
+| Error objects no longer expose the URL password and fragment by default | [#238](https://github.com/asemqaffaf/rust-fetch/issues/238) | Fixed |
+| `redactUrl` applied to `error.cause.url` | [#239](https://github.com/asemqaffaf/rust-fetch/issues/239) | Fixed |
+| Native transport no longer reuses a connection after both `Content-Length` and `Transfer-Encoding` | [#243](https://github.com/asemqaffaf/rust-fetch/issues/243) | Fixed |
+| `node:http` refuses a certificate without `subjectAltName` and a weak RSA key, like the native addon | [#244](https://github.com/asemqaffaf/rust-fetch/issues/244) | Fixed |
+
+Behavior changes to know about: a certificate that names the host only in its subject is now refused on the `node:http` transport (#244), and a `baseUrl` with a query or fragment is refused with an `InvalidInputError`. Both are listed in the [changelog](CHANGELOG.md).
+
+## 2.9.0: data and developer experience
 
 *Goal: less code around each request, and easier testing.*
 
