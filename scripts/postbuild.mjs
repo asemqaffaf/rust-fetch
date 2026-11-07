@@ -89,6 +89,7 @@ const dedupe = readFileSync(new URL('wasm-module/js/dedupe.js', root), 'utf8');
 const cache = readFileSync(new URL('wasm-module/js/cache.js', root), 'utf8');
 const schema = readFileSync(new URL('wasm-module/js/schema.js', root), 'utf8');
 const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8');
+const resume = readFileSync(new URL('wasm-module/js/resume.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
@@ -100,6 +101,7 @@ ${auth.trimEnd()}
 ${dedupe.trimEnd()}
 ${cache.trimEnd()}
 ${schema.trimEnd()}
+${resume.trimEnd()}
 ${extend.trimEnd()}
 ${paginate.trimEnd()}
 ${guards.trimEnd()}

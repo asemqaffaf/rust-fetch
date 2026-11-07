@@ -87,3 +87,19 @@ await client.get('/video.mp4', {
 ```
 
 The callback runs after each chunk of a successful response, including streamed ones. `total` comes from `Content-Length` and is `null` when the server doesn't send it. Exceptions thrown by the callback are ignored.
+
+## Resuming a broken download
+
+A long download over an unreliable network fails late. With `resume`, a streamed `get` continues from the last byte it received, instead of failing, when the connection breaks:
+
+```js
+const response = await client.get('/big-file.iso', { responseType: 'stream', resume: true }); // or { maxResumes: 5 }
+for await (const chunk of response.body) save(chunk);
+response.resumes; // how many times it continued
+```
+
+- On a broken connection (`NetworkError`, or an idle `TimeoutError`), the client sends the same request again with `Range: bytes=<received>-` and `If-Range: <validator>`, up to `maxResumes` times (default 3). The continuation goes through the whole client: interceptors, `auth`, `transport`.
+- It resumes only when the first response is a `200` with `Accept-Ranges: bytes`, a strong `ETag` (or `Last-Modified`) and no `Content-Encoding`, since ranges count encoded bytes. Otherwise the stream fails as it always did.
+- It never splices different files: the continuation must be a `206` whose `Content-Range` starts at the next byte. If the file changed (the server answers `200`) or the server continues elsewhere, the stream errors with the original error and the reason as `cause`.
+- Only the stream you read is resumed. Cancelling it, or its `signal`, stops everything. Uploads are not covered: resumable uploads ([tus](https://tus.io)) are not planned in the core; see [#51](https://github.com/asemqaffaf/rust-fetch/issues/51).
+
