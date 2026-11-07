@@ -229,7 +229,20 @@ export interface WasmClient {
   stats(): ClientStats;
 }
 
+export interface AuthOptions {
+  /** `Authorization: Bearer …` on every request to the client's origin: a token, or a function returning one (sync or async), called for each request */
+  bearer?: string | (() => string | undefined | Promise<string | undefined>);
+  /** `Authorization: Basic …` instead of a bearer token */
+  basic?: { username: string; password: string };
+  /** Called when a request gets `401`: once for all requests failing at the same time (single flight). Each failed request is then replayed once with the new token (not requests with a stream body); a second `401` rejects with the `HttpError`. If it rejects, the `HttpError` is thrown with the failure as `cause`. Needs `bearer`. */
+  refresh?: () => void | Promise<void>;
+  /** Other origins that may receive the credentials, such as `https://uploads.example.com`. The origin of `baseUrl` always may; no other origin ever does. */
+  origins?: string[];
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
+  /** Authentication for requests to the client's origin (`baseUrl`, plus `auth.origins`). Needs one of them. A request that sets its own `Authorization` header keeps it. */
+  auth?: AuthOptions;
   /** Answer this client's buffered requests from your own code instead of the network, keeping the retry, timeout and error behaviour. Streamed responses, `events()` and `websocket()` do not use it. Build one with `createMockTransport()` from `rust-fetch/testing`. */
   transport?: (request: any) => PromiseLike<any>;
   /** Collect attempt and logical-request timings. Off by default. */
