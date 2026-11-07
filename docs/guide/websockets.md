@@ -56,6 +56,16 @@ await socket.opened;
 const reply = await request({ type: 'getUser', userId: 42 }, { timeoutMs: 3000 });
 ```
 
+## Channels
+
+Rooms and presence belong to the server, but one client-side part is easy to forget: after a reconnect the server has forgotten your subscriptions. The [`channels.mjs` recipe](https://github.com/asemqaffaf/rust-fetch/blob/main/examples/websocket-chat/channels.mjs), tested in CI, keeps the list of channels, routes incoming messages by a channel field to the listeners, sends `subscribe` and `unsubscribe`, and subscribes to everything again in `onOpen`, which runs after every reconnect. The envelope (`field`, `subscribe`, `unsubscribe`) is yours, and `maxChannels` bounds it.
+
+```js
+const { socket, channel } = channelSocket(client, '/live', { reconnect: true, field: 'topic' });
+const leave = channel('prices', (data) => render(data)); // subscribes now, and again after every reconnect
+leave();                                                  // unsubscribes when the last listener leaves
+```
+
 ## Compared with Socket.IO
 
 `client.websocket()` speaks the standard WebSocket protocol. [Socket.IO](https://socket.io/docs/v4/) does not: its documentation says it is "NOT a WebSocket implementation", and that a WebSocket client cannot connect to a Socket.IO server, nor a Socket.IO client to a plain WebSocket server. So the first question is what is on the other end.
@@ -67,7 +77,7 @@ const reply = await request({ type: 'getUser', userId: 42 }, { timeoutMs: 3000 }
 | Fallback when WebSocket is blocked | None | Falls back to HTTP long-polling |
 | Reconnection | Opt-in, with jittered exponential backoff | Automatic, with exponential backoff |
 | Acknowledgements (reply to a message) | No built-in; a [tested recipe](#request-and-response) covers it ([#153](https://github.com/asemqaffaf/rust-fetch/issues/153)) | Yes, a callback on `emit()` |
-| Rooms, namespaces, broadcast | No ([#154](https://github.com/asemqaffaf/rust-fetch/issues/154), under evaluation); broadcast is a server job | Yes (rooms and broadcast are server-side concepts) |
+| Rooms, namespaces, broadcast | Rooms are server-side; a [tested recipe](#channels) keeps client subscriptions across reconnects ([#154](https://github.com/asemqaffaf/rust-fetch/issues/154)); broadcast is a server job | Yes (rooms and broadcast are server-side concepts) |
 | Also an HTTP client | Yes: one client for requests, Server-Sent Events and WebSockets, with the same retries, timeouts and typed errors | No |
 | Clients | Browsers, Web Workers and Node.js | JavaScript (browsers, Node.js, React Native) and implementations in other languages, some by third parties |
 
@@ -77,10 +87,10 @@ const reply = await request({ type: 'getUser', userId: 42 }, { timeoutMs: 3000 }
 
 | Your situation | Use |
 | --- | --- |
-| A Socket.IO server | A Socket.IO client ([#155](https://github.com/asemqaffaf/rust-fetch/issues/155) evaluates a compatible client here) |
+| A Socket.IO server | `socket.io-client` for the live part, and rust-fetch for the REST calls ([#155](https://github.com/asemqaffaf/rust-fetch/issues/155): a Socket.IO-compatible client is not planned) |
 | A plain WebSocket or Server-Sent Events API | rust-fetch |
 | REST and live updates from one client | rust-fetch |
 | Rooms, acknowledgements or a long-polling fallback | Socket.IO |
 
-The follow-ups are tracked, not promised: [acknowledgements](https://github.com/asemqaffaf/rust-fetch/issues/153), [channels](https://github.com/asemqaffaf/rust-fetch/issues/154) and [a Socket.IO-compatible client](https://github.com/asemqaffaf/rust-fetch/issues/155).
+The questions behind this table were evaluated in [#153](https://github.com/asemqaffaf/rust-fetch/issues/153) (acknowledgements: a [recipe](#request-and-response)), [#154](https://github.com/asemqaffaf/rust-fetch/issues/154) (channels: a [recipe](#channels)) and [#155](https://github.com/asemqaffaf/rust-fetch/issues/155) (a Socket.IO-compatible client: not planned).
 
