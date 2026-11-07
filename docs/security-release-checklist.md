@@ -2,15 +2,15 @@
 
 How a vulnerability report becomes a fixed, published release on every supported line. The commitments come from [SECURITY.md](https://github.com/asemqaffaf/rust-fetch/blob/main/SECURITY.md); this page is the procedure behind them. It describes what the repository and `release.yml` do today, and marks what has not been tested.
 
-## State as checked on 2026-11-06
+## State as checked on 2026-11-07
 
 | Item | State | Consequence |
 | --- | --- | --- |
-| Private vulnerability reporting (GitHub) | Disabled | The "advisory" link in SECURITY.md returns an error for outside reporters. The email address in SECURITY.md is the only working private channel until the repository owner enables it (Settings, Code security). |
-| Branch protection and rulesets on `main` | None | A push to `main` needs no review. The release process below relies on the maintainer's discipline, not on enforcement. |
-| Secret scanning push protection | Disabled | A committed secret is detected only after the push. |
+| Private vulnerability reporting (GitHub) | Enabled on 2026-11-07 | The "advisory" link in SECURITY.md works for outside reporters. It was disabled when this page was first written (2026-11-06). |
+| Rulesets on `main` | "Protect main", active | No deletion or force push; a pull request and nine passing status checks are required, with no approval count (one maintainer). Repository admins can bypass it. Tags are not covered: signed tags would block the tag push that publishes. |
+| Secret scanning push protection | Enabled on 2026-11-07 | A committed secret that matches a known pattern is blocked at push. |
 | People who can publish to npm | One maintainer | There is no second publisher. If that account is unavailable, nobody can ship a fix. |
-| Release drill | Not run | The timings in the drill table below are blank on purpose. |
+| Release drill | Dry run done on 2026-11-07, publish not exercised | See the dry run table below. |
 
 Re-check these with `gh api repos/asemqaffaf/rust-fetch` (security_and_analysis), `gh api repos/asemqaffaf/rust-fetch/rulesets` and the npm package's maintainer list before relying on this table.
 
@@ -99,19 +99,20 @@ Rehearse everything except the publish:
 
 | Step | Started (JST) | Finished (JST) | Duration | Problem found |
 | --- | --- | --- | --- | --- |
-| Acknowledge | | | | |
-| Triage | | | | |
-| Fix and test on the newest line | | | | |
-| Backport to one older line | | | | |
-| Version bump and changelog | | | | |
-| CI green on the release PR | | | | |
-| Pre-publish package check | | | | |
+| Acknowledge | 13:14:24 | 13:14:24 | 0 s | A fake report was written to a local note. No template exists for the reply, and nothing measures the 48 to 72 hour commitment |
+| Triage | 13:14:24 | 13:14:33 | 9 s | The claimed header injection (a bare CR, a bare LF, CRLF) does not reproduce: all three are refused with `InvalidInputError`, and `security.test.mjs` passes. A real report would need the affected lines named, which this step does not exercise |
+| Fix and test on the newest line | 13:14:33 | 13:14:43 | 10 s | None for a one-line documentation change |
+| Backport to one older line | 13:14:43 | 13:14:50 | 7 s | `git cherry-pick` onto `v2.6.2` conflicted (modify/delete): the file did not exist on that line. The change had to be applied by hand. Real fixes touch code that moved between lines, so expect this |
+| Version bump and changelog | 13:14:50 | 13:15:00 | 10 s | Eight files in three ecosystems change (`package.json`, `package-lock.json`, two `Cargo.toml`, three `Cargo.lock` files, `CHANGELOG.md`). There is no bump script, and a BSD `sed` edit of `package.json` silently changed nothing |
+| CI green on the release PR | 13:15:17 | 13:31:14 | 15 min 57 s | A pushed branch runs no CI; a draft pull request was needed. All 29 checks passed, 3 skipped |
+| Pre-publish package check | 13:15:27 | 13:16:07 | 40 s | None: `npm ci`, the build and `check-package.mjs --strict --no-bench` passed (36 of 36) |
 
-Status: NOT RUN. No drill has been performed, and the publish step, the tag-triggered workflow and the advisory step have never been exercised for a security fix.
+These timings are of an automated run by the maintainer's assistant, with no waiting for a second person. They show that the steps work and where they snag, not how long a human response takes.
+
+Status: DRY RUN DONE on 2026-11-07 (draft pull request #266, closed, branch deleted). Not exercised: the publish step, the tag-triggered `release.yml` (including the new reproducibility gate on a real tag), the advisory and CVE steps, the backport of a code fix, and a second person doing any step.
 
 ## Gaps this page does not close
 
 - No second person can publish or approve. A bus-factor of one is a delivery risk for the 48 to 72 hour and release commitments.
-- Private vulnerability reporting is off (see the first table).
 - The `release-*` backport branches are not kept. Each backport starts from a tag, which is slower than a maintained branch.
 - `security.txt` has an `Expires` date. After it passes, scanners treat the file as stale. Renew it at least 14 days before 2027-05-06 and bump the date in `docs/public/.well-known/security.txt`.
