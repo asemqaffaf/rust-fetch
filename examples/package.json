@@ -1,23 +1,18 @@
 {
-  "name": "rust-fetch",
-  "version": "1.1.0",
+  "name": "rust-fetch-examples",
+  "private": true,
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
+  "description": "Runnable examples for rust-fetch; each folder has an index.mjs and runs against a local server in CI",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "node-client": "node node-client/index.mjs",
+    "llm-streaming": "node llm-streaming/index.mjs",
+    "websocket-chat": "node websocket-chat/index.mjs"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "path": "^0.12.7",
     "rust-fetch": "file:../wasm-module/pkg"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2"
-  },
-  "description": "example"
+  }
 }
