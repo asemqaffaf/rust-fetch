@@ -228,7 +228,19 @@ export interface AuthOptions {
     origins?: string[];
 }
 
+/** Limits of the client's response cache (`httpCache`). */
+export interface HttpCacheOptions {
+    /** Entries kept, least recently used dropped first. Default 100. */
+    maxEntries?: number;
+    /** Estimated bytes kept in all. Default 50,000,000. */
+    maxBytes?: number;
+    /** Larger responses are not stored. Default 1,000,000. */
+    maxEntryBytes?: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
+    /** An opt-in private cache for `GET` responses, following RFC 9111: fresh responses (`Cache-Control: max-age`, `Expires`) come from memory, stale ones with an `ETag` or `Last-Modified` are revalidated with `If-None-Match` / `If-Modified-Since`, and `no-store`, `no-cache` and `Vary` are honoured. Responses carry `cached` and `revalidated`. Not related to the browser's `cache` option. Off by default. */
+    httpCache?: boolean | HttpCacheOptions;
     /** Share one request and response between identical `get` and `head` requests in flight at once. Off by default. */
     dedupe?: boolean;
     /** Authentication for requests to the client's origin (`baseUrl`, plus `auth.origins`). Needs one of them. A request that sets its own `Authorization` header keeps it. */
@@ -378,6 +390,8 @@ export interface StandardSchemaIssue {
 export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
 
 export interface RequestOptions extends BrowserRequestOptions {
+    /** `false` skips the client's `httpCache` for this request: nothing is served from it or stored in it. */
+    httpCache?: boolean;
     /** `get` and `head` only: share one request and response with identical requests in flight at once (same URL, headers and options), or `false` to opt out when the client's `dedupe` is on. Each caller gets its own response object. Not with streamed `responseType`s. */
     dedupe?: boolean;
     /** Validate the response body with a Standard Schema (Zod, Valibot, ArkType…). The body of the response becomes the schema's output; a body that fails rejects with a `ValidationError` (not retried). Not with `responseType: 'stream'` or `'ndjson'`. */
@@ -459,6 +473,10 @@ export type ResponseFulfilledInterceptor = (response: HttpResponse) => HttpRespo
 export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpResponse | Promise<HttpResponse>;
 
 export interface HttpResponse<T = any> {
+    /** With `httpCache`: `true` when served from the cache (fresh, or after a `304`) */
+    cached?: boolean;
+    /** With `httpCache`: `true` when a stale stored response was confirmed with a `304 Not Modified` */
+    revalidated?: boolean;
     /** Enabled by timings/hooks; streamed totals finalize at EOF/cancel. */
     timings?: RequestTimings;
     status: number;
