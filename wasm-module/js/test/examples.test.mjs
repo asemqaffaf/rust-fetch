@@ -147,3 +147,62 @@ describe('websocket-chat: request and response', { skip: typeof WebSocket === 'u
     dropping.socket.close();
   });
 });
+
+describe('websocket-chat: channels', { skip: typeof WebSocket === 'undefined' && 'needs a global WebSocket (Node.js 22+)' }, () => {
+  let hub;
+  const peers = [];
+  const received = [];
+  before(async () => {
+    hub = await startWebSocketServer((peer) => {
+      peers.push(peer);
+      peer.onmessage = (raw) => received.push(JSON.parse(raw));
+    });
+  });
+  after(() => hub.close());
+  const until = async (condition) => { for (let i = 0; i < 200 && !condition(); i++) await new Promise((resolve) => setTimeout(resolve, 10)); assert.ok(condition(), 'timed out'); };
+
+  it('subscribes, routes by channel, unsubscribes, and subscribes again after a reconnect', async () => {
+    const { channelSocket } = await import(pathToFileURL(`${examples}websocket-chat/channels.mjs`).href);
+    const { default: init, WasmClient } = await import('../../pkg/node.js');
+    await init();
+    const seenA = [];
+    const seenB = [];
+    const others = [];
+    const chat = channelSocket(new WasmClient(), hub.url('/'), { reconnect: { initialDelayMs: 20 }, onMessage: (m) => others.push(m) });
+    const { socket, channel } = chat;
+    await socket.opened;
+    const leaveA = channel('a', (data) => seenA.push(data));
+    channel('b', (data) => seenB.push(data));
+    await until(() => received.length === 2);
+    assert.deepEqual(received.map((m) => [m.type, m.channel]), [['subscribe', 'a'], ['subscribe', 'b']]);
+
+    peers[0].send(JSON.stringify({ channel: 'a', data: 1 }));
+    peers[0].send(JSON.stringify({ channel: 'b', data: 2 }));
+    peers[0].send(JSON.stringify({ type: 'hello' }));
+    await until(() => seenA.length && seenB.length && others.length);
+    assert.deepEqual([seenA, seenB, others], [[1], [2], [{ type: 'hello' }]]);
+
+    leaveA();
+    await until(() => received.length === 3);
+    assert.deepEqual([received[2].type, received[2].channel], ['unsubscribe', 'a']);
+
+    received.length = 0;
+    peers[0].drop(); // the connection goes: the client reconnects and joins what is left
+    await until(() => received.length === 1);
+    assert.deepEqual([received[0].type, received[0].channel], ['subscribe', 'b']);
+    assert.deepEqual(chat.channels, ['b']);
+    socket.close();
+    await socket.closed;
+  });
+
+  it('bounds the number of channels', async () => {
+    const { channelSocket } = await import(pathToFileURL(`${examples}websocket-chat/channels.mjs`).href);
+    const { default: init, WasmClient } = await import('../../pkg/node.js');
+    await init();
+    const { socket, channel } = channelSocket(new WasmClient(), hub.url('/'), { maxChannels: 2 });
+    channel('x', () => {}); channel('y', () => {});
+    assert.throws(() => channel('z', () => {}), /More than 2 channels/);
+    socket.close();
+    await socket.closed;
+  });
+});
