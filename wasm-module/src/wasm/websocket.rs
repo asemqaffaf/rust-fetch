@@ -464,7 +464,16 @@ impl WasmClient {
         if let Some(signal) = signal {
             if signal.aborted() {
                 attempt.abandon();
-                finish(&shared, 1000, String::new(), false, Some(Error::Cancelled));
+                finish_with(
+                    &shared,
+                    1000,
+                    String::new(),
+                    false,
+                    Some(super::with_abort_reason(
+                        Error::Cancelled.into_js(),
+                        Some(signal.as_ref()),
+                    )),
+                );
                 return Ok(WebSocketConnection { shared });
             }
             let weak = Rc::downgrade(&shared);
@@ -996,10 +1005,11 @@ fn finish_with(
         )
     };
     drop((attempt, timer));
-    if let Some((signal, listener)) = abort {
+    let signal = abort.map(|(signal, listener)| {
         let _ =
             signal.remove_event_listener_with_callback("abort", listener.as_ref().unchecked_ref());
-    }
+        signal
+    });
     // Close events report 1005 when the server sent no code
     let (code, reason) = match closing {
         Some((requested, requested_reason)) if code == 1005 || code == 1006 => {
@@ -1008,7 +1018,12 @@ fn finish_with(
         _ => (code, reason),
     };
     if let Some(reject) = reject_opened {
-        let error = error.unwrap_or_else(|| Error::Cancelled.into_js());
+        let error = error.unwrap_or_else(|| {
+            super::with_abort_reason(
+                Error::Cancelled.into_js(),
+                signal.as_ref().map(AsRef::as_ref),
+            )
+        });
         let _ = reject.call1(&JsValue::UNDEFINED, &error);
     }
     let info = js_sys::Object::new();
