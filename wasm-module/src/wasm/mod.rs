@@ -229,6 +229,18 @@ export interface WasmClient {
   stats(): ClientStats;
 }
 
+/** Options of `client.paginate()`: the request options of each page, and these. */
+export interface PaginateOptions extends RequestOptions {
+  /** The items of a page (an array, or a promise of one). Without it, `paginate()` yields the pages. */
+  items?: (response: HttpResponse) => Iterable<any> | Promise<Iterable<any>>;
+  /** Where the next page is: a URL (relative ones resolve against the page's URL), or `{ url?, params? }` (`params` are merged into the request's), or nothing for the last page. Default: the `Link` header's `rel="next"`. */
+  next?: (response: HttpResponse) => string | { url?: string; params?: RequestOptions['params'] } | null | undefined | false | Promise<string | { url?: string; params?: RequestOptions['params'] } | null | undefined | false>;
+  /** Stop after this many pages. Default 1000. */
+  maxPages?: number;
+  /** Follow a next URL on another origin. Default `false`: it throws an `InvalidInputError`, so credentials never follow a server's redirect to another host. */
+  crossOrigin?: boolean;
+}
+
 export interface AuthOptions {
   /** `Authorization: Bearer …` on every request to the client's origin: a token, or a function returning one (sync or async), called for each request */
   bearer?: string | (() => string | undefined | Promise<string | undefined>);

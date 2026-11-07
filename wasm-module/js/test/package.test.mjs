@@ -189,6 +189,14 @@ describe('published package', () => {
        const basic = new WasmClient({ baseUrl: 'https://api.example.com', auth: { basic: { username: 'u', password: 'p' } } });
        // @ts-expect-error bearer is a string or a function
        new WasmClient({ baseUrl: 'https://api.example.com', auth: { bearer: 5 } });
+       for await (const user of client.paginate<User>('/users', { items: (r) => r.body as User[], maxPages: 5 })) {
+         const typedName: string = user.name;
+       }
+       for await (const page of client.paginate('/users', { next: (r) => r.body.cursor && { params: { cursor: r.body.cursor } }, signal: AbortSignal.timeout(100) })) {
+         const status: number = page.status;
+       }
+       // @ts-expect-error maxPages is a number
+       client.paginate('/users', { maxPages: '5' });
        // @ts-expect-error a transport is a function
        new WasmClient({ transport: 'mock' });`,
     );
