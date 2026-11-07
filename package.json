@@ -1,7 +1,7 @@
 {
   "name": "rust-fetch-workspace",
   "private": true,
-  "version": "2.7.2",
+  "version": "0.0.0-drill.1",
   "description": "Development workspace for the rust-fetch npm package (published from wasm-module/pkg)",
   "type": "module",
   "scripts": {
