@@ -415,6 +415,8 @@ export interface StandardSchemaIssue {
 export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
 
 export interface RequestOptions extends BrowserRequestOptions {
+  /** `get` with `responseType: 'stream'` only: when the connection breaks mid-body, continue with a `Range` request (checked with `If-Range`) instead of failing, up to `maxResumes` times (default 3). Needs a server that sends `Accept-Ranges: bytes`, an `ETag` or `Last-Modified`, and no `Content-Encoding`; otherwise the stream fails as usual. `response.resumes` counts the continuations. */
+  resume?: boolean | { maxResumes?: number };
   /** `false` skips the client's `httpCache` for this request: nothing is served from it or stored in it. */
   httpCache?: boolean;
   /** `get` and `head` only: share one request and response with identical requests in flight at once (same URL, headers and options), or `false` to opt out when the client's `dedupe` is on. Each caller gets its own response object. Not with streamed `responseType`s. */
@@ -498,6 +500,8 @@ export type ResponseFulfilledInterceptor = (response: HttpResponse) => HttpRespo
 export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpResponse | Promise<HttpResponse>;
 
 export interface HttpResponse<T = any> {
+  /** With `resume`: how many times the download continued after a broken connection */
+  resumes?: number;
   /** With `httpCache`: `true` when served from the cache (fresh, or after a `304`) */
   cached?: boolean;
   /** With `httpCache`: `true` when a stale stored response was confirmed with a `304 Not Modified` */

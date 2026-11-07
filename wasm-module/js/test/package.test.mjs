@@ -222,6 +222,10 @@ describe('published package', () => {
        new WasmClient({ httpCache: true });
        // @ts-expect-error httpCache takes true or its limits
        new WasmClient({ httpCache: 'yes' });
+       const download = await client.get('/big.iso', { responseType: 'stream', resume: { maxResumes: 5 } });
+       const resumed: number | undefined = download.resumes;
+       // @ts-expect-error resume takes true or { maxResumes }
+       client.get('/big.iso', { resume: 'yes' });
        // @ts-expect-error a transport is a function
        new WasmClient({ transport: 'mock' });`,
     );
