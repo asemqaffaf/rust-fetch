@@ -1,5 +1,5 @@
 // Type guards for rust-fetch errors (#68). Shape checks, not `instanceof`: an error from another realm or copy of the package counts too.
-const ERROR_KINDS = new Set(['CircuitOpenError', 'NetworkError', 'HttpError', 'ParseError', 'TimeoutError', 'InvalidInputError', 'JsInteropError', 'CancelledError']);
+const ERROR_KINDS = new Set(['CircuitOpenError', 'NetworkError', 'HttpError', 'ParseError', 'TimeoutError', 'InvalidInputError', 'JsInteropError', 'CancelledError', 'ValidationError']);
 export function isRustFetchError(value, kind) {
   if (value === null || typeof value !== 'object') return false;
   const found = value.kind;
@@ -13,3 +13,4 @@ export const isInvalidInputError = (value) => isRustFetchError(value, 'InvalidIn
 export const isCancelledError = (value) => isRustFetchError(value, 'CancelledError');
 export const isCircuitOpenError = (value) => isRustFetchError(value, 'CircuitOpenError');
 export const isJsInteropError = (value) => isRustFetchError(value, 'JsInteropError');
+export const isValidationError = (value) => isRustFetchError(value, 'ValidationError');

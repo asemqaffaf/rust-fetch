@@ -28,6 +28,15 @@ if (types.includes('Symbol.dispose') && !types.startsWith(disposable)) {
 // wasm-bindgen can't declare generic methods, so its request methods resolve to
 // `HttpResponse` (with `body: any`). Make them generic, `get<User>(…)` style;
 // the `any` default keeps untyped calls as they were.
+// Methods taking request options also get a `schema` overload that infers the body type (#43)
+types = types.replace(
+  /^(\s+)(get|head|delete|post|put|patch|fetch)\(url: string, (options|init)\?: (RequestOptions|FetchInit) \| null\): Promise<HttpResponse>;$/gm,
+  '$1$2<S extends StandardSchema>(url: string, $3: $4 & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;\n$&',
+);
+types = types.replace(
+  /^(\s+)(post_json|put_json|patch_json)\(url: string, body: any, options\?: RequestOptions \| null\): Promise<HttpResponse>;$/gm,
+  '$1$2<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;\n$&',
+);
 const generic = /^(\s+\w+)\((.*)\): Promise<HttpResponse>;$/gm;
 const typedMethods = types.match(generic)?.length ?? 0;
 if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
@@ -75,6 +84,7 @@ const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
 const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
+const schema = readFileSync(new URL('wasm-module/js/schema.js', root), 'utf8');
 const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
@@ -83,6 +93,7 @@ ${upload.trimEnd()}
 ${observability.trimEnd()}
 ${transport.trimEnd()}
 ${auth.trimEnd()}
+${schema.trimEnd()}
 ${extend.trimEnd()}
 ${paginate.trimEnd()}
 ${guards.trimEnd()}

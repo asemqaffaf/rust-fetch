@@ -10,6 +10,7 @@ Every rejection is an `Error` whose `name` and `kind` are one of:
 | `NetworkError` | DNS, connection, TLS or CORS failure, a body cut off mid-transfer, a WebSocket that fails to connect or drops, or a limit you set | The limit that was reached, when one was: `maxResponseBytes`, `maxPendingRequests`, `maxLineBytes`, `maxEventBytes`, `maxQueuedMessages` or `maxQueuedBytes` |
 | `CancelledError` | The `signal` was aborted | `reason` and `cause`: the signal's abort reason |
 | `InvalidInputError` | Bad URL, method, header, option or body. Rejected before anything is sent. | `parameter` |
+| `ValidationError` | The response body failed the `schema` you passed. Not retried. | `issues` (what the schema reported), `status` |
 | `ParseError` | `responseType: 'json'` and the body isn't JSON | |
 | `JsInteropError` | Unexpected JS ↔ Wasm conversion failure | |
 

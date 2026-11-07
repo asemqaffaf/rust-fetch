@@ -355,7 +355,28 @@ export interface ClientOptions extends BrowserRequestOptions {
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
+/** The Standard Schema interface (https://standardschema.dev), implemented by Zod, Valibot, ArkType and others. rust-fetch depends on none of them. */
+export interface StandardSchema<Output = unknown> {
+    readonly '~standard': {
+        readonly version: 1;
+        readonly vendor: string;
+        readonly validate: (value: unknown) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+        readonly types?: { readonly input: unknown; readonly output: Output } | undefined;
+    };
+}
+export type StandardSchemaResult<Output> =
+| { readonly value: Output; readonly issues?: undefined }
+| { readonly issues: ReadonlyArray<StandardSchemaIssue> };
+export interface StandardSchemaIssue {
+    readonly message: string;
+    readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
+}
+/** The type a schema validates to */
+export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
+
 export interface RequestOptions extends BrowserRequestOptions {
+    /** Validate the response body with a Standard Schema (Zod, Valibot, ArkType…). The body of the response becomes the schema's output; a body that fails rejects with a `ValidationError` (not retried). Not with `responseType: 'stream'` or `'ndjson'`. */
+    schema?: StandardSchema;
     headers?: HeadersLike;
     params?: QueryParams;
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
@@ -455,7 +476,8 @@ export type RustFetchErrorKind =
 | 'TimeoutError'
 | 'InvalidInputError'
 | 'JsInteropError'
-| 'CancelledError';
+| 'CancelledError'
+| 'ValidationError';
 
 export interface RustFetchError extends Error {
     method?: string;
@@ -485,6 +507,8 @@ export interface RustFetchError extends Error {
     maxEventBytes?: number;
     /** CancelledError: the signal's abort reason (`controller.abort(reason)`; an `AbortError` by default, a `TimeoutError` for `AbortSignal.timeout()`). Also `cause`. */
     reason?: unknown;
+    /** ValidationError: what the schema reported */
+    issues?: ReadonlyArray<StandardSchemaIssue>;
     /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
     retryBudgetExhausted?: boolean;
     /** CircuitOpenError: the origin whose circuit refused the request */
@@ -505,6 +529,7 @@ K extends 'HttpError' ? { status: number; statusText: string } :
 K extends 'TimeoutError' ? { timeoutMs: number } :
 K extends 'InvalidInputError' ? { parameter: string } :
 K extends 'CircuitOpenError' ? { origin: string; retryAfterMs: number } :
+K extends 'ValidationError' ? { issues: ReadonlyArray<StandardSchemaIssue>; status: number } :
 {}
 );
 export type RustFetchHttpError = RustFetchErrorOf<'HttpError'>;
@@ -515,6 +540,7 @@ export type RustFetchInvalidInputError = RustFetchErrorOf<'InvalidInputError'>;
 export type RustFetchCancelledError = RustFetchErrorOf<'CancelledError'>;
 export type RustFetchCircuitOpenError = RustFetchErrorOf<'CircuitOpenError'>;
 export type RustFetchJsInteropError = RustFetchErrorOf<'JsInteropError'>;
+export type RustFetchValidationError = RustFetchErrorOf<'ValidationError'>;
 
 /** `true` for an error thrown by rust-fetch, whichever realm or copy of the package made it; with `kind`, only for that kind. */
 export function isRustFetchError(value: unknown): value is RustFetchError;
@@ -527,6 +553,7 @@ export function isInvalidInputError(value: unknown): value is RustFetchInvalidIn
 export function isCancelledError(value: unknown): value is RustFetchCancelledError;
 export function isCircuitOpenError(value: unknown): value is RustFetchCircuitOpenError;
 export function isJsInteropError(value: unknown): value is RustFetchJsInteropError;
+export function isValidationError(value: unknown): value is RustFetchValidationError;
 
 
 
@@ -785,6 +812,7 @@ export class WasmClient {
     /**
      * Make a DELETE request
      */
+    delete<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     delete<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Remove an interceptor; returns whether it was registered
@@ -797,14 +825,17 @@ export class WasmClient {
     /**
      * Make a request described by a `fetch`-style init object
      */
+    fetch<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     fetch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a GET request
      */
+    get<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     get<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a HEAD request
      */
+    head<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     head<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Create a new client
@@ -813,26 +844,32 @@ export class WasmClient {
     /**
      * Make a PATCH request; the body is taken from `init.body`
      */
+    patch<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     patch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PATCH request with a JSON body
      */
+    patch_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     patch_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request; the body is taken from `init.body`
      */
+    post<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     post<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request with a JSON body
      */
+    post_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     post_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request; the body is taken from `init.body`
      */
+    put<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     put<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request with a JSON body
      */
+    put_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     put_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a request with any method, headers and body
