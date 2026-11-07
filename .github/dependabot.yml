@@ -52,3 +52,12 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /.clusterfuzzlite
+      - /wasm-module/fuzz/oss-fuzz
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

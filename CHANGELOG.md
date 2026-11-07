@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- OpenSSF Scorecard findings (#232): `release.yml` no longer grants `contents: write` to the whole workflow, only to its one job; the two fuzzing Dockerfiles pin their base image by digest, and Dependabot now updates those digests; each release attaches the published npm tarball and its Sigstore signature (`rust-fetch-X.Y.Z.tgz.sigstore.json`, verify with `cosign verify-blob`) to the GitHub release.
+
 ## [2.8.0] - 2026-11-07
 
 ### Changed
