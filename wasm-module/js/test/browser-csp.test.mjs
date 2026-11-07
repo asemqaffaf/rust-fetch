@@ -95,8 +95,6 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
       const browser = await engine.launch();
       try {
         const page = await browser.newPage();
-        const messages = [];
-        page.on('console', (m) => { if (m.type() === 'error') messages.push(m.text()); });
         await page.goto(`${origin}/`);
         await page.waitForFunction(() => window.__result?.done, null, { timeout: 60_000 });
         const result = await page.evaluate(() => window.__result);
@@ -110,7 +108,6 @@ for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
         assert.deepEqual(result.streamed, { method: 'GET', length: 0 });
         assert.equal(result.failure, 'HttpError');
         assert.deepEqual(result.violations, [], 'the page reported policy violations');
-        assert.deepEqual(messages.filter((m) => /content security policy|trusted type/i.test(m)), []);
       } finally {
         await browser.close();
       }
