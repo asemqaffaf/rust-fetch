@@ -20,6 +20,25 @@ const compressed = {
   zstd: typeof zlib.zstdCompressSync === 'function' ? (data) => zlib.zstdCompressSync(data) : undefined,
 };
 
+const CRLF = '\r\n';
+const CORS = `Access-Control-Allow-Origin: *${CRLF}`;
+// A response as bytes, headed with CORS so a browser may read one that is well formed
+const wire = (head, body = '') => `HTTP/1.1 200 OK${CRLF}${CORS}${head.join(CRLF)}${CRLF}${CRLF}${body}`;
+const FRAMING = {
+  'conflicting-content-length': wire(['Content-Length: 2', 'Content-Length: 5'], 'ok'),
+  'content-length-with-transfer-encoding': wire(['Content-Length: 2', 'Transfer-Encoding: chunked'], `2${CRLF}ok${CRLF}0${CRLF}${CRLF}`),
+  'bad-chunk-size': wire(['Transfer-Encoding: chunked'], `zz${CRLF}ok${CRLF}0${CRLF}${CRLF}`),
+  'chunk-without-crlf': wire(['Transfer-Encoding: chunked'], `2${CRLF}okXX0${CRLF}${CRLF}`),
+  'bare-lf': `HTTP/1.1 200 OK\n${CORS.replace(CRLF, '\n')}Content-Length: 2\n\nok`,
+  'obsolete-line-folding': wire(['X-A: one', ' two', 'Content-Length: 2'], 'ok'),
+  'space-before-colon': wire(['Content-Length : 2'], 'ok'),
+  'not-http': `this is not http${CRLF}${CRLF}`,
+  'unknown-http-version': `HTTP/9.9 200 OK${CRLF}${CORS}Content-Length: 2${CRLF}${CRLF}ok`,
+  'bytes-after-the-length': wire(['Content-Length: 5', 'Content-Type: text/plain'], 'firstSMUGGLED'),
+  'body-shorter-than-length': wire(['Content-Length: 10'], 'ok'),
+  'well-formed': wire(['Content-Length: 2', 'Content-Type: text/plain'], 'ok'),
+};
+
 /** Start both origins; `extra` lets the runner serve the browser page and the package */
 export async function startServers(extra = () => false) {
   // Requests seen, per `id` query parameter, so a case can ask what reached a server
@@ -62,6 +81,13 @@ export async function startServers(extra = () => false) {
     });
 
     switch (url.pathname) {
+      case '/fault/framing': {
+        // Raw bytes, so a response can be malformed in ways http.ServerResponse never writes (#228)
+        const raw = FRAMING[url.searchParams.get('case')];
+        if (raw === undefined) return json(res, { error: 'unknown framing case' }, 404);
+        req.socket.write(raw);
+        return req.socket.end();
+      }
       case '/fault/reset':
         return req.socket.destroy();
       case '/fault/truncated':

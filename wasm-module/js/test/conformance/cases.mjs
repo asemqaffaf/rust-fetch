@@ -1,3 +1,4 @@
+import { hostileCases } from './hostile-cases.mjs';
 import { reliabilityCases } from './reliability-cases.mjs';
 // The conformance cases: one behaviour each, run unchanged on every adapter
 // (node:http, native, fetch() in Node.js, real browsers). A case's `run` is
@@ -528,4 +529,5 @@ export const cases = [
   },
 ];
 
+cases.push(...hostileCases);
 cases.push(...reliabilityCases);

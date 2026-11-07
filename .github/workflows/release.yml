@@ -37,6 +37,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Reproducible build (blocks the release)
+        # What is published must be what the tagged source builds to: two clean builds in different
+        # directories must agree with each other and with the Wasm built above (#232)
+        env:
+          COMPARE_WORKSPACE: '1'
+        run: scripts/check-wasm-reproducible.sh
+
       - name: Check tag matches package version
         run: |
           version=$(node -p "require('./wasm-module/pkg/package.json').version")
