@@ -9,16 +9,19 @@ const rejected = { error: 'NetworkError' };
 const read = { status: 200, body: 'ok' };
 const NATIVE = "the native addon's parser (hyper) reads a response it can frame without ambiguity: bare LF line endings, and Content-Length together with Transfer-Encoding (chunked wins, and the connection is closed afterwards instead of reused, #243)";
 const BROWSER = 'browsers parse the response themselves and are lenient: they read bare LF, obsolete line folding, a space before the header colon, and Content-Length together with Transfer-Encoding; rust-fetch\'s own parser does not run in a browser';
-const UNDICI = "fetch() in Node.js (undici) reads obsolete line folding and chunk data that is not followed by CRLF";
+const UNDICI = 'fetch() in Node.js (undici) reads obsolete line folding and chunk data that is not followed by CRLF on some Node.js versions and rejects them on others';
+const LIBSOUP = "WebKit on Linux (libsoup) takes a chunk size that is not hexadecimal as the end of the body: status 200 with an empty body; macOS rejects it";
 const FIREFOX = 'Firefox treats a response that is not HTTP, or has an unknown HTTP version, as an HTTP/0.9 body and hands the raw bytes to the page';
 const NODE = 'node:http rejects the response when bytes follow the declared Content-Length, where the others read the declared length and drop the rest';
 const only = (adapters, expect, why) => Object.fromEntries(adapters.map((adapter) => [adapter, { expect, why }]));
+const either = (adapters, options, why) => Object.fromEntries(adapters.map((adapter) => [adapter, { anyOf: options, why }]));
 const browsers = ['chromium', 'firefox', 'webkit'];
 const differences = {
   'framing-content-length-with-transfer-encoding': { ...only(['native'], read, NATIVE), ...only(browsers, read, BROWSER) },
-  'framing-chunk-without-crlf': only(['fetch()'], read, UNDICI),
+  'framing-bad-chunk-size': either(['webkit'], [rejected, { status: 200, body: '' }], LIBSOUP),
+  'framing-chunk-without-crlf': either(['fetch()'], [read, rejected], UNDICI),
   'framing-bare-lf': { ...only(['native'], read, NATIVE), ...only(browsers, read, BROWSER) },
-  'framing-obsolete-line-folding': { ...only(['fetch()'], read, UNDICI), ...only(browsers, read, BROWSER) },
+  'framing-obsolete-line-folding': { ...either(['fetch()'], [read, rejected], UNDICI), ...only(browsers, read, BROWSER) },
   'framing-space-before-colon': only(browsers, read, BROWSER),
   'framing-not-http': only(['firefox'], { status: 200, body: 'this is not http\r\n\r\n' }, FIREFOX),
   'framing-unknown-http-version': { chromium: { expect: read, why: BROWSER }, firefox: { expect: { status: 200, body: 'HTTP/9.9 200 OK\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 2\r\n\r\nok' }, why: FIREFOX } },
