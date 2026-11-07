@@ -18,8 +18,8 @@ Dates aren't promised; the order is.
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
 | [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
-| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Ready to release (two open items below) |
-| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Planned |
+| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Merged, not released: two items need people (an independent reviewer, a second releaser) |
+| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Mostly merged, not released; ships with 2.8.0 not before 2026-11-16 (the two-week minor cadence) |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
 
@@ -189,26 +189,26 @@ Behavior changes to know about: a certificate that names the host only in its su
 
 ## 2.9.0: data and developer experience
 
-*Goal: less code around each request, and easier testing.*
+*Goal: less code around each request, and easier testing.* All of these are on `main` under *Unreleased* in the [changelog](CHANGELOG.md); the 2.8.0 section there was never published, so the first release after it carries both.
 
-| | |
-| --- | --- |
-| Response validation with Standard Schema (Zod, Valibot, ArkType) | [#43](https://github.com/asemqaffaf/rust-fetch/issues/43) |
-| Pagination helper: iterate over pages and items | [#44](https://github.com/asemqaffaf/rust-fetch/issues/44) |
-| HTTP caching with conditional requests | [#45](https://github.com/asemqaffaf/rust-fetch/issues/45) |
-| Deduplicate identical in-flight GET requests | [#46](https://github.com/asemqaffaf/rust-fetch/issues/46) |
-| Mock transport for unit tests | [#47](https://github.com/asemqaffaf/rust-fetch/issues/47) |
-| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) |
-| Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) |
-| `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) |
-| Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) |
-| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) |
-| Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) |
-| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) |
-| Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) |
-| The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) |
-| `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) |
-| When to use `websocket()` and when to use Socket.IO | [#152](https://github.com/asemqaffaf/rust-fetch/issues/152) |
+| | | Status |
+| --- | --- | --- |
+| Response validation with Standard Schema (Zod, Valibot, ArkType) | [#43](https://github.com/asemqaffaf/rust-fetch/issues/43) | Done (`schema`, `ValidationError`) |
+| Pagination helper: iterate over pages and items | [#44](https://github.com/asemqaffaf/rust-fetch/issues/44) | Done (`client.paginate()`) |
+| HTTP caching with conditional requests | [#45](https://github.com/asemqaffaf/rust-fetch/issues/45) | Done (`httpCache`, not `cache`, which is the browser's fetch cache mode) |
+| Deduplicate identical in-flight GET requests | [#46](https://github.com/asemqaffaf/rust-fetch/issues/46) | Done (`dedupe`) |
+| Mock transport for unit tests | [#47](https://github.com/asemqaffaf/rust-fetch/issues/47) | Done (`transport`, `rust-fetch/testing`) |
+| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) | Bun and Deno tested in CI; Workers not tested |
+| Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) | Done |
+| `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) | Done |
+| Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) | Done (`auth`, scoped to the client's origins) |
+| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Vite and webpack tested; Next.js, esbuild, Rollup and SSR not |
+| Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) | Done (TypeDoc reference generated from the public types) |
+| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Node.js, LLM streaming and WebSocket examples; browser (Vite) and Worker examples not yet |
+| Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) | Blocked: needs a JSR scope and account |
+| The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) | Done |
+| `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) | Done |
+| When to use `websocket()` and when to use Socket.IO | [#152](https://github.com/asemqaffaf/rust-fetch/issues/152) | Done |
 
 ## Exploring
 
