@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-07
+
 ### Fixed
 - **node:http TLS policy matches the native addon (#244):** a certificate without a `subjectAltName` is now refused on the `node:http` transport (Node otherwise falls back to the subject common name, which browsers and rustls do not), and connections use OpenSSL security level 2, so RSA keys below 2048 bits, SHA-1 signatures and DH below 2048 bits are refused on every supported Node version (before Node 24 the default level allowed RSA 1024). Node glue grows to 60.3 kB raw (gzip 19.3, brotli 16.8); its budget rises deliberately from 59.8/19.2/16.8 to 60.5/19.4/16.95 kB.
 - `baseUrl` with a query or fragment (`https://api.example.com/v1?x=1`) is now refused with an `InvalidInputError` (`parameter: 'baseUrl'`). A path appended after one became part of it, so `get('users')` requested `/v1?x=1/users`, which is the base path itself, not `/v1/users`. `baseUrl` is also kept in its parsed form, so surrounding spaces, tabs or newlines, an upper-case host and a default port no longer reach the request path (`" https://api.example.com/v1 "` requested `/v1%20/users`). The origin was never affected. Found by the new URL differential check (#217).
@@ -397,7 +399,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.2...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.2...v2.8.0
 [2.7.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.0...v2.7.1
 [2.7.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.6.1...v2.7.0
