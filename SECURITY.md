@@ -34,6 +34,28 @@ Please include:
 
 You will receive an acknowledgement within 48 to 72 hours. Validated vulnerabilities are patched in private branches, reviewed against our test and benchmark gates, backported across all supported `2.x` release lines, and published simultaneously with a GitHub Security Advisory and CVE identifier.
 
+## How security is handled and verified
+
+Security fixes come before features in every release line. A fix ships with a regression test, and a protection is described in this file or the [security guide](https://asemqaffaf.github.io/rust-fetch/security) only while a test checks it: `claims.test.mjs` fails when a test named in the [claims table](https://asemqaffaf.github.io/rust-fetch/security#claims-and-the-tests-behind-them) no longer exists. Gaps are written down, not left out: see the known gaps in the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model), which lists what is not covered and why.
+
+Automated checks, all in GitHub Actions:
+
+| Check | What it covers |
+| --- | --- |
+| Tests and coverage on Node 20, 22 and 24 | The Wasm core, both Node transports, the native addon and the browser build, including hostile responses, redirects and credentials, the TLS matrix, the SSRF ranges and a secret-leak canary |
+| `cargo-deny` and `npm audit` | Advisories, licenses and sources for Rust and JavaScript dependencies, on every change and weekly |
+| CodeQL | JavaScript, TypeScript, Rust and workflow code |
+| Workflow lint | Security lint of the workflow files themselves |
+| Fuzzing | Parsers and the JavaScript boundary, with a corpus kept between runs, and a differential check of URL resolution against the WHATWG URL parser |
+| Memory safety | `deny(unsafe_code)` in both crates; the only `unsafe` is the Wasm allocator, listed with its invariants in `docs/unsafe.md` and checked in CI; Miri and AddressSanitizer |
+| Reproducible Wasm build | The published Wasm file is rebuilt and compared on pull requests that touch it |
+| OpenSSF Scorecard | Repository and release practices, weekly |
+| Release | npm provenance for every release, size, API and benchmark gates, and verification after publishing |
+
+Not done yet: an independent security review (#223). Until one is published, the evidence above is the project's own.
+
+See also the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model) (assets, trust boundaries and attackers per adapter) and the [Content Security Policy](https://asemqaffaf.github.io/rust-fetch/security#content-security-policy) section for the browser build.
+
 ## Security architecture and built-in protections
 
 `rust-fetch` provides built-in defenses against common client-side and server-side network attacks. Detailed configuration examples are in the [Security Guide](https://asemqaffaf.github.io/rust-fetch/security), and what the library defends against and what it leaves to you is in the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model).
