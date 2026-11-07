@@ -456,6 +456,8 @@ export interface RustFetchError extends Error {
     maxLineBytes?: number;
     /** NetworkError for a Server-Sent Event larger than `maxEventBytes`: the limit */
     maxEventBytes?: number;
+    /** CancelledError: the signal's abort reason (`controller.abort(reason)`; an `AbortError` by default, a `TimeoutError` for `AbortSignal.timeout()`). Also `cause`. */
+    reason?: unknown;
     /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
     retryBudgetExhausted?: boolean;
     /** CircuitOpenError: the origin whose circuit refused the request */

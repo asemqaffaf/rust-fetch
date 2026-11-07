@@ -481,6 +481,8 @@ export interface RustFetchError extends Error {
   maxLineBytes?: number;
   /** NetworkError for a Server-Sent Event larger than `maxEventBytes`: the limit */
   maxEventBytes?: number;
+  /** CancelledError: the signal's abort reason (`controller.abort(reason)`; an `AbortError` by default, a `TimeoutError` for `AbortSignal.timeout()`). Also `cause`. */
+  reason?: unknown;
   /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
   retryBudgetExhausted?: boolean;
   /** CircuitOpenError: the origin whose circuit refused the request */
@@ -1136,6 +1138,12 @@ pub(crate) fn send<'a>(
     let method = request.method.to_reqwest();
     send_request(client, request, options, &refused).map_err(move |error| {
         let error = refused.with_cause(JsValue::from(error));
+        let error = with_abort_reason(
+            error,
+            js_sys::Reflect::get(options, &"signal".into())
+                .ok()
+                .as_ref(),
+        );
         if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
         }
@@ -1866,18 +1874,20 @@ fn streaming_response_to_js(
                 futures_util::stream::iter(chunks).flatten(),
                 controller,
             );
-            let chunks =
-                AbortableStream::new(chunks, signal).map(|chunk| chunk.map_err(JsValue::from));
+            let abort = signal.clone();
+            let chunks = AbortableStream::new(chunks, signal)
+                .map(move |chunk| chunk.map_err(|error| cancelled_by(error, abort.as_ref())));
             let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
             set(&obj, "body", &stream)?;
             return Ok(obj.into());
         }
         Err(response) => response,
     };
-    let chunks = AbortableStream::new(response.into_stream(), signal).map(|chunk| {
+    let abort = signal.clone();
+    let chunks = AbortableStream::new(response.into_stream(), signal).map(move |chunk| {
         chunk
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()).into())
-            .map_err(JsValue::from)
+            .map_err(|error| cancelled_by(error, abort.as_ref()))
     });
     let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
     set(&obj, "body", &stream)?;
@@ -1912,6 +1922,7 @@ fn ndjson_response_to_js(
         &response.headers,
     )?;
     let mut lines = crate::lines::Lines::with_limit(max_line_bytes);
+    let abort = signal.clone();
     // Each chunk, then a final None to flush a last line without a newline
     let chunks = AbortableStream::new(response.into_stream(), signal)
         .map(Some)
@@ -1925,8 +1936,9 @@ fn ndjson_response_to_js(
             Some(Err(error)) => vec![Err(error)],
             None => lines.finish().into_iter().map(Ok).collect(),
         };
-        futures_util::stream::iter(lines.into_iter().map(|line| {
-            let line = line.map_err(JsValue::from)?;
+        let abort = abort.clone();
+        futures_util::stream::iter(lines.into_iter().map(move |line| {
+            let line = line.map_err(|error| cancelled_by(error, abort.as_ref()))?;
             parse_json_line(&line).map_err(JsValue::from)
         }))
     });
@@ -2463,6 +2475,32 @@ impl Headers {
 
         Ok(headers)
     }
+}
+
+/// The signal's abort reason on a `CancelledError`, as `reason` and the
+/// standard `cause`. Other errors, and signals that haven't aborted, are
+/// left alone: the abort is the only way a request is cancelled, and
+/// `controller.abort()` without an argument gives a `DOMException` named
+/// `AbortError`.
+pub(crate) fn with_abort_reason(error: JsValue, signal: Option<&JsValue>) -> JsValue {
+    let cancelled = js_sys::Reflect::get(&error, &"kind".into())
+        .is_ok_and(|kind| kind.as_string().as_deref() == Some("CancelledError"));
+    if let (true, Some(signal)) = (cancelled, signal) {
+        let aborted = js_sys::Reflect::get(signal, &"aborted".into())
+            .is_ok_and(|aborted| aborted.is_truthy());
+        if aborted {
+            if let Ok(reason) = js_sys::Reflect::get(signal, &"reason".into()) {
+                let _ = js_sys::Reflect::set(&error, &"reason".into(), &reason);
+                let _ = js_sys::Reflect::set(&error, &"cause".into(), &reason);
+            }
+        }
+    }
+    error
+}
+
+/// `error` as a JS error, with the abort reason if `signal` cancelled it
+fn cancelled_by(error: Error, signal: Option<&web_sys::AbortSignal>) -> JsValue {
+    with_abort_reason(JsValue::from(error), signal.map(AsRef::as_ref))
 }
 
 /// Convert Error to JsValue for WASM boundary
