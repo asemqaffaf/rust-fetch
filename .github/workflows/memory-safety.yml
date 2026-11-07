@@ -13,6 +13,9 @@ on:
       - 'wasm-module/tests/**'
       - 'wasm-module/Cargo.toml'
       - 'wasm-module/Cargo.lock'
+      - 'native/src/**'
+      - 'native/Cargo.toml'
+      - 'native/Cargo.lock'
       - '.github/workflows/memory-safety.yml'
 permissions:
   contents: read
@@ -67,3 +70,59 @@ jobs:
           RUSTFLAGS: -Zsanitizer=address
           RUSTDOCFLAGS: -Zsanitizer=address
         run: cargo test --lib --tests -Zbuild-std --target x86_64-unknown-linux-gnu
+  native-asan:
+    name: AddressSanitizer (native addon under the JS tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # The addon needs the nightly toolchain (-Zsanitizer, -Zbuild-std); the Wasm package is built
+      # with the pinned stable one, as in rust.yml. Installing stable last makes it the default, and
+      # the addon build names the nightly explicitly.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: nightly-2026-10-28
+          components: rust-src
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
+        with:
+          toolchain: 1.99.1 # same pin as rust.yml
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: |
+            wasm-module
+            native
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: wasm-pack@0.15.0 # same pin as rust.yml
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - name: Install JS dev dependencies and build the npm package
+        run: npm ci && npm run build
+      - name: Build the native addon with AddressSanitizer
+        working-directory: native
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+        run: |
+          cargo +nightly-2026-10-28 build --release -Zbuild-std --target x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/release/librust_fetch_native.so ../wasm-module/pkg/rust-fetch-native.linux-x64.node
+          # The addon must carry the sanitizer runtime, or this job would pass without checking anything
+          nm -D ../wasm-module/pkg/rust-fetch-native.linux-x64.node | grep -c ' __asan_' | grep -v '^0$'
+      - name: Run the tests that exercise the native transport
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=0:halt_on_error=1:verify_asan_link_order=0
+        run: |
+          # Node itself is not instrumented, so the sanitizer runtime is preloaded ahead of it.
+          libasan="$(gcc -print-file-name=libasan.so)"
+          test -e "$libasan"
+          LD_PRELOAD="$libasan" node --test \
+            wasm-module/js/test/client.test.mjs \
+            wasm-module/js/test/node-transport.test.mjs \
+            wasm-module/js/test/uploads.test.mjs \
+            wasm-module/js/test/response-framing.test.mjs \
+            wasm-module/js/test/tls-verification.test.mjs \
+            wasm-module/js/test/redirect-credentials.test.mjs \
+            wasm-module/js/test/security.test.mjs
