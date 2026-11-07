@@ -37,10 +37,11 @@ jobs:
       - name: Run the unit tests of the modules that parse, limit and retry under Miri
         working-directory: wasm-module
         env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check # with isolation, Miri's clock is virtual, so the 20 ms circuit cooldowns do not expire while the interpreter is slow
         run: |
           cargo miri setup
-          cargo miri test --lib -- budget:: circuit:: idempotency:: limiter:: lines:: sse:: timeouts:: url:: error:: types::
+          # test_error_chain builds a reqwest client, whose TLS backend (aws-lc) is C code Miri cannot run
+          cargo miri test --lib -- budget:: circuit:: idempotency:: limiter:: lines:: sse:: timeouts:: url:: error:: types:: --skip test_error_chain
   asan:
     name: AddressSanitizer (host tests)
     runs-on: ubuntu-latest
