@@ -9,7 +9,7 @@ How a vulnerability report becomes a fixed, published release on every supported
 | Private vulnerability reporting (GitHub) | Enabled on 2026-11-07 | The "advisory" link in SECURITY.md works for outside reporters. It was disabled when this page was first written (2026-11-06). |
 | Rulesets on `main` | "Protect main", active | No deletion or force push; a pull request and nine passing status checks are required, with no approval count (one maintainer). Repository admins can bypass it. Tags are not covered: signed tags would block the tag push that publishes. |
 | Secret scanning push protection | Enabled on 2026-11-07 | A committed secret that matches a known pattern is blocked at push. |
-| People who can publish to npm | One maintainer | There is no second publisher. If that account is unavailable, nobody can ship a fix. |
+| People who can publish a release | One maintainer | A tag push runs `release.yml`, which publishes with the `NPM_TOKEN` secret, so it is the people with Write access who can ship. There is one. If that account is unavailable, nobody can ship a fix. See "Adding a second person who can ship a fix" below. |
 | Release drill | Dry run done on 2026-11-07, publish not exercised | See the dry run table below. |
 
 Re-check these with `gh api repos/asemqaffaf/rust-fetch` (security_and_analysis), `gh api repos/asemqaffaf/rust-fetch/rulesets` and the npm package's maintainer list before relying on this table.
@@ -111,8 +111,20 @@ These timings are of an automated run by the maintainer's assistant, with no wai
 
 Status: DRY RUN DONE on 2026-11-07 (draft pull request #266, closed, branch deleted). Not exercised: the publish step, the tag-triggered `release.yml` (including the new reproducibility gate on a real tag), the advisory and CVE steps, the backport of a code fix, and a second person doing any step.
 
+## Adding a second person who can ship a fix
+
+What publishes a release is a tag. `release.yml` runs on a push of `v<major>.<minor>.<patch>` and publishes with the repository secret `NPM_TOKEN`. So the people who can ship a fix are the people who can push a tag to this repository, and a second person needs repository access, not an npm account. The owner does the following in the GitHub web interface (none of it can be done from CI or by an assistant):
+
+1. **Settings, Collaborators:** invite the person with the **Write** role, not Admin. Write can push branches and tags and re-run workflows. It cannot read or change secrets, change repository settings or edit the ruleset on `main`.
+2. **Settings, Rules, Rulesets:** add a ruleset for tags matching `v*` that restricts creation to the owner and this person, so that nobody else with Write access can publish. A ruleset on tags does not stop a repository admin, who can bypass it.
+3. **Security, Advisories:** a draft advisory is shared per advisory. Add the person as a collaborator on each one, and tell them the private reporting address from `SECURITY.md`.
+4. **npm (optional):** for the case where GitHub Actions is down, add them with `npm owner add <npm-user> rust-fetch` and require two-factor authentication on that account. This is the only step that gives a person the power to publish outside `release.yml`, and publications from outside it have no provenance.
+5. **Rehearse together:** the person runs the procedure above from the acknowledgement to the pre-publish check on a dry run, with the owner watching but not typing. Record their timings in the dry run table.
+
+This page's acceptance bar for "a second person able to publish a security release" is step 5 done by someone other than the owner. Until a person is named and has done it, that bar is not met, whatever the repository settings say.
+
 ## Gaps this page does not close
 
-- No second person can publish or approve. A bus-factor of one is a delivery risk for the 48 to 72 hour and release commitments.
+- No second person can publish or approve, and the owner has not named one. A bus-factor of one is a delivery risk for the 48 to 72 hour and release commitments. The steps to fix it are above; they need a person.
 - The `release-*` backport branches are not kept. Each backport starts from a tag, which is slower than a maintained branch.
 - `security.txt` has an `Expires` date. After it passes, scanners treat the file as stale. Renew it at least 14 days before 2027-05-06 and bump the date in `docs/public/.well-known/security.txt`.
