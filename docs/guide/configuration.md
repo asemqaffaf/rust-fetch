@@ -67,3 +67,19 @@ new WasmClient({ proxy: 'http://user:pass@proxy.internal:3128' }); // every requ
 - Browsers use the system's proxy settings and ignore this option.
 
 Invalid options throw an `InvalidInputError` right away, from the constructor.
+
+## Derived clients
+
+`client.extend(overrides)` returns a new client with this one's options and interceptors, and `overrides` on top. Use it for one client per API version, or one with an extra header.
+
+```js
+const api = new WasmClient({ baseUrl: 'https://api.example.com', timeoutMs: 10_000, retries: 3 });
+const admin = api.extend({ headers: { authorization: `Bearer ${adminToken}` } });
+const v2 = api.extend({ baseUrl: 'https://api.example.com/v2' });
+```
+
+- `headers` are merged by name (case-insensitive); the override wins. Every other option is replaced as a whole, so `extend({ retries: 0 })` turns retries off and `extend({ retries: { maxRetries: 1 } })` does not inherit the parent's `initialDelayMs`. An override of `undefined` keeps the parent's value.
+- The new client starts with the parent's interceptors, in order. Interceptors added or ejected afterwards, on either client, do not affect the other.
+- Connection pooling is by the transport, so a derived client opens no connections of its own beyond what its requests need.
+- State is not shared: a derived client has its own circuit breaker, rate limit, concurrency limit, retry budget and metrics. Create the limits you want shared on one client and send those requests through it.
+- Callbacks and objects in the options (for example `onCircuitChange`) are passed on by reference, not copied.

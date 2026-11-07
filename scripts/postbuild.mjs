@@ -71,14 +71,26 @@ function streamStrategy(strategy) {
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
+const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
-writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}\n${upload.trimEnd()}\n${observability.trimEnd()}\n${guards.trimEnd()}\n`);
+writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
+${upload.trimEnd()}
+${observability.trimEnd()}
+${extend.trimEnd()}
+${guards.trimEnd()}
+`);
 types = types.replace(
   /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
   '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',
 );
 if (!types.includes('[Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;')) {
   throw new Error('postbuild: could not declare EventStream as an async iterator');
+}
+
+// extend() is added in JavaScript (wasm-module/js/extend.js)
+types = types.replace(/(export class WasmClient \{\n)/, '$1    /** A new client with this client\'s options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */\n    extend(overrides?: ClientOptions | null): WasmClient;\n');
+if (!types.includes('extend(overrides?: ClientOptions | null): WasmClient;')) {
+  throw new Error('postbuild: could not declare WasmClient.extend');
 }
 
 writeFileSync(typesUrl, types);

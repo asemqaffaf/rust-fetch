@@ -735,6 +735,8 @@ export class IntoUnderlyingSource {
  * HTTP client for JavaScript
  */
 export class WasmClient {
+    /** A new client with this client's options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */
+    extend(overrides?: ClientOptions | null): WasmClient;
     free(): void;
     [Symbol.dispose](): void;
     /**

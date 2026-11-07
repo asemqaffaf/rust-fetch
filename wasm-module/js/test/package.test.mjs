@@ -171,7 +171,12 @@ describe('published package', () => {
        await client.get('/x', { retries: true });
        client.addRequestInterceptor((r: InterceptedRequest) => { r.headers.authorization = name; });
        client.addResponseInterceptor((r) => r, async (e: RustFetchError) => { throw e; });
-       await fetch_json('https://example.com');`,
+       await fetch_json('https://example.com');
+       // extend() returns a client of the same type
+       const derived: WasmClient = client.extend({ headers: { authorization: 'Bearer x' }, baseUrl: 'https://api.example.com/v2', retries: 0 });
+       const again: WasmClient = derived.extend();
+       // @ts-expect-error overrides are ClientOptions
+       client.extend({ timeoutMs: 'soon' });`,
     );
     // The current compiler, and the oldest one the README supports
     const args = ['--noEmit', '--strict', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--lib', 'es2022,dom', 'consumer.ts'];
@@ -233,6 +238,7 @@ describe('published package', () => {
       'export interface RustFetchError',
       'export class WasmClient',
       'constructor(options?: ClientOptions | null)',
+      'extend(overrides?: ClientOptions | null): WasmClient;',
       'get<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>',
       'export function fetch_json(url: string): Promise<any>',
     ]) {
