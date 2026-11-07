@@ -27,7 +27,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: npm
-    directories: ["/", "/docs", "/examples"]
+    directories: ["/", "/docs", "/examples", "/wasm-module/js/test/runtimes"]
     schedule:
       interval: weekly
     cooldown:
