@@ -19,12 +19,26 @@ Six areas, in the order we would start:
 
 Out of scope: vulnerabilities in Node.js, browsers, undici, a proxy or the operating system; denial of service that needs more than the documented limits to be reached; and findings that need an application to disable a documented protection.
 
+## Size
+
+Physical lines at commit `33efb92` (2026-11-07), counted with `cat | wc -l`, so comments and blank lines are included. Lines that are neither blank nor a `//` comment are in brackets.
+
+| Part | Lines |
+| --- | --- |
+| Rust core, `wasm-module/src/` | 14,783 (12,570) |
+| Native Node addon, `native/src/` | 1,735 (1,523) |
+| JavaScript, `wasm-module/js/` (`node.js`, `observability.js`, `upload.js`), excluding tests | 1,800 |
+| Rust integration tests, `wasm-module/tests/` | 1,985 (1,738) |
+| JavaScript tests, `wasm-module/js/test/` | 10,330 |
+
+Dependencies are not counted: the Rust crates are pinned in the two `Cargo.lock` files, and the JavaScript package has no runtime dependencies.
+
 ## What we give you
 
 - The [threat model](./threat-model): assets, attackers, trust boundaries per adapter, and the known gaps.
 - The [claims table](./security#claims-and-the-tests-behind-them): every protection we state, with the test that checks it, so a claim without a test is easy to find.
 - The test matrices: [URL resolution](./security#url-resolution-is-checked-against-the-whatwg-url-parser), redirects, TLS verification, hostile responses ([conformance matrix](https://github.com/asemqaffaf/rust-fetch/blob/main/CONFORMANCE.md)), the SSRF ranges, and the secret-leak canary.
-- The [unsafe inventory](./unsafe), fuzz targets with seeds, Miri and AddressSanitizer in CI, and a reproducible Wasm build check.
+- The [unsafe inventory](./unsafe), fuzz targets with seeds, Miri and AddressSanitizer in CI (the native addon included), and a reproducible Wasm build check.
 - A guide to building and running everything: [development](./development).
 
 ## How to report
