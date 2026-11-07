@@ -1,0 +1,13 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../api/rust-fetch.d.ts"],
+  "plugin": ["typedoc-plugin-markdown"],
+  "out": "api",
+  "name": "rust-fetch API reference",
+  "readme": "none",
+  "entryFileName": "index",
+  "hideBreadcrumbs": true,
+  "hidePageHeader": true,
+  "skipErrorChecking": true,
+  "excludeInternal": true
+}
