@@ -1297,6 +1297,71 @@ describe('cancellation', () => {
     assert.equal(server.requests.length, before);
   });
 
+  describe('abort reason (#80)', () => {
+    it('carries the default AbortError of abort()', async () => {
+      const controller = new AbortController();
+      const promise = client().get(server.url('/slow?ms=3000'), { signal: controller.signal });
+      setTimeout(() => controller.abort(), 20);
+      const error = await rejection(promise);
+      assert.equal(error.kind, 'CancelledError');
+      assert.equal(error.reason, controller.signal.reason);
+      assert.equal(error.reason.name, 'AbortError');
+      assert.equal(error.cause, controller.signal.reason);
+    });
+
+    it('carries a custom reason, whatever its type', async () => {
+      for (const reason of ['user left', { code: 7 }, new Error('nope')]) {
+        const controller = new AbortController();
+        const promise = client().get(server.url('/slow?ms=3000'), { signal: controller.signal });
+        setTimeout(() => controller.abort(reason), 20);
+        const error = await rejection(promise);
+        assert.equal(error.kind, 'CancelledError');
+        assert.equal(error.reason, reason);
+        assert.equal(error.cause, reason);
+      }
+    });
+
+    it('tells a deadline from a cancellation with AbortSignal.timeout()', async () => {
+      const error = await rejection(client().get(server.url('/slow?ms=3000'), { signal: AbortSignal.timeout(50) }));
+      assert.equal(error.kind, 'CancelledError');
+      assert.equal(error.reason.name, 'TimeoutError');
+    });
+
+    it('is there for an already-aborted signal', async () => {
+      const error = await rejection(client().get(server.url('/json'), { signal: AbortSignal.abort('early') }));
+      assert.equal(error.reason, 'early');
+    });
+
+    it('is there when the abort interrupts a retry delay', async () => {
+      const s = await startServer((req, res) => {
+        res.writeHead(503);
+        res.end();
+      });
+      const c = new WasmClient({ retries: { maxRetries: 5, initialDelayMs: 5000 } });
+      const error = await rejection(c.get(s.url(), { signal: AbortSignal.timeout(100) }));
+      assert.equal(error.kind, 'CancelledError');
+      assert.equal(error.reason.name, 'TimeoutError');
+      await s.close();
+    });
+
+    it('errors an in-progress stream with the reason', async () => {
+      const controller = new AbortController();
+      const res = await client().get(server.url('/stream?pause=5000'), { responseType: 'stream', signal: controller.signal });
+      const reader = res.body.getReader();
+      await reader.read();
+      controller.abort('stop');
+      const error = await reader.read().then(() => undefined, (e) => e);
+      assert.equal(error?.kind, 'CancelledError');
+      assert.equal(error.reason, 'stop');
+    });
+
+    it('is not added to other errors', async () => {
+      const error = await rejection(client().get(server.url('/status?code=404'), { signal: new AbortController().signal }));
+      assert.equal(error.kind, 'HttpError');
+      assert.equal('reason' in error, false);
+    });
+  });
+
   it('cancels during retry backoff', async () => {
     const s = await startServer((req, res) => {
       res.writeHead(503);
