@@ -182,6 +182,47 @@ describe('published package', () => {
     }
   });
 
+  it('narrows caught errors with the type guards, with TypeScript 7 and 5.2', () => {
+    writeFileSync(
+      join(project, 'guards.ts'),
+      `import { WasmClient, isRustFetchError, isHttpError, isTimeoutError, isCancelledError, type RustFetchError, type RustFetchHttpError } from 'rust-fetch';
+       const client = new WasmClient();
+       try {
+         await client.get('/users/9');
+       } catch (error) {
+         // @ts-expect-error an unknown value has no \`kind\` before narrowing
+         error.kind;
+         if (isHttpError(error)) {
+           const status: number = error.status;
+           const text: string = error.statusText;
+           const same: RustFetchHttpError = error;
+           const base: RustFetchError = error;
+           // @ts-expect-error timeoutMs belongs to TimeoutError
+           error.timeoutMs.toFixed();
+         } else if (isRustFetchError(error, 'TimeoutError')) {
+           const ms: number = error.timeoutMs;
+           const kind: 'TimeoutError' = error.kind;
+         } else if (isRustFetchError(error)) {
+           const any: RustFetchError = error;
+           const kind: RustFetchError['kind'] = any.kind;
+         } else if (isCancelledError(error)) {
+           const reason: unknown = error.reason;
+         } else {
+           throw error;
+         }
+         if (isTimeoutError(error)) {
+           const phase: 'connect' | 'response' | 'idle' | 'total' | undefined = error.phase;
+         }
+       }`,
+    );
+    const args = ['--noEmit', '--strict', '--target', 'es2022', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--lib', 'es2022,dom', 'guards.ts'];
+    for (const compiler of ['typescript', 'typescript-5.2']) {
+      const tsc = fileURLToPath(new URL(`../../../node_modules/${compiler}/bin/tsc`, import.meta.url));
+      const result = spawnSync(process.execPath, [tsc, ...args], { cwd: project, encoding: 'utf8' });
+      assert.equal(result.status, 0, `${compiler}: ${result.stdout}${result.stderr}`);
+    }
+  });
+
   it('ships TypeScript definitions for the public API', () => {
     const types = readFileSync(join(project, 'node_modules/rust-fetch/rust_fetch.d.ts'), 'utf8');
     for (const name of [

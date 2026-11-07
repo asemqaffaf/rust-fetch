@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Type guards for errors (#68): `isRustFetchError(value, kind?)` and `isHttpError`, `isTimeoutError`, `isNetworkError`, `isParseError`, `isInvalidInputError`, `isCancelledError`, `isCircuitOpenError`, `isJsInteropError`, with TypeScript types that narrow `catch (error)` to the fields of that kind (`RustFetchHttpError` has `status` and `statusText`, and so on; `RustFetchErrorOf<K>`). They check the error's shape instead of `instanceof`, so an error from another realm or a second copy of the package is recognised. The JavaScript glue grows by 1.2 kB, so its size budget rises deliberately from 102.0 to 103.2 kB.
 - `CancelledError` carries the abort signal's reason as `reason` and as the standard `cause` (#80), for requests, retry delays and `stream`/`ndjson` response bodies: a `TimeoutError` `DOMException` for `AbortSignal.timeout()`, an `AbortError` for `abort()`, or whatever you passed to `abort(reason)`. `kind` and `name` are unchanged. It is also on the `opened` rejection of `events()` and `websocket()` when the signal aborts first. The Wasm module grows by about 1.2 kB raw, so its size budget rises deliberately from 453.5 to 455.0 kB.
 
 ### Changed
