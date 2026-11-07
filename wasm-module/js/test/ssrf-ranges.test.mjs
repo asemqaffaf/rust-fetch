@@ -177,6 +177,44 @@ describe('allowPrivateNetwork: false checks every address a name resolves to', a
     assert.ok(asked.filter((name) => name === 'rebind.test').length >= 2, `resolver was asked ${asked.length} time(s)`);
   });
 
+  it('never connects to the private address a name moves to after a public answer', async () => {
+    // A resolver that answers with a public address first and a loopback address from then on (a short TTL).
+    // The loopback address is where a real server listens: it must see no connection from any request.
+    const { createServer } = await import('node:http');
+    let connections = 0;
+    const server = createServer((request, response) => response.end('reached')).on('connection', () => { connections += 1; });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    let lookups = 0;
+    const lookupsBefore = asked.length;
+    answers.set('moving.test', ['1.1.1.1']);
+    const lookup = dns.lookup;
+    try {
+      // After the first lookup the name moves to loopback, as a rebinding resolver does
+      const stub = dns.lookup;
+      dns.lookup = (hostname, options, callback) => {
+        if (hostname === 'moving.test') {
+          lookups += 1;
+          if (lookups > 1) answers.set('moving.test', ['127.0.0.1']);
+        }
+        return stub(hostname, options, callback);
+      };
+      const quick = new WasmClient({ allowPrivateNetwork: false, retries: 0, timeoutMs: 1500 });
+      const outcomes = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        outcomes.push(await quick.get(`http://moving.test:${port}/`).then(() => 'reached', (error) => (/Blocked: /.test(error.message) ? 'blocked' : 'failed')));
+      }
+      assert.equal(connections, 0, `the loopback server saw ${connections} connection(s); outcomes: ${outcomes.join(', ')}`);
+      assert.ok(!outcomes.includes('reached'), outcomes.join(', '));
+      assert.ok(outcomes.slice(1).every((outcome) => outcome === 'blocked'), `after the move: ${outcomes.join(', ')}`);
+      assert.ok(asked.length > lookupsBefore);
+    } finally {
+      dns.lookup = lookup;
+      answers.delete('moving.test');
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('puts the original resolver back', () => {
     dns.lookup = original;
     assert.equal(dns.lookup, original);
