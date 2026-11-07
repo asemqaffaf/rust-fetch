@@ -143,7 +143,7 @@ const fetcher = new WasmClient({ allowPrivateNetwork: false, maxResponseBytes: 5
 await fetcher.get(userUrl); // NetworkError "Blocked: … resolves to 10.0.0.5, a private or reserved address" for internal targets
 ```
 
-- **Tested against the IANA registries:** `ssrf-ranges.test.mjs` takes every block the IANA IPv4 and IPv6 special-purpose registries list as not globally reachable, and tries its first, middle and last address and the addresses next to it. A resolver it controls returns mixed public and private answers, and the name is asked again for every request.
+- **Tested against the IANA registries:** `ssrf-ranges.test.mjs` takes every block the IANA IPv4 and IPv6 special-purpose registries list as not globally reachable, and tries its first, middle and last address and the addresses next to it. A resolver it controls returns mixed public and private answers, and the name is asked again for every request. A resolver that answers with a public address first and a loopback address afterwards never gets a connection to a local server.
 - **Every address is checked when connecting:** the host's DNS answers (all of them), or the IP address itself. So DNS rebinding can't get past it, and each redirect is checked again.
 - **Blocked ranges:**
   - IPv4: loopback, RFC 1918 private, link-local (including the 169.254.169.254 metadata endpoint), carrier-grade NAT, "this network", multicast, reserved and documentation ranges
@@ -266,6 +266,22 @@ Secret scanning and Dependabot security updates are enabled for the GitHub repos
 - Secret scanning and Dependabot security updates were verified enabled through GitHub's API on 2026-10-29.
 
 See [observability](./guide/observability.md) for redaction boundaries and [reliability](./reliability.md) for the fault methodology and gap decisions.
+
+## Where a credential may appear
+
+A credential is whatever the application gives the client to authenticate: the URL user info and password, `Authorization`, `Cookie`, `Proxy-Authorization`, any name in `sensitiveHeaders`, a proxy password and a request body. `secret-canary.test.mjs` sends a unique string for each through nine failing scenarios and searches everything the application can observe, on the native addon and, as `secret-canary-js.test.mjs`, on node:http.
+
+| Place | May hold a credential? |
+| --- | --- |
+| The request the client sends to the origin it was given | **Yes.** That is what it is for |
+| A redirect hop to the same origin | **Yes**, and only there: another host, port or scheme gets none of the client's own credentials (see [redirects](#redirects-and-credentials)) |
+| The proxy | The proxy password only, as `Proxy-Authorization`; never the origin |
+| Debug entries (`debug`, `DEBUG=rust-fetch`), lifecycle hooks, `stats()`, `console` | **No.** Header values are `[REDACTED]`, and URL user info, query and fragment are removed |
+| An error's `message`, `stack`, own properties and `cause` chain | **No** for headers, a proxy password and the body. The URL keeps its query by default, never the URL password (`***`) or the fragment; `redactUrl` removes every part, including on `error.cause` |
+| A response body in an `HttpError` | **Yes.** It is what the server sent; do not log whole error objects from an untrusted upstream |
+| An application's own interceptor, logger or serializer | Outside the library; it sees what it is given |
+
+Browsers: hooks and logs are checked by `observability-browser.test.mjs`; the nine-scenario canary runs on the two Node transports, where a proxy and a socket-level failure exist.
 
 ## Redirects and credentials
 
