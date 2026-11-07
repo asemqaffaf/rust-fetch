@@ -6,7 +6,7 @@ Runnable examples for rust-fetch. Each folder has an `index.mjs` that exports a 
 | --- | --- | --- |
 | [`node-client/`](node-client) | A production client for a JSON API: base URL, timeouts, retries, bearer auth, interceptors, idempotency keys, typed errors, metrics | `BASE_URL=https://api.example.com TOKEN=… npm run node-client` |
 | [`llm-streaming/`](llm-streaming) | Server-Sent Events from an OpenAI-compatible API, and NDJSON from Ollama | `BASE_URL=http://localhost:11434 npm run llm-streaming` |
-| [`websocket-chat/`](websocket-chat) | A WebSocket client that reconnects by itself and queues messages while away (Node.js 22+) | `URL=wss://chat.example.com/room npm run websocket-chat` |
+| [`websocket-chat/`](websocket-chat) | A WebSocket client that reconnects by itself and queues messages while away, and a request/response helper over a WebSocket (`request.mjs`); Node.js 22+ | `URL=wss://chat.example.com/room npm run websocket-chat` |
 
 ```sh
 cd examples
