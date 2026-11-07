@@ -115,3 +115,5 @@ Status: NOT RUN. No drill has been performed, and the publish step, the tag-trig
 - Private vulnerability reporting is off (see the first table).
 - The `release-*` backport branches are not kept. Each backport starts from a tag, which is slower than a maintained branch.
 - `security.txt` has an `Expires` date. After it passes, scanners treat the file as stale. Renew it at least 14 days before 2027-05-06 and bump the date in `docs/public/.well-known/security.txt`.
+
+<!-- drill: harmless one-line change, 2026-11-07 -->
