@@ -45,3 +45,32 @@ Early Node.js 20 releases (20.11 tested) fail to connect when offered more than 
 Failures are typed like request errors: a refused or failed connection is a `NetworkError`, an attempt that takes too long a `TimeoutError`, a JSON message that doesn't parse a `ParseError`, and closing before the first connection opens rejects `opened` with a `CancelledError`. With `reconnect`, a failed attempt or an unexpected drop (close codes 1001, 1006 and 1011–1014) is retried with jittered exponential backoff, and the count resets once a connection opens. A server that closes normally (1000) or with its own code isn't reconnected to. An exception thrown by a callback doesn't affect the connection; it's reported as an unhandled promise rejection. As with an exception in a handler of the platform's own `WebSocket`, Node.js then ends the process unless you handle it (`process.on('unhandledRejection', …)`), so catch errors inside your callbacks.
 
 `send()` takes a string, `ArrayBuffer`, typed array, `DataView` or `Blob`; `sendJson()` takes any JSON value. `close(code, reason)` takes 1000 (the default) or 3000–4999.
+
+## Compared with Socket.IO
+
+`client.websocket()` speaks the standard WebSocket protocol. [Socket.IO](https://socket.io/docs/v4/) does not: its documentation says it is "NOT a WebSocket implementation", and that a WebSocket client cannot connect to a Socket.IO server, nor a Socket.IO client to a plain WebSocket server. So the first question is what is on the other end.
+
+| | `client.websocket()` | Socket.IO |
+| --- | --- | --- |
+| Protocol | Standard WebSocket (RFC 6455) | Its own protocol, carried over HTTP long-polling and WebSocket |
+| Server | Any WebSocket server | A Socket.IO server (Node.js is the reference implementation; others exist) |
+| Fallback when WebSocket is blocked | None | Falls back to HTTP long-polling |
+| Reconnection | Opt-in, with jittered exponential backoff | Automatic, with exponential backoff |
+| Acknowledgements (reply to a message) | No ([#153](https://github.com/asemqaffaf/rust-fetch/issues/153), not planned yet) | Yes, a callback on `emit()` |
+| Rooms, namespaces, broadcast | No ([#154](https://github.com/asemqaffaf/rust-fetch/issues/154), under evaluation); broadcast is a server job | Yes (rooms and broadcast are server-side concepts) |
+| Also an HTTP client | Yes: one client for requests, Server-Sent Events and WebSockets, with the same retries, timeouts and typed errors | No |
+| Clients | Browsers, Web Workers and Node.js | JavaScript (browsers, Node.js, React Native) and implementations in other languages, some by third parties |
+
+**`websocket()` is enough when** you talk to a plain WebSocket (or Server-Sent Events) API, you want REST calls and live updates on one client with shared configuration, and you need reconnection, JSON messages and typed errors but not rooms, acknowledgements or a polling fallback.
+
+**Socket.IO (or a hosted service such as Ably or Pusher) is still the right tool when** the backend is already Socket.IO, you rely on its rooms or acknowledgements, WebSockets are blocked on your users' networks, or you build heavy multi-user realtime features.
+
+| Your situation | Use |
+| --- | --- |
+| A Socket.IO server | A Socket.IO client ([#155](https://github.com/asemqaffaf/rust-fetch/issues/155) evaluates a compatible client here) |
+| A plain WebSocket or Server-Sent Events API | rust-fetch |
+| REST and live updates from one client | rust-fetch |
+| Rooms, acknowledgements or a long-polling fallback | Socket.IO |
+
+The follow-ups are tracked, not promised: [acknowledgements](https://github.com/asemqaffaf/rust-fetch/issues/153), [channels](https://github.com/asemqaffaf/rust-fetch/issues/154) and [a Socket.IO-compatible client](https://github.com/asemqaffaf/rust-fetch/issues/155).
+

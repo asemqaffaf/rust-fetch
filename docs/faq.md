@@ -21,6 +21,9 @@ For Server-Sent Events APIs (OpenAI-compatible and others), use `client.events(u
 **How do I reconnect a WebSocket automatically?**
 `client.websocket(url, { reconnect: true })` reconnects after failures and unexpected drops with exponential backoff, and reports failures as typed errors. See [WebSockets](/guide/websockets#websockets).
 
+**Can `client.websocket()` replace Socket.IO?**
+Only if your server speaks plain WebSocket. Socket.IO uses its own protocol, so its clients and servers don't interoperate with plain WebSockets, and it adds rooms, acknowledgements and a long-polling fallback that `websocket()` doesn't have. It replaces a raw `WebSocket` plus a reconnect wrapper plus an HTTP client. See [Compared with Socket.IO](/guide/websockets#compared-with-socketio).
+
 **How do I type the response body in TypeScript?**
 `client.get<User>('/users/42')` resolves to `HttpResponse<User>`. See [TypeScript](/guide/typescript#typescript).
 
