@@ -159,6 +159,7 @@ export default defineConfig({
           items: [
             { text: 'Security', link: '/security' },
             { text: 'Threat model', link: '/threat-model' },
+            { text: 'Independent review', link: '/security-review' },
             { text: 'Performance', link: '/performance' },
             { text: 'Reliability under faults', link: '/reliability' },
             { text: 'Transport conformance', link: '/conformance' },

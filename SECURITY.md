@@ -52,7 +52,7 @@ Automated checks, all in GitHub Actions:
 | OpenSSF Scorecard | Repository and release practices, weekly |
 | Release | npm provenance for every release, size, API and benchmark gates, and verification after publishing |
 
-Not done yet: an independent security review (#223). Until one is published, the evidence above is the project's own.
+Not done yet: an independent security review (#223). Until one is published, the evidence above is the project's own. There is an [open call for reviewers](https://asemqaffaf.github.io/rust-fetch/security-review) with the scope, what we provide and how to report.
 
 See also the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model) (assets, trust boundaries and attackers per adapter) and the [Content Security Policy](https://asemqaffaf.github.io/rust-fetch/security#content-security-policy) section for the browser build.
 
