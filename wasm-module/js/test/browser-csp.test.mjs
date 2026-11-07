@@ -24,7 +24,9 @@ window.__result = result;
 // Controls first, before the listener: these two are meant to be blocked, and each fires a violation event
 try { eval('1'); result.controls.evalBlocked = false; } catch { result.controls.evalBlocked = true; }
 try { document.body.innerHTML = 'x'; result.controls.innerHtmlBlocked = false; } catch { result.controls.innerHtmlBlocked = true; }
-document.addEventListener('securitypolicyviolation', (e) => result.violations.push(e.violatedDirective + ' ' + (e.blockedURI || e.sample || '')));
+// Violation events are queued as tasks: let the two the controls caused arrive before listening
+await new Promise((resolve) => setTimeout(resolve, 100));
+document.addEventListener('securitypolicyviolation', (e) => result.violations.push(e.violatedDirective + ' ' + (e.blockedURI || '') + ' ' + (e.sample || '')));
 window.addEventListener('error', (e) => result.violations.push('error ' + e.message));
 window.addEventListener('unhandledrejection', (e) => result.violations.push('rejection ' + e.reason));
 try {
