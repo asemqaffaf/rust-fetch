@@ -94,15 +94,32 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | maxPendingRequests refuses one more, without sending it | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | retryBudget refuses a retry, keeping the attempt’s error | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+## Hostile responses
+
+| Behaviour | node:http | native | fetch() in Node.js | Chromium | Firefox | WebKit |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| A well-formed raw response is read (control) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Conflicting Content-Length values are rejected | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Content-Length together with Transfer-Encoding is rejected | ✓ | differs (7) | ✓ | differs (8) | differs (8) | differs (8) |
+| A chunk size that is not hexadecimal is rejected | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Chunk data not followed by CRLF is rejected | ✓ | ✓ | differs (9) | ✓ | ✓ | ✓ |
+| Bare LF line endings are rejected | ✓ | differs (7) | ✓ | differs (8) | differs (8) | differs (8) |
+| Obsolete line folding is rejected | ✓ | ✓ | differs (9) | differs (8) | differs (8) | differs (8) |
+| A space before the header colon is rejected | ✓ | ✓ | ✓ | differs (8) | differs (8) | differs (8) |
+| A response that is not HTTP is rejected | ✓ | ✓ | ✓ | ✓ | differs (10) | ✓ |
+| An unknown HTTP version is rejected | ✓ | ✓ | ✓ | differs (8) | differs (10) | ✓ |
+| A body shorter than its Content-Length is rejected | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Bytes after the declared length never reach the caller | differs (11) | ✓ | ✓ | ✓ | ✓ | ✓ |
+
 ## Reliability and observability
 
 | Behaviour | node:http | native | fetch() in Node.js | Chromium | Firefox | WebKit |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | Sixteen SSE streams recover from repeated immediate closes with jittered backoff | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sixteen WebSockets recover from repeated immediate drops with jittered backoff | differs (7) | differs (7) | differs (7) | ✓ | ✓ | ✓ |
+| Sixteen WebSockets recover from repeated immediate drops with jittered backoff | differs (12) | differs (12) | differs (12) | ✓ | ✓ | ✓ |
 | A reset response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | A truncated response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| A headers response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | differs (8) |
+| A headers response is a typed network failure | ✓ | ✓ | ✓ | ✓ | ✓ | differs (13) |
 | A idle connection is bounded by a timer | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | A half-open connection is bounded by a timer | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Retry-After recovery returns the successful retry | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -112,9 +129,9 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 | Errors identify the final request and retry count | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Trace context reaches only allowlisted origins | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | A silent SSE connection ends with a typed idle timeout | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| A silent WebSocket closes with a typed idle timeout | differs (7) | differs (7) | differs (7) | ✓ | ✓ | ✓ |
+| A silent WebSocket closes with a typed idle timeout | differs (12) | differs (12) | differs (12) | ✓ | ✓ | ✓ |
 | Ordinary errors retain the final URL after a redirect | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Upload-progress attempts report the transport actually used | ✓ | ✓ | differs (9) | differs (9) | differs (9) | differs (9) |
+| Upload-progress attempts report the transport actually used | ✓ | ✓ | differs (14) | differs (14) | differs (14) | differs (14) |
 
 ## Documented differences
 
@@ -124,6 +141,11 @@ Each behaviour below runs the same test code on every adapter rust-fetch has: bo
 4. WebKit decodes responses itself: on macOS a corrupt gzip body fails, but on Linux (libsoup) it's passed through as it arrived, which rust-fetch can't detect
 5. browsers read a response ahead of the page themselves, however slowly it's consumed: their own fetch() took 59–64 MB of 64 in this test, as rust-fetch did; how far varies by browser and machine
 6. only the Node.js entry checks addresses; browsers enforce their own private-network rules (documented)
-7. Node.js 20 requires --experimental-websocket; without it WebSocket cases are unavailable.
-8. WebKit's network stack controls header-buffer limits: macOS accepts the tested 1 MiB header, while Linux rejects it as a NetworkError. Neither limit is configurable by the JavaScript adapter.
-9. Upload progress uses XMLHttpRequest in browsers, fetch in a runtime without XHR, and node:http in Node (including when the native addon is installed).
+7. the native addon's parser (hyper) reads a response it can frame without ambiguity: bare LF line endings, and Content-Length together with Transfer-Encoding (chunked wins, and the connection is closed afterwards instead of reused, #243)
+8. browsers parse the response themselves and are lenient: they read bare LF, obsolete line folding, a space before the header colon, and Content-Length together with Transfer-Encoding; rust-fetch's own parser does not run in a browser
+9. fetch() in Node.js (undici) reads obsolete line folding and chunk data that is not followed by CRLF
+10. Firefox treats a response that is not HTTP, or has an unknown HTTP version, as an HTTP/0.9 body and hands the raw bytes to the page
+11. node:http rejects the response when bytes follow the declared Content-Length, where the others read the declared length and drop the rest
+12. Node.js 20 requires --experimental-websocket; without it WebSocket cases are unavailable.
+13. WebKit's network stack controls header-buffer limits: macOS accepts the tested 1 MiB header, while Linux rejects it as a NetworkError. Neither limit is configurable by the JavaScript adapter.
+14. Upload progress uses XMLHttpRequest in browsers, fetch in a runtime without XHR, and node:http in Node (including when the native addon is installed).
