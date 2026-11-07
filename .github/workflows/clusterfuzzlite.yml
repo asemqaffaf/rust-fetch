@@ -1,0 +1,38 @@
+name: ClusterFuzzLite
+# Continuous fuzzing of the six parser targets on every pull request that can change them (#231).
+# A crash is reported as a code scanning alert, which only people with access to the repository's
+# security tab can see, instead of as a public artifact with the reproducer in it.
+on:
+  pull_request:
+    paths:
+      - 'wasm-module/src/**'
+      - 'wasm-module/fuzz/**'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/clusterfuzzlite.yml'
+permissions:
+  contents: read
+concurrency:
+  group: clusterfuzzlite-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload the SARIF report to code scanning
+    steps:
+      - name: Build the fuzz targets
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: rust
+          sanitizer: address
+      - name: Fuzz the targets this pull request can reach
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ github.token }}
+          fuzz-seconds: 300
+          mode: code-change
+          sanitizer: address
+          output-sarif: true
