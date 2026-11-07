@@ -26,5 +26,5 @@ All hand-written `unsafe` in this repository, and what each use relies on. Both 
 
 ## Not covered yet
 
-- **Miri** on the pure Rust modules (limiter, circuit breaker, parsers, retry logic) and **AddressSanitizer** on the native addon tests, including cancellation and worker shutdown: not run. Both need a nightly toolchain, and neither has been run here.
+- **Miri and AddressSanitizer** run in `.github/workflows/memory-safety.yml`. Miri interprets the unit tests of the budget, circuit breaker, idempotency, limiter, line and SSE parsers, timeouts, URL, error and type modules (53 tests, strict provenance, symbolic alignment check) and skips three it cannot judge: one builds a TLS client whose backend is C code, two assert on 20 ms deadlines that pass while the interpreter is still running. AddressSanitizer runs the whole host test suite of the Rust crate, dependencies included. Neither covers the Wasm allocator above, the native addon (`native/`, exercised only through the JavaScript tests, without a sanitizer) or the JavaScript/Wasm boundary.
 - **Dependencies.** This list is the code in this repository. `cargo geiger` or `cargo vet` output for the dependency tree (hyper, rustls, ring, dlmalloc, napi and the rest) is not part of CI.
