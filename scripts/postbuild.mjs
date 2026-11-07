@@ -86,6 +86,7 @@ const blob = readFileSync(new URL('wasm-module/js/blob.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
 const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
 const dedupe = readFileSync(new URL('wasm-module/js/dedupe.js', root), 'utf8');
+const cache = readFileSync(new URL('wasm-module/js/cache.js', root), 'utf8');
 const schema = readFileSync(new URL('wasm-module/js/schema.js', root), 'utf8');
 const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
@@ -97,6 +98,7 @@ ${blob.trimEnd()}
 ${transport.trimEnd()}
 ${auth.trimEnd()}
 ${dedupe.trimEnd()}
+${cache.trimEnd()}
 ${schema.trimEnd()}
 ${extend.trimEnd()}
 ${paginate.trimEnd()}

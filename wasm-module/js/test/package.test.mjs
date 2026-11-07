@@ -215,6 +215,13 @@ describe('published package', () => {
        try { await client.get('/x', { schema: handWritten }); } catch (error) {
          if (isValidationError(error)) { const first: string | undefined = error.issues[0]?.message; const status: number = error.status; }
        }
+       const cached = new WasmClient({ baseUrl: 'https://api.example.com', httpCache: { maxEntries: 500, maxEntryBytes: 100_000 } });
+       const cachedResponse = await cached.get('/config', { httpCache: false });
+       const servedFromMemory: boolean | undefined = cachedResponse.cached;
+       const confirmed: boolean | undefined = cachedResponse.revalidated;
+       new WasmClient({ httpCache: true });
+       // @ts-expect-error httpCache takes true or its limits
+       new WasmClient({ httpCache: 'yes' });
        // @ts-expect-error a transport is a function
        new WasmClient({ transport: 'mock' });`,
     );

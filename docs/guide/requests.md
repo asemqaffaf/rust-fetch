@@ -175,3 +175,21 @@ const [a, b] = await Promise.all([client.get('/me'), client.get('/me')]); // one
 - Writes (`post`, `put`, `patch`, `delete`) are never shared. Streamed `responseType`s (`'stream'`, `'ndjson'`) and requests with callbacks such as `onDownloadProgress` are not shared either. `dedupe: false` on a request opts out.
 - Sharing lasts only while the request is in flight: a request made after it finishes is a new one. This is not a cache; see the roadmap for [HTTP caching](https://github.com/asemqaffaf/rust-fetch/issues/45).
 
+## Caching responses
+
+`httpCache` turns on an opt-in, in-memory cache for `GET` responses, following [RFC 9111](https://www.rfc-editor.org/rfc/rfc9111) for a private cache. It is separate from the `cache` option, which sets the browser's own HTTP cache mode for `fetch()`; browsers already cache by themselves, so this mainly helps in Node.js.
+
+```js
+const client = new WasmClient({ baseUrl: 'https://api.example.com', httpCache: { maxEntries: 500 } });
+await client.get('/config'); // network
+const again = await client.get('/config'); // from memory while fresh per Cache-Control
+again.cached; // true
+```
+
+- **Fresh** responses (`Cache-Control: max-age`, or `Expires`) are served from memory without a request. `response.cached` is `true`, `headers.age` is updated, and each call gets its own copy of the body.
+- **Stale** responses with an `ETag` or `Last-Modified` are revalidated with `If-None-Match` or `If-Modified-Since`. On `304 Not Modified` you get the stored response with `cached: true` and `revalidated: true`; otherwise the new response replaces it. A `304` carries no headers to the client, so a revalidated response is fresh again for its original lifetime.
+- **Not stored:** `no-store` responses (or requests), `Vary: *`, responses with neither freshness information nor a validator, anything but `200`, `203` and `204`, errors, entries over `maxEntryBytes` (default 1 MB), and streamed or `HEAD` requests. `no-cache` responses are stored and always revalidated. A request with `Cache-Control: no-cache` revalidates; `no-store` or its own `If-None-Match`/`If-Modified-Since` skips the cache. `httpCache: false` on a request skips it too.
+- **`Vary`:** one response is kept per URL, with the request header values named by `Vary`; a request with other values misses.
+- **Writes** (`POST`, `PUT`, `PATCH`, `DELETE`) that succeed drop the cached response for their URL.
+- **Bounds:** `maxEntries` (default 100), `maxBytes` (estimated, default 50 MB), least recently used first. The cache is per client and in memory; use one client per user, since the key does not include credentials.
+
