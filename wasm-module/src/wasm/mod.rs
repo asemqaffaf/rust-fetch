@@ -496,6 +496,35 @@ export interface RustFetchError extends Error {
   /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
   maxQueuedBytes?: number;
 }
+
+/** A `RustFetchError` narrowed to one `kind`, with the fields that kind always has. */
+export type RustFetchErrorOf<K extends RustFetchErrorKind> = RustFetchError & { kind: K } & (
+  K extends 'HttpError' ? { status: number; statusText: string } :
+  K extends 'TimeoutError' ? { timeoutMs: number } :
+  K extends 'InvalidInputError' ? { parameter: string } :
+  K extends 'CircuitOpenError' ? { origin: string; retryAfterMs: number } :
+  {}
+);
+export type RustFetchHttpError = RustFetchErrorOf<'HttpError'>;
+export type RustFetchTimeoutError = RustFetchErrorOf<'TimeoutError'>;
+export type RustFetchNetworkError = RustFetchErrorOf<'NetworkError'>;
+export type RustFetchParseError = RustFetchErrorOf<'ParseError'>;
+export type RustFetchInvalidInputError = RustFetchErrorOf<'InvalidInputError'>;
+export type RustFetchCancelledError = RustFetchErrorOf<'CancelledError'>;
+export type RustFetchCircuitOpenError = RustFetchErrorOf<'CircuitOpenError'>;
+export type RustFetchJsInteropError = RustFetchErrorOf<'JsInteropError'>;
+
+/** `true` for an error thrown by rust-fetch, whichever realm or copy of the package made it; with `kind`, only for that kind. */
+export function isRustFetchError(value: unknown): value is RustFetchError;
+export function isRustFetchError<K extends RustFetchErrorKind>(value: unknown, kind: K): value is RustFetchErrorOf<K>;
+export function isHttpError(value: unknown): value is RustFetchHttpError;
+export function isTimeoutError(value: unknown): value is RustFetchTimeoutError;
+export function isNetworkError(value: unknown): value is RustFetchNetworkError;
+export function isParseError(value: unknown): value is RustFetchParseError;
+export function isInvalidInputError(value: unknown): value is RustFetchInvalidInputError;
+export function isCancelledError(value: unknown): value is RustFetchCancelledError;
+export function isCircuitOpenError(value: unknown): value is RustFetchCircuitOpenError;
+export function isJsInteropError(value: unknown): value is RustFetchJsInteropError;
 "#;
 
 #[wasm_bindgen]

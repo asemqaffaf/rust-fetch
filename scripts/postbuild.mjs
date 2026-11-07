@@ -71,7 +71,8 @@ function streamStrategy(strategy) {
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
-writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}\n${upload.trimEnd()}\n${observability.trimEnd()}\n`);
+const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
+writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}\n${upload.trimEnd()}\n${observability.trimEnd()}\n${guards.trimEnd()}\n`);
 types = types.replace(
   /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
   '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',
