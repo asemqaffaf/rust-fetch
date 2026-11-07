@@ -1,0 +1,10 @@
+{
+  "name": "rust-fetch-runtime-tests",
+  "private": true,
+  "type": "module",
+  "description": "The Bun and Deno binaries the runtime smoke tests run on (installed only by the runtimes CI job)",
+  "devDependencies": {
+    "bun": "1.4.4",
+    "deno": "2.9.6"
+  }
+}
