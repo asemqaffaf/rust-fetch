@@ -4,3 +4,4 @@
 /corpus/*/*
 !/corpus/*/seed
 !/corpus/*/regression-*
+!/corpus/*/seed-*
