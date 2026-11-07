@@ -185,6 +185,10 @@ describe('published package', () => {
        const mocked = new WasmClient({ baseUrl: 'https://api.test', transport: mock });
        const calls: MockCall[] = mock.calls;
        const firstPath: string = calls[0]?.path ?? '';
+       const authed = new WasmClient({ baseUrl: 'https://api.example.com', auth: { bearer: async () => 'token', refresh: async () => {}, origins: ['https://uploads.example.com'] } });
+       const basic = new WasmClient({ baseUrl: 'https://api.example.com', auth: { basic: { username: 'u', password: 'p' } } });
+       // @ts-expect-error bearer is a string or a function
+       new WasmClient({ baseUrl: 'https://api.example.com', auth: { bearer: 5 } });
        // @ts-expect-error a transport is a function
        new WasmClient({ transport: 'mock' });`,
     );

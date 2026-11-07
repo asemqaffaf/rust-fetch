@@ -74,12 +74,14 @@ function streamStrategy(strategy) {
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
+const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
 ${upload.trimEnd()}
 ${observability.trimEnd()}
 ${transport.trimEnd()}
+${auth.trimEnd()}
 ${extend.trimEnd()}
 ${guards.trimEnd()}
 `);

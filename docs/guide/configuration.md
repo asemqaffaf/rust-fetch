@@ -68,6 +68,28 @@ new WasmClient({ proxy: 'http://user:pass@proxy.internal:3128' }); // every requ
 
 Invalid options throw an `InvalidInputError` right away, from the constructor.
 
+## Authentication
+
+`auth` adds credentials to every request to the client's own origin, and can refresh an expired bearer token.
+
+```js
+const client = new WasmClient({
+  baseUrl: 'https://api.example.com',
+  auth: {
+    bearer: () => tokens.access, // a string, or a function (sync or async) called for each request
+    refresh: async () => { tokens = await renew(tokens.refresh); }, // optional
+  },
+});
+
+new WasmClient({ baseUrl, auth: { basic: { username, password } } }); // Basic instead
+```
+
+- **Origins.** Credentials go only to the origin of `baseUrl` and the origins in `auth.origins` (for example `['https://uploads.example.com']`). A request to any other origin, including an absolute URL, is sent without them. A client needs one of the two, or the constructor throws an `InvalidInputError`.
+- **Your header wins.** A request that sets its own `Authorization` header keeps it. A `bearer` function that returns nothing sends no header.
+- **Refresh.** When a request gets `401` and `refresh` is set, `refresh` runs once for all requests failing at the same time. Each of them is then replayed once. A second `401` rejects with the `HttpError`. If `refresh` rejects, the requests reject with their `HttpError` and the failure as `cause`, and the next `401` tries again. Requests with a stream body (`ReadableStream`) are not replayed. A replay is a new call with the same arguments: an `idempotencyKey` you passed as a string is sent again; one generated with `true` is generated again.
+- **Where it applies.** HTTP requests and `events()`. WebSocket handshakes do not carry it (browsers cannot set headers on them).
+- It is built on a request interceptor that `clearInterceptors()` keeps in place. A client from `extend()` keeps `auth`; `extend({ auth })` replaces it, and each client refreshes on its own.
+
 ## Derived clients
 
 `client.extend(overrides)` returns a new client with this one's options and interceptors, and `overrides` on top. Use it for one client per API version, or one with an extra header.
