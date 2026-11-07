@@ -5,12 +5,14 @@ on:
     tags: ["v*.*.*"]
 
 permissions:
-  contents: write # create the GitHub release
-  id-token: write # npm provenance / trusted publishing
+  contents: read
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm provenance / trusted publishing
     env:
       # Optional: without it, npm trusted publishing (OIDC) is used
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -168,5 +170,18 @@ jobs:
           fi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "rust-fetch $VERSION" --notes-file release-notes.md --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Attach the published tarball and its Sigstore signature to the release
+        # The tarball is downloaded from the registry, so the signed bytes are
+        # the bytes users install. The keyless signature is bound to this
+        # workflow's identity (GitHub OIDC) and recorded in the Rekor log.
+        run: |
+          mkdir release-assets && cd release-assets
+          npm pack "rust-fetch@$VERSION" >/dev/null
+          cosign sign-blob --yes --bundle "rust-fetch-$VERSION.tgz.sigstore.json" "rust-fetch-$VERSION.tgz"
+          gh release upload "$GITHUB_REF_NAME" "rust-fetch-$VERSION.tgz" "rust-fetch-$VERSION.tgz.sigstore.json" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
