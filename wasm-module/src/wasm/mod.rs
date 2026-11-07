@@ -73,8 +73,9 @@ export type RequestBody = UploadBody | UploadBodyFactory | string | Uint8Array |
  * - `ndjson`: a `ReadableStream` of parsed JSON values, one per line of newline-delimited JSON, returned as soon as the headers arrive
  *
  * Empty bodies are `null` for `auto`/`json`, `""` for `text` and an empty `Uint8Array` for `binary`.
+ * `blob` is a `Blob` typed with the response's `Content-Type` (an empty one for an empty body).
  */
-export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
+export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'blob' | 'stream' | 'ndjson';
 
 /**
  * What to do when the server redirects (301, 302, 303, 307 or 308), like `fetch()`'s `redirect`:

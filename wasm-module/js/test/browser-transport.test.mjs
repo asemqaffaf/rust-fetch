@@ -140,6 +140,20 @@ beforeEach(() => {
   FakeXMLHttpRequest.instances = [];
 });
 
+describe("responseType: 'blob' through fetch() and XMLHttpRequest", () => {
+  it('returns a Blob typed with the Content-Type, with and without download progress', async () => {
+    const client = new WasmClient({ retries: 0 });
+    const plain = await client.get(server.url('/bytes'), { responseType: 'blob' });
+    assert.ok(plain.body instanceof Blob);
+    assert.equal(plain.body.type, 'application/octet-stream');
+    assert.deepEqual(new Uint8Array(await plain.body.arrayBuffer()), new Uint8Array([1, 2, 3]));
+    let loaded = 0;
+    const withProgress = await client.get(server.url('/bytes'), { responseType: 'blob', onDownloadProgress: (p) => { loaded = p.loaded; } });
+    assert.equal(withProgress.body.size, 3);
+    assert.equal(loaded, 3);
+  });
+});
+
 describe('upload progress without XMLHttpRequest (fetch())', () => {
   it('reports the upload once the response arrives', async () => {
     const uploads = [];
