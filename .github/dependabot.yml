@@ -6,6 +6,12 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # reqwest 0.13 (its latest release) depends on wasm-streams 0.5. A second wasm-streams in the
+      # build exports the same wasm-bindgen types twice and the Wasm tests fail to link. Remove this
+      # once a reqwest release moves to wasm-streams 0.6 or later.
+      - dependency-name: wasm-streams
+        versions: [">=0.6.0"]
     groups:
       rust-dependencies:
         patterns: ["*"]
