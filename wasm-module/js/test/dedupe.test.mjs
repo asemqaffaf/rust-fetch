@@ -11,7 +11,8 @@ before(async () => {
   server = await startServer(async (req, res) => {
     hits.push({ url: req.url, method: req.method, language: req.headers['accept-language'] });
     const url = new URL(req.url, 'http://x');
-    await sleep(Number(url.searchParams.get('ms') ?? 60));
+    // fixed delays: a timer length taken from the request would be a resource-exhaustion pattern
+    await sleep(url.searchParams.has('fast') ? 5 : url.pathname === '/slow' ? 200 : url.pathname === '/slow2' ? 3000 : 60);
     if (url.pathname === '/fail') return json(res, {}, { status: 500 });
     json(res, { path: url.pathname, n: hits.length, list: [1, 2, 3] });
   });
@@ -38,8 +39,8 @@ describe('dedupe', () => {
   it('shares only while the request is in flight', async () => {
     hits = [];
     const c = client({ dedupe: true });
-    await c.get('/me?ms=5');
-    await c.get('/me?ms=5');
+    await c.get('/me?fast');
+    await c.get('/me?fast');
     assert.equal(hits.length, 2);
   });
 
@@ -92,8 +93,8 @@ describe('dedupe', () => {
     hits = [];
     const c = client({ dedupe: true });
     const one = new AbortController();
-    const first = c.get('/slow?ms=200', { signal: one.signal });
-    const second = c.get('/slow?ms=200');
+    const first = c.get('/slow', { signal: one.signal });
+    const second = c.get('/slow');
     setTimeout(() => one.abort('leaving'), 20);
     const error = await rejection(first);
     assert.deepEqual([error.kind, error.reason], ['CancelledError', 'leaving']);
@@ -104,13 +105,13 @@ describe('dedupe', () => {
     const a = new AbortController();
     const b = new AbortController();
     const started = Date.now();
-    const both = [c.get('/slow2?ms=3000', { signal: a.signal }), c.get('/slow2?ms=3000', { signal: b.signal })];
+    const both = [c.get('/slow2', { signal: a.signal }), c.get('/slow2', { signal: b.signal })];
     setTimeout(() => { a.abort(); b.abort(); }, 20);
     const settled = await Promise.allSettled(both);
     assert.ok(settled.every((r) => r.status === 'rejected' && r.reason.kind === 'CancelledError'));
     assert.ok(Date.now() - started < 1000);
     // a new request after that starts afresh
-    assert.equal((await c.get('/slow2?ms=5')).body.path, '/slow2');
+    assert.equal((await c.get('/slow2?fast')).body.path, '/slow2');
   });
 
   it('rejects an already-aborted signal without sending anything', async () => {
