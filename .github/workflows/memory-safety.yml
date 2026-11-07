@@ -2,7 +2,8 @@ name: Memory safety (Miri and AddressSanitizer)
 # #230. The only hand-written unsafe is the Wasm allocator (docs/unsafe.md), which no host tool can
 # run. These two jobs cover the rest: Miri interprets the pure Rust modules and reports undefined
 # behavior (out-of-bounds access, invalid values, data races, provenance), and AddressSanitizer runs
-# the whole host test suite, dependencies included, and reports heap errors and leaks.
+# the whole host test suite, dependencies included, and reports heap errors and leaks. A third job
+# builds the native Node addon with AddressSanitizer and runs the JS tests that go through it.
 on:
   schedule:
     - cron: '41 19 * * 0'
@@ -118,7 +119,12 @@ jobs:
           # Node itself is not instrumented, so the sanitizer runtime is preloaded ahead of it.
           libasan="$(gcc -print-file-name=libasan.so)"
           test -e "$libasan"
+          # Skipped: the two tests that assert on process memory (RSS). AddressSanitizer holds freed memory
+          # in a quarantine and adds shadow memory, so RSS grows by hundreds of MiB for reasons that are not
+          # leaks. They run unmodified in rust.yml.
           LD_PRELOAD="$libasan" node --test \
+            --test-skip-pattern='keep memory bounded' \
+            --test-skip-pattern='bounds memory for a generated 3 GiB upload' \
             wasm-module/js/test/client.test.mjs \
             wasm-module/js/test/node-transport.test.mjs \
             wasm-module/js/test/uploads.test.mjs \
