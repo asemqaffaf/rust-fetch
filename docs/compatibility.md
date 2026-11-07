@@ -15,7 +15,7 @@
 
 ## Limitations
 
-- **Bundle size:** the WebAssembly module adds about 121 KB (brotli) to a browser bundle, plus 10 KB of JS glue.
+- **Bundle size:** the WebAssembly module adds about 148 KB (brotli) to a browser bundle, plus about 23 KB of JS glue before your bundler minifies it. `npm run size` checks both against budgets in CI.
 - **HTTP/2:** browsers negotiate it automatically; both Node.js transports use HTTP/1.1 with keep-alive.
 - **Proxies:** in Node.js, use the [`proxy` option](/guide/configuration#proxies) or `NODE_USE_ENV_PROXY=1`; a proxy agent installed as `http.globalAgent` / `https.globalAgent` (for example from `https-proxy-agent`) works too. In browsers, use the system settings.
 - **Native transport:** has to be built from source for each platform until it's published. Sequential requests are level with the node:http transport (they were about 6% slower than `fetch()` before 2.4.0). It isn't used for streamed responses, requests with progress callbacks, the `proxy` option or `allowPrivateNetwork: false` (see [Architecture](/architecture#architecture)), and the p99 stall once seen in the independent harness no longer reproduces: p99 4.7 ms at a steady 15,000 requests per second (see [Under load](/performance#under-load-all-clients)).

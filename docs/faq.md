@@ -4,7 +4,7 @@
 Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3 })` times out each attempt (including the body) and retries network errors, timeouts and 408/429/5xx responses with exponential backoff and jitter, honouring `Retry-After`. POST and PATCH aren't retried unless you opt in. See [Timeouts](/guide/timeouts-and-retries#timeouts) and [Retries](/guide/timeouts-and-retries#retries).
 
 **Is rust-fetch an alternative to axios?**
-Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 131 KB brotli). See [Compared with `fetch()` and axios](/guide/introduction#compared-with-fetch-and-axios).
+Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 171 KB brotli). See [Compared with `fetch()` and axios](/guide/introduction#compared-with-fetch-and-axios).
 
 **Does it work in browsers and Node.js?**
 Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](/compatibility#supported-environments).
