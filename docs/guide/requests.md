@@ -158,3 +158,18 @@ response.body.name; // string, validated
 - The type guard is `isValidationError(error)`.
 - `ValidationError` is a new `kind`, and it only appears when you pass `schema`. If you handle errors in a `switch` over `error.kind` with an exhaustive check, add a case for it.
 
+## Sharing identical requests
+
+With `dedupe: true` on the client (or on one request), identical `get` and `head` requests made while the first is still in flight share one request and one response. This helps when several parts of an app ask for the same resource at once.
+
+```js
+const client = new WasmClient({ dedupe: true });
+const [a, b] = await Promise.all([client.get('/me'), client.get('/me')]); // one request
+```
+
+- Requests are identical when the method, URL and request options (including headers, case-insensitively, and `params`) are. A request with a different header, `params` or `responseType` is separate. Only the client's own requests are shared, never between clients.
+- Each caller gets its own response object, with its own copy of the body, so changing one does not change the others. The first caller gets the original.
+- An error rejects every caller. Cancelling one caller's `signal` rejects only that caller, with a `CancelledError`; the request is cancelled when every caller has cancelled. A signal that is already aborted sends nothing.
+- Writes (`post`, `put`, `patch`, `delete`) are never shared. Streamed `responseType`s (`'stream'`, `'ndjson'`) and requests with callbacks such as `onDownloadProgress` are not shared either. `dedupe: false` on a request opts out.
+- Sharing lasts only while the request is in flight: a request made after it finishes is a new one. This is not a cache; see the roadmap for [HTTP caching](https://github.com/asemqaffaf/rust-fetch/issues/45).
+

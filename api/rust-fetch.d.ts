@@ -228,6 +228,8 @@ export interface AuthOptions {
 }
 
 export interface ClientOptions extends BrowserRequestOptions {
+    /** Share one request and response between identical `get` and `head` requests in flight at once. Off by default. */
+    dedupe?: boolean;
     /** Authentication for requests to the client's origin (`baseUrl`, plus `auth.origins`). Needs one of them. A request that sets its own `Authorization` header keeps it. */
     auth?: AuthOptions;
     /** Answer this client's buffered requests from your own code instead of the network, keeping the retry, timeout and error behaviour. Streamed responses, `events()` and `websocket()` do not use it. Build one with `createMockTransport()` from `rust-fetch/testing`. */
@@ -375,6 +377,8 @@ export interface StandardSchemaIssue {
 export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
 
 export interface RequestOptions extends BrowserRequestOptions {
+    /** `get` and `head` only: share one request and response with identical requests in flight at once (same URL, headers and options), or `false` to opt out when the client's `dedupe` is on. Each caller gets its own response object. Not with streamed `responseType`s. */
+    dedupe?: boolean;
     /** Validate the response body with a Standard Schema (Zod, Valibot, ArkType…). The body of the response becomes the schema's output; a body that fails rejects with a `ValidationError` (not retried). Not with `responseType: 'stream'` or `'ndjson'`. */
     schema?: StandardSchema;
     headers?: HeadersLike;
