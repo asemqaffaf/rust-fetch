@@ -1,0 +1,64 @@
+name: Memory safety (Miri and AddressSanitizer)
+# #230. The only hand-written unsafe is the Wasm allocator (docs/unsafe.md), which no host tool can
+# run. These two jobs cover the rest: Miri interprets the pure Rust modules and reports undefined
+# behavior (out-of-bounds access, invalid values, data races, provenance), and AddressSanitizer runs
+# the whole host test suite, dependencies included, and reports heap errors and leaks.
+on:
+  schedule:
+    - cron: '41 19 * * 0'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'wasm-module/src/**'
+      - 'wasm-module/tests/**'
+      - 'wasm-module/Cargo.toml'
+      - 'wasm-module/Cargo.lock'
+      - '.github/workflows/memory-safety.yml'
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  miri:
+    name: Miri (pure Rust modules)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: nightly-2026-10-28 # same pin as fuzz.yml
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: wasm-module
+      - name: Run the unit tests of the modules that parse, limit and retry under Miri
+        working-directory: wasm-module
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
+        run: |
+          cargo miri setup
+          cargo miri test --lib -- budget:: circuit:: idempotency:: limiter:: lines:: sse:: timeouts:: url:: error:: types::
+  asan:
+    name: AddressSanitizer (host tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: nightly-2026-10-28
+          components: rust-src
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: wasm-module
+      - name: Unit and integration tests under AddressSanitizer
+        working-directory: wasm-module
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          RUSTDOCFLAGS: -Zsanitizer=address
+        run: cargo test --lib --tests -Zbuild-std --target x86_64-unknown-linux-gnu
