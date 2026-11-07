@@ -20,7 +20,7 @@
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
 | Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 131 KB: the WebAssembly module (121 KB) and its JS glue |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 171 KB: the WebAssembly module (148 KB) and its JS glue (23 KB, before your bundler minifies it) |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](/rust#using-it-from-rust)).
 
@@ -34,7 +34,7 @@ Real-time features usually mean a second client with its own URL handling, timeo
 
 ### When to choose something else
 
-- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 121 KB brotli-compressed.
+- **Every kilobyte counts in your browser bundle.** The WebAssembly module is about 148 KB brotli-compressed.
 - **You only need raw throughput in Node.js** and will handle failures yourself: use `undici.request()` (see above).
 - **Your latency is the server, not the client.** If each request waits seconds on the other side (an AI model, a payment provider, a report) and you send a few a minute, no HTTP client will make it faster. rust-fetch would still give you per-attempt timeouts, retries and typed errors, but if your SDKs already do that, you don't need it.
 - **Your calls go through vendor SDKs.** Most payment, email and AI SDKs make their own requests. Using rust-fetch there means passing it as a custom `fetch` where the SDK allows that; it's simplest for calls your own code makes.
