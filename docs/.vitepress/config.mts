@@ -150,7 +150,10 @@ export default defineConfig({
             },
             {
               text: 'Tooling',
-              items: [{ text: 'TypeScript', link: '/guide/typescript' }],
+              items: [
+                { text: 'TypeScript', link: '/guide/typescript' },
+                { text: 'Testing your code', link: '/guide/testing' },
+              ],
             },
           ],
         },

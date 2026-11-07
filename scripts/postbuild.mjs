@@ -6,6 +6,8 @@ const root = new URL('../', import.meta.url);
 const pkgDir = new URL('wasm-module/pkg/', root);
 
 copyFileSync(new URL('wasm-module/js/node.js', root), new URL('node.js', pkgDir));
+copyFileSync(new URL('wasm-module/js/testing.js', root), new URL('testing.js', pkgDir));
+copyFileSync(new URL('wasm-module/js/testing.d.ts', root), new URL('testing.d.ts', pkgDir));
 copyFileSync(new URL('README.md', root), new URL('README.md', pkgDir));
 copyFileSync(new URL('llms.txt', root), new URL('llms.txt', pkgDir));
 const policies = ['LICENSE-MIT', 'LICENSE-APACHE', 'CONTRIBUTING.md', 'CODE_OF_CONDUCT.md', 'SECURITY.md'];
@@ -71,11 +73,13 @@ function streamStrategy(strategy) {
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
+const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
 ${upload.trimEnd()}
 ${observability.trimEnd()}
+${transport.trimEnd()}
 ${extend.trimEnd()}
 ${guards.trimEnd()}
 `);
@@ -98,7 +102,7 @@ writeFileSync(typesUrl, types);
 const manifestUrl = new URL('package.json', pkgDir);
 const manifest = JSON.parse(readFileSync(manifestUrl, 'utf8'));
 
-manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'llms.txt', ...policies];
+manifest.files = ['rust_fetch_bg.wasm', 'rust_fetch_bg.wasm.d.ts', 'rust_fetch.js', 'rust_fetch.d.ts', 'node.js', 'testing.js', 'testing.d.ts', 'llms.txt', ...policies];
 manifest.exports = {
   '.': {
     types: './rust_fetch.d.ts',
@@ -108,6 +112,10 @@ manifest.exports = {
   './rust_fetch.js': {
     types: './rust_fetch.d.ts',
     default: './rust_fetch.js',
+  },
+  './testing': {
+    types: './testing.d.ts',
+    default: './testing.js',
   },
   './rust_fetch_bg.wasm': './rust_fetch_bg.wasm',
   './package.json': './package.json',

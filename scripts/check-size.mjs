@@ -9,8 +9,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 455_000, gzip: 183_000, brotli: 148_600 }, // includes opt-in observability and WebSocket idle timers; lowered after #179 and #180; raised by 8.5 kB raw for the wasm-bindgen 0.2.130 and ICU 2.4 updates, then 1.5 kB for the abort reason (#80)
-  'rust_fetch.js': { raw: 106_200, gzip: 21_100, brotli: 18_200 }, // raised by 1.4 kB for the wasm-bindgen 0.2.130 glue; includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload, diagnostics and stream records (#191) // raised by 0.6 kB for redacting the error cause chain (#239) // raised by 1.2 kB for the error type guards (#68) // raised by 3.0 kB for client.extend() (#69)
+  'rust_fetch_bg.wasm': { raw: 455_500, gzip: 183_300, brotli: 148_900 }, // includes opt-in observability and WebSocket idle timers; lowered after #179 and #180; raised by 8.5 kB raw for the wasm-bindgen 0.2.130 and ICU 2.4 updates, then 1.5 kB for the abort reason (#80), then 0.5 kB for the `transport` option (#47)
+  'rust_fetch.js': { raw: 107_500, gzip: 21_400, brotli: 18_500 }, // raised by 1.4 kB for the wasm-bindgen 0.2.130 glue; includes timings, tracing, redaction and bounded metrics; raised from 98.5 kB for the null-prototype upload, diagnostics and stream records (#191) // raised by 0.6 kB for redacting the error cause chain (#239) // raised by 1.2 kB for the error type guards (#68) // raised by 3.0 kB for client.extend() (#69) // raised by 1.3 kB for the `transport` option (#47)
   'node.js': { raw: 60_500, gzip: 19_400, brotli: 16_950 }, // Node transports, prototype-pollution hardening (#191), the compact native entry with a full-policy fallback (#181), and the certificate policy (#244); not loaded by browsers.
 };
 

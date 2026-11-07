@@ -350,6 +350,8 @@ impl Client {
             retry_config: None,
             #[cfg(target_arch = "wasm32")]
             observer: None,
+            #[cfg(target_arch = "wasm32")]
+            transport: None,
             phase_overrides: None,
             deadline: None,
             idempotency_header: None,
@@ -1441,6 +1443,9 @@ pub struct RequestBuilder {
     retry_config: Option<RetryConfig>,
     #[cfg(target_arch = "wasm32")]
     pub(crate) observer: Option<js_sys::Function>,
+    /// The client's `transport` option: a function that answers requests
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) transport: Option<js_sys::Function>,
     #[cfg(target_arch = "wasm32")]
     pub(crate) upload: Option<crate::wasm::upload::Upload>,
     phase_overrides: Option<Box<crate::PhaseTimeouts>>,
@@ -1785,6 +1790,7 @@ impl RequestBuilder {
             phases: self.phase_options(),
             upload: self.upload.as_ref(),
             observer: self.observer.as_ref(),
+            transport: self.transport.as_ref(),
             request_state: self.retry_refused.as_ref(),
         }
     }
