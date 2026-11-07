@@ -9,6 +9,7 @@ on:
       - 'wasm-module/fuzz/**'
       - 'wasm-module/js/**'
       - 'scripts/fuzz-js-boundary.mjs'
+      - 'scripts/fuzz-node-boundary.mjs'
       - '.github/workflows/fuzz.yml'
 permissions:
   contents: read
@@ -97,6 +98,10 @@ jobs:
       - run: node scripts/fuzz-js-boundary.mjs
         env:
           FUZZ_CASES: 10000
+      - name: Node.js transport parsers (proxy and NO_PROXY, redirect Location, Content-Type, decompression) (#231)
+        run: node scripts/fuzz-node-boundary.mjs
+        env:
+          FUZZ_CASES: 5000
       - name: URL resolution against the WHATWG URL parser (#217)
         run: node scripts/fuzz-url-differential.mjs
         env:
@@ -117,6 +122,6 @@ jobs:
           existing=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
           if [ "$existing" = 0 ]; then
             report="$RUNNER_TEMP/fuzz-report.md"
-            printf 'Scheduled parser or JS/Wasm boundary fuzzing failed.\n\nRun and reproducer artifacts: %s/%s/actions/runs/%s\n\nMinimize the failing seed and add a regression test before closing.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$report"
+            printf 'Scheduled parser or JS/Wasm boundary fuzzing failed.\n\nRun and reproducer artifacts: %s/%s/actions/runs/%s\n\nA crash may be a vulnerability. Triage it before discussing details here: if it is exploitable, report it privately through a GitHub Security Advisory (SECURITY.md) and keep the reproducer out of this issue until the fix is released. Otherwise minimize the failing seed and add a regression test before closing.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$report"
             gh issue create --title "$title" --body-file "$report"
           fi
