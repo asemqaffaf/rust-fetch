@@ -153,6 +153,7 @@ export default defineConfig({
               items: [
                 { text: 'TypeScript', link: '/guide/typescript' },
                 { text: 'Testing your code', link: '/guide/testing' },
+                { text: 'API reference', link: '/api/' },
               ],
             },
           ],

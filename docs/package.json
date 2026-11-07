@@ -4,12 +4,18 @@
   "type": "module",
   "description": "The rust-fetch documentation site (GitHub Pages)",
   "scripts": {
-    "dev": "vitepress dev",
-    "build": "vitepress build && node scripts/check-links.mjs",
-    "preview": "vitepress preview"
+    "dev": "npm run api && vitepress dev",
+    "build": "npm run api && vitepress build && node scripts/check-links.mjs",
+    "preview": "vitepress preview",
+    "api": "typedoc"
   },
   "devDependencies": {
     "github-slugger": "2.0.0",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-markdown": "4.14.1",
     "vitepress": "2.0.0-alpha.21"
+  },
+  "overrides": {
+    "minimatch": "^11.0.5"
   }
 }
