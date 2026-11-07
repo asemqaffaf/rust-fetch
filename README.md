@@ -104,6 +104,7 @@ The rust-fetch column describes the JavaScript API; the Rust crate has no interc
 - **[Performance](https://asemqaffaf.github.io/rust-fetch/performance)**: our measurements and independent benchmarks, including where rust-fetch loses
 - **[Transport conformance](https://asemqaffaf.github.io/rust-fetch/conformance)**: every behaviour on every transport
 - **Reference**: [architecture](https://asemqaffaf.github.io/rust-fetch/architecture) · [using it from Rust](https://asemqaffaf.github.io/rust-fetch/rust) · [compatibility and limitations](https://asemqaffaf.github.io/rust-fetch/compatibility) (and upgrading to 2.0) · [stability and releases](https://asemqaffaf.github.io/rust-fetch/stability) · [development and benchmarking](https://asemqaffaf.github.io/rust-fetch/development) · [FAQ](https://asemqaffaf.github.io/rust-fetch/faq)
+- **[Examples](https://github.com/asemqaffaf/rust-fetch/tree/main/examples)**: runnable and tested in CI
 - **[Changelog](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md)**
 
 The documentation is in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/main/docs) and published from it on every change to `main`.
