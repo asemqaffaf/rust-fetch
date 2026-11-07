@@ -324,8 +324,13 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
 
   it('closes when the signal aborts', async () => {
     const aborted = new WasmClient().websocket(server.url('/'), { signal: AbortSignal.abort() });
-    assert.equal((await rejection(aborted.opened)).kind, 'CancelledError');
+    const error = await rejection(aborted.opened);
+    assert.equal(error.kind, 'CancelledError');
+    assert.equal(error.reason.name, 'AbortError');
+    assert.equal(error.cause, error.reason);
     assert.equal(aborted.state, 'closed');
+    const custom = new WasmClient().websocket(server.url('/'), { signal: AbortSignal.abort('custom') });
+    assert.equal((await rejection(custom.opened)).reason, 'custom');
 
     const controller = new AbortController();
     const socket = new WasmClient().websocket(server.url('/'), { signal: controller.signal });
