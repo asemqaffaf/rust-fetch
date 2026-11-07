@@ -1019,7 +1019,10 @@ fn finish_with(
     };
     if let Some(reject) = reject_opened {
         let error = error.unwrap_or_else(|| {
-            super::with_abort_reason(Error::Cancelled.into_js(), signal.as_ref().map(AsRef::as_ref))
+            super::with_abort_reason(
+                Error::Cancelled.into_js(),
+                signal.as_ref().map(AsRef::as_ref),
+            )
         });
         let _ = reject.call1(&JsValue::UNDEFINED, &error);
     }

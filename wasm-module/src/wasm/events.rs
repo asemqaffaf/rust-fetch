@@ -821,7 +821,10 @@ fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
     });
     if let Some(reject) = reject_opened {
         let reason = error.clone().unwrap_or_else(|| {
-            super::with_abort_reason(Error::Cancelled.into_js(), signal.as_ref().map(AsRef::as_ref))
+            super::with_abort_reason(
+                Error::Cancelled.into_js(),
+                signal.as_ref().map(AsRef::as_ref),
+            )
         });
         let _ = reject.call1(&JsValue::UNDEFINED, &reason);
     }
