@@ -368,3 +368,18 @@ Tests run on node:http and on the native addon unless noted. Browser transports 
 
 Words such as "never", "only" and "always" elsewhere on this page describe the rows above. Where no row backs one, the sentence is a claim without a test and should be reworded or given a row.
 
+### Wording this project does not use
+
+Reviews of rust-fetch, written by people and by tools, sometimes use stronger words than the evidence allows. These are the ones not to repeat, and what can be said instead. Each replacement is a sentence a test or a document in this repository supports.
+
+| Not said | Why not | What is said instead |
+| --- | --- | --- |
+| "One of the best", "the most resilient", "the safest" client | An opinion about other projects. The only independent check would be a review, and none has been done ([#223](https://github.com/asemqaffaf/rust-fetch/issues/223), [Independent review](./security-review)) | The behaviour is specified, tested against the conformance matrix and compared with `fetch()` and axios in the [comparison above](#security-compared-with-fetch-and-axios), on the probes listed there |
+| "Rigorous", "complete" or "full" protection against prototype pollution | The tests cover the property reads the package guards, listed in the claims table. New reads in new code are only covered once a test is added | "Requests, credentials and bodies are not redirected by an inherited `proxy` or `dispatcher`, and response headers named `__proto__` stay data", as in the claims table |
+| "True" or "complete" SSRF protection, "DNS rebinding is solved" | `allowPrivateNetwork: false` checks the address the connection will use, for the ranges in the IANA special-purpose registries, and a name that moves from a public to a private address gets no connection. It is Node.js only (browsers enforce their own rules), does nothing to protect a service that is reachable by a public address, and with a proxy only IP-address targets can be checked (a host name is refused) | "Guards against requests to private, loopback and link-local addresses, including names that resolve to them" ([Fetching user-supplied URLs](#fetching-user-supplied-urls-ssrf)) |
+| "Bank-level" or "military-grade" security | No standard or test stands behind the phrase. Banks are assessed as organisations; a library is not certified under PCI DSS, ISO 27001 or SOC 2 | The list of controls and the evidence for each, in the [threat model](./threat-model) |
+| "Zero-dependency validation" | The package has no runtime dependencies and bundles no schema library, but validation needs a schema library of your own (Zod, Valibot, ArkType) | "`schema` accepts any Standard Schema; rust-fetch bundles none" |
+| "Unique", "the only client that..." | Other clients document schema validation or retries too, and this project has not read all of them | State what rust-fetch does, and compare with a named client only after reading it |
+| "Mission-critical ready", "production-proven" | There is no record of use at scale to cite | What is measured: the [reliability under faults](./reliability) results and the [performance](./performance) benchmarks |
+| "100% test coverage" without a scope | The gate is 100% of lines and functions of the Rust core and the Node.js transport. The browser glue and every adapter are not under it | "CI fails if line or function coverage of the Rust core or the Node.js transport drops below 100%" ([Development](./development)) |
+
