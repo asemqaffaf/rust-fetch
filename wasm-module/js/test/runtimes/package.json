@@ -5,6 +5,7 @@
   "description": "The Bun and Deno binaries the runtime smoke tests run on (installed only by the runtimes CI job)",
   "devDependencies": {
     "bun": "1.4.4",
-    "deno": "2.9.6"
+    "deno": "2.9.6",
+    "workerd": "1.20261108.1"
   }
 }

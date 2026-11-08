@@ -198,7 +198,7 @@ Behavior changes to know about: a certificate that names the host only in its su
 | HTTP caching with conditional requests | [#45](https://github.com/asemqaffaf/rust-fetch/issues/45) | Done (`httpCache`, not `cache`, which is the browser's fetch cache mode) |
 | Deduplicate identical in-flight GET requests | [#46](https://github.com/asemqaffaf/rust-fetch/issues/46) | Done (`dedupe`) |
 | Mock transport for unit tests | [#47](https://github.com/asemqaffaf/rust-fetch/issues/47) | Done (`transport`, `rust-fetch/testing`) |
-| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) | Bun and Deno tested in CI; Workers not tested |
+| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) | Bun, Deno and `workerd` (the Workers runtime) tested in CI; a deployed Worker and Vercel Edge not tested |
 | Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) | Done |
 | `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) | Done |
 | Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) | Done (`auth`, scoped to the client's origins) |
