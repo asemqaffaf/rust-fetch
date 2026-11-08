@@ -272,7 +272,7 @@ impl Body {
 /// Download progress, reported after each received chunk
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Progress {
-    /// Bytes received so far
+    /// Bytes received so far (sent so far, for upload progress)
     pub loaded: u64,
     /// Expected size from `Content-Length`, if the server sent one. With
     /// compressed responses in a browser this is the compressed size, so

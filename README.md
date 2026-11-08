@@ -94,7 +94,7 @@ More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
 | Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 171 KB: the WebAssembly module (148 KB) and its JS glue (23 KB, before your bundler minifies it) |
 
-The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
+The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors or WebSockets (it has upload progress on native targets) ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
 
 ## Documentation
 

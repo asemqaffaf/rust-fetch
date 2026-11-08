@@ -1803,3 +1803,110 @@ async fn phase_timeouts_bound_connection_headers_and_body_and_can_be_replaced() 
         .unwrap_err();
     assert_eq!(error.timeout_details().unwrap().phase, TimeoutPhase::Total);
 }
+
+#[tokio::test]
+async fn upload_progress_is_reported_per_chunk_and_the_body_arrives_intact() {
+    let body: Vec<u8> = (0..300 * 1024).map(|i| (i % 251) as u8).collect();
+    let size = body.len() as u64;
+    let server = TestServer::start(|_, _| Reply::new(200, "ok"));
+    let events = Arc::new(Mutex::new(Vec::<Progress>::new()));
+
+    let recorder = Arc::clone(&events);
+    let response = Client::new()
+        .unwrap()
+        .post(server.url("/upload"))
+        .bytes(body.clone())
+        .on_upload_progress(move |p| recorder.lock().unwrap().push(p))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status, 200);
+
+    let events = std::mem::take(&mut *events.lock().unwrap());
+    assert!(
+        events.len() > 1,
+        "expected several chunks, got {}",
+        events.len()
+    );
+    assert!(events.windows(2).all(|w| w[0].loaded < w[1].loaded));
+    assert!(events.iter().all(|p| p.total == Some(size)));
+    assert_eq!(events.last().unwrap().loaded, size);
+
+    let seen = server.requests();
+    assert_eq!(seen[0].body, body, "the server received the exact bytes");
+    assert_eq!(
+        seen[0].header_values("content-length"),
+        vec![size.to_string().as_str()],
+        "the body is sent with a Content-Length, not chunked"
+    );
+    assert!(seen[0].header_values("transfer-encoding").is_empty());
+}
+
+#[tokio::test]
+async fn upload_progress_is_silent_without_a_body_and_restarts_on_a_retry() {
+    let flaky_calls = AtomicUsize::new(0);
+    let server = TestServer::start(move |req, _| {
+        if req.target == "/flaky" && flaky_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Reply::new(503, "busy")
+        } else {
+            Reply::new(200, "ok")
+        }
+    });
+    let events = Arc::new(Mutex::new(Vec::<Progress>::new()));
+
+    // No body, nothing to report
+    let recorder = Arc::clone(&events);
+    Client::new()
+        .unwrap()
+        .request(Method::Get, server.url("/none"))
+        .on_upload_progress(move |p| recorder.lock().unwrap().push(p))
+        .send()
+        .await
+        .unwrap();
+    assert!(events.lock().unwrap().is_empty());
+
+    // The first attempt fails; the second starts counting again from the first chunk
+    let recorder = Arc::clone(&events);
+    Client::builder()
+        .retry_config(RetryConfig {
+            max_retries: 1,
+            initial_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(1),
+            ..Default::default()
+        })
+        .build()
+        .unwrap()
+        .put(server.url("/flaky"))
+        .bytes(vec![1; 200 * 1024])
+        .on_upload_progress(move |p| recorder.lock().unwrap().push(p))
+        .send()
+        .await
+        .unwrap();
+    let events = events.lock().unwrap();
+    let restarts = events
+        .windows(2)
+        .filter(|w| w[1].loaded < w[0].loaded)
+        .count();
+    assert_eq!(
+        restarts, 1,
+        "progress restarts once, at the retry: {events:?}"
+    );
+    assert_eq!(events.last().unwrap().loaded, 200 * 1024);
+}
+
+#[tokio::test]
+async fn upload_progress_works_for_streamed_responses_too() {
+    let server = TestServer::start(|_, _| Reply::new(200, "streamed"));
+    let sent = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&sent);
+    let response = Client::new()
+        .unwrap()
+        .post(server.url("/"))
+        .bytes(vec![0; 100 * 1024])
+        .on_upload_progress(move |p| counter.store(p.loaded as usize, Ordering::SeqCst))
+        .send_streaming()
+        .await
+        .unwrap();
+    assert_eq!(response.bytes().await.unwrap(), b"streamed");
+    assert_eq!(sent.load(Ordering::SeqCst), 100 * 1024);
+}

@@ -347,6 +347,7 @@ impl Client {
             url,
             query: Vec::new(),
             progress: None,
+            upload_progress: None,
             retry_config: None,
             #[cfg(target_arch = "wasm32")]
             observer: None,
@@ -437,6 +438,7 @@ impl Client {
         config: &RequestConfig,
         stream: bool,
         progress: Option<&ProgressFn>,
+        upload: Option<&ProgressFn>,
         limit: Option<u64>,
         guards: RedirectGuards,
         retry: RetryPolicy<'_>,
@@ -450,7 +452,9 @@ impl Client {
             .map_err(|e| Error::network("Invalid URL for reqwest", e))?;
         self.execute_retrying(url.as_str(), config.timeout, retry, None, || async {
             let raw = self
-                .execute_once(&url, config, stream, progress, limit, guards, phases)
+                .execute_once(
+                    &url, config, stream, progress, upload, limit, guards, phases,
+                )
                 .await?;
             if is_success(raw.status, config) {
                 Ok(Attempt::Success(raw))
@@ -693,6 +697,7 @@ impl Client {
         config: &RequestConfig,
         stream: bool,
         progress: Option<&ProgressFn>,
+        upload: Option<&ProgressFn>,
         limit: Option<u64>,
         guards: RedirectGuards,
         phases: &crate::PhaseTimeouts,
@@ -713,7 +718,22 @@ impl Client {
             if !config.headers.contains("content-type") {
                 request = request.header("content-type", body.content_type());
             }
-            request = request.body(body.to_bytes()?);
+            let bytes = body.to_bytes()?;
+            // Native targets report upload progress by handing the body to reqwest in chunks
+            // (WebAssembly goes through fetch(), which cannot)
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(upload) = upload {
+                request = request
+                    .header("content-length", bytes.len())
+                    .body(upload_body(bytes, Arc::clone(upload)));
+            } else {
+                request = request.body(bytes);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = upload;
+                request = request.body(bytes);
+            }
         }
 
         let receive = async {
@@ -886,6 +906,27 @@ pub(crate) fn resolve_url(
         resolved.query_pairs_mut().extend_pairs(query);
     }
     Ok(resolved)
+}
+
+/// The size of the pieces an upload is handed over in
+#[cfg(not(target_arch = "wasm32"))]
+const UPLOAD_CHUNK: usize = 64 * 1024;
+
+/// A request body that reports how much of it has been taken by the connection
+#[cfg(not(target_arch = "wasm32"))]
+fn upload_body(bytes: Vec<u8>, progress: ProgressFn) -> reqwest::Body {
+    let total = bytes.len() as u64;
+    let mut loaded = 0_u64;
+    let chunks = (0..bytes.len()).step_by(UPLOAD_CHUNK).map(move |start| {
+        let end = (start + UPLOAD_CHUNK).min(bytes.len());
+        loaded += (end - start) as u64;
+        progress(Progress {
+            loaded,
+            total: Some(total),
+        });
+        Ok::<Vec<u8>, std::io::Error>(bytes[start..end].to_vec())
+    });
+    reqwest::Body::wrap_stream(futures_util::stream::iter(chunks))
 }
 
 /// Read a whole body chunk by chunk, reporting progress after each chunk
@@ -1439,6 +1480,8 @@ pub struct RequestBuilder {
     url: String,
     query: Vec<(String, String)>,
     progress: Option<ProgressFn>,
+    /// Native targets: reports the request body as the connection takes it
+    upload_progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
     #[cfg(target_arch = "wasm32")]
@@ -1701,6 +1744,17 @@ impl RequestBuilder {
         self
     }
 
+    /// Report upload progress as the connection takes the request body, in pieces of up to 64 KiB
+    ///
+    /// `loaded` counts the body bytes handed to the connection so far and `total` is the body's
+    /// size. A retried attempt starts again from 0, and a request without a body reports nothing.
+    /// Not available on `wasm32`, where requests go through `fetch()`, which has no upload progress.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn on_upload_progress(mut self, callback: impl ProgressCallback + 'static) -> Self {
+        self.upload_progress = Some(Arc::new(callback));
+        self
+    }
+
     /// Set the timeout for each attempt of this request
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.config.timeout = Some(timeout);
@@ -1820,6 +1874,7 @@ impl RequestBuilder {
                 &self.config,
                 false,
                 self.progress.as_ref(),
+                self.upload_progress.as_ref(),
                 self.max_response_bytes,
                 self.redirect_guards(),
                 self.retry_policy(),
@@ -1911,6 +1966,7 @@ impl RequestBuilder {
                 &self.config,
                 true,
                 None,
+                self.upload_progress.as_ref(),
                 self.max_response_bytes,
                 self.redirect_guards(),
                 self.retry_policy(),
