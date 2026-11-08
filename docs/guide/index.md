@@ -5,7 +5,7 @@ Every method and the options you'll use most, on one page, with links to the det
 1. [Client options](/guide/configuration) and [Requests and responses](/guide/requests): what a client holds, and what each call takes and returns.
 2. [Errors](/guide/errors) and [Timeouts, retries and cancellation](/guide/timeouts-and-retries): what can fail, and what the client does about it.
 3. [Interceptors](/guide/interceptors): auth headers, token refresh and logging in one place.
-4. What your app needs: [Streaming and Server-Sent Events](/guide/streaming), [Uploads](/guide/uploads), [WebSockets](/guide/websockets), [TypeScript](/guide/typescript).
+4. What your app needs: [Streaming and Server-Sent Events](/guide/streaming), [Uploads](/guide/uploads), [WebSockets](/guide/websockets), [TypeScript](/guide/typescript), [Testing your code](/guide/testing); runnable code is in the [Examples](/guide/examples).
 5. Before production: [Security](/security), the [hardened configurations](/security#hardened-configurations) to copy, and [Observability](/guide/observability).
 
 ## Client methods
@@ -63,6 +63,8 @@ Passed to each call; most override the client option of the same name. The full 
 | `signal` | An `AbortSignal` that cancels the request, its retries and its body |
 | `responseType` | `'auto'` (by `Content-Type`), `'json'`, `'text'`, `'binary'`, `'stream'` or `'ndjson'` |
 | `onDownloadProgress`, `onUploadProgress` | `({ loaded, total }) => void` |
+| `schema` | Any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType…): the body becomes its typed output; see [Validating responses](/guide/requests#validating-responses) |
+| `dedupe` | `true` shares identical in-flight `get` and `head` requests; see [Sharing identical requests](/guide/requests#sharing-identical-requests) |
 
 ## What a request resolves to
 
