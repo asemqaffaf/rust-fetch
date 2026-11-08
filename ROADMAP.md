@@ -191,6 +191,8 @@ Behavior changes to know about: a certificate that names the host only in its su
 
 *Goal: less code around each request, and easier testing.* All of these are on `main` under *Unreleased* in the [changelog](CHANGELOG.md); the 2.8.0 section there was never published, so the first release after it carries both.
 
+**Also in the 2.9.0 milestone (added 2026-11-08):** the issues of the former *Native transport delivery*, *WebRTC signaling* and *Exploring* milestones are now in the [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8), so it shows everything open. That is a place to track them, not a promise to ship them in 2.9.0. Some wait on decisions outside the code (npm package names and permissions for prebuilt binaries, [#14](https://github.com/asemqaffaf/rust-fetch/issues/14)), some need benchmark runs on a quiet machine ([#114](https://github.com/asemqaffaf/rust-fetch/issues/114), [#156](https://github.com/asemqaffaf/rust-fetch/issues/156)), and [#36](https://github.com/asemqaffaf/rust-fetch/issues/36) carries a recommendation of "not planned". The items under *Exploring* below keep their own sections.
+
 | | | Status |
 | --- | --- | --- |
 | Response validation with Standard Schema (Zod, Valibot, ArkType) | [#43](https://github.com/asemqaffaf/rust-fetch/issues/43) | Done (`schema`, `ValidationError`) |
