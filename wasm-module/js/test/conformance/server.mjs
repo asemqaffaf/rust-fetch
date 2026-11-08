@@ -12,8 +12,9 @@ const json = (res, value, status = 200, headers = {}) => {
 };
 
 const sleep = (ms) => {
-  if (!(ms >= 0 && ms <= 600_000)) throw new RangeError(`sleep(${ms}): expected 0 to 600000 milliseconds`);
-  return new Promise((resolve) => setTimeout(resolve, Math.min(ms, 600_000)));
+  if (ms > 600_000) throw new RangeError(`sleep(${ms}): more than 600000 milliseconds`);
+  if (!(ms >= 0)) throw new RangeError(`sleep(${ms}): expected a number of milliseconds, 0 or more`);
+  return new Promise((resolve) => setTimeout(resolve, ms));
 };
 const bomb = zlib.gzipSync(Buffer.alloc(64 * 1024 * 1024));
 const compressed = {
