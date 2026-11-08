@@ -175,3 +175,93 @@ describe('esbuild', () => {
     assert.deepEqual(failures, []);
   });
 });
+
+describe('examples/browser-upload (Vite)', () => {
+  // The example is built unchanged and driven like a person would: pick a file, press the button.
+  const exampleDir = fileURLToPath(new URL('../../../examples/browser-upload/', import.meta.url));
+  const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+  let site;
+
+  before(async () => {
+    const { build } = await import('vite');
+    const outDir = join(work, 'browser-upload-dist');
+    await build({
+      root: exampleDir,
+      logLevel: 'warn',
+      configFile: false,
+      resolve: { alias: { 'rust-fetch': join(pkg, 'rust_fetch.js') } },
+      build: { outDir, emptyOutDir: true, assetsInlineLimit: 0 },
+      server: { fs: { strict: false } },
+    });
+    site = await serve(outDir);
+  });
+
+  /** An upload server that reads slowly (so progress arrives in steps) or not at all (so the upload can be cancelled) */
+  async function uploadServer({ read }) {
+    const stats = { received: 0 };
+    const server = await listen((req, res) => {
+      if (req.method === 'OPTIONS') return res.writeHead(204, CORS).end();
+      if (!read) return; // never answers, never reads: the upload stalls
+      req.on('data', (chunk) => {
+        stats.received += chunk.length;
+        req.pause();
+        setTimeout(() => req.resume(), 8);
+      });
+      req.on('end', () => res.writeHead(200, { ...CORS, 'content-type': 'application/json' }).end(JSON.stringify({ received: stats.received })));
+    });
+    return { url: `http://127.0.0.1:${server.address().port}`, stats };
+  }
+
+  async function open(apiUrl) {
+    const page = await browser.newPage();
+    const failures = [];
+    page.on('pageerror', (error) => failures.push(error.message));
+    // Record every value the progress bar takes
+    await page.addInitScript(() => {
+      window.__bar = [];
+      new MutationObserver(() => {}).observe(document, { childList: true, subtree: true });
+      const watch = () => {
+        const bar = document.querySelector('#bar');
+        if (!bar) return void requestAnimationFrame(watch);
+        setInterval(() => { const v = bar.value / (bar.max || 1); if (window.__bar.at(-1) !== v) window.__bar.push(v); }, 5);
+      };
+      watch();
+    });
+    await page.goto(`${site}/?api=${encodeURIComponent(apiUrl)}`);
+    await page.waitForFunction(() => document.querySelector('#send') && !document.querySelector('#send').disabled);
+    return { page, failures };
+  }
+
+  it('uploads a file with a progress bar that moves in steps and ends full', async () => {
+    const { url, stats } = await uploadServer({ read: true });
+    const { page, failures } = await open(url);
+    try {
+      const size = 12 * 1024 * 1024;
+      await page.setInputFiles('#file', { name: 'big.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(size, 1) });
+      await page.click('#send');
+      await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Uploaded'), undefined, { timeout: 30_000 });
+      const steps = await page.evaluate(() => window.__bar);
+      assert.ok(new Set(steps).size >= 3, `the bar moved in several steps: ${JSON.stringify(steps)}`);
+      assert.equal(steps.at(-1), 1, 'the bar ends full');
+      assert.ok(stats.received >= size, `the server received every byte (${stats.received})`);
+      assert.deepEqual(failures, []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it('cancels an upload that has stalled', async () => {
+    const { url } = await uploadServer({ read: false });
+    const { page, failures } = await open(url);
+    try {
+      await page.setInputFiles('#file', { name: 'big.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(40 * 1024 * 1024, 1) });
+      await page.click('#send');
+      await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Uploading'));
+      await page.click('#cancel');
+      await page.waitForFunction(() => document.querySelector('#status').textContent === 'Cancelled', undefined, { timeout: 10_000 });
+      assert.deepEqual(failures, []);
+    } finally {
+      await page.close();
+    }
+  });
+});
