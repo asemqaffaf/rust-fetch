@@ -338,7 +338,8 @@ jobs:
 
   runtimes:
     name: ${{ matrix.runtime }} (smoke tests)
-    # Bun and Deno run the Node.js entry of the built package against local servers (#48).
+    # Bun and Deno run the Node.js entry of the built package against local servers; workerd, the
+    # open-source Cloudflare Workers runtime, runs the browser entry (#48).
     # Their binaries come from the locked npm manifest in wasm-module/js/test/runtimes.
     needs: wasm
     runs-on: ubuntu-latest
@@ -346,7 +347,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [bun, deno]
+        runtime: [bun, deno, workerd]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -370,6 +371,10 @@ jobs:
         if: matrix.runtime == 'deno'
         working-directory: wasm-module/js/test/runtimes
         run: ./node_modules/.bin/deno run --allow-all smoke.mjs
+      - name: Smoke test on workerd (the Cloudflare Workers runtime)
+        if: matrix.runtime == 'workerd'
+        working-directory: wasm-module/js/test/runtimes
+        run: node workers.mjs
 
   browsers:
     name: Browsers (Chromium, Firefox, WebKit)
