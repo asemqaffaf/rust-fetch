@@ -61,7 +61,7 @@ export function json(res, value, { status = 200, type = 'application/json' } = {
 /** A pause of up to ten minutes; anything else is a bug in a test, not a wait. */
 export const sleep = (ms) => {
   if (!(ms >= 0 && ms <= 600_000)) throw new RangeError(`sleep(${ms}): expected 0 to 600000 milliseconds`);
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, Math.min(ms, 600_000)));
 };
 
 /** Await a promise expected to reject; returns the rejection reason. */
