@@ -22,7 +22,8 @@ export async function startServer(handler) {
         await handler(req, res, ctx);
       } catch (error) {
         res.statusCode = 500;
-        res.end(String(error));
+        console.error('test server handler failed:', error);
+        res.end('test server handler failed');
       }
     });
   });
@@ -57,7 +58,11 @@ export function json(res, value, { status = 200, type = 'application/json' } = {
   res.end(typeof value === 'string' ? value : JSON.stringify(value));
 }
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** A pause of up to ten minutes; anything else is a bug in a test, not a wait. */
+export const sleep = (ms) => {
+  if (!(ms >= 0 && ms <= 600_000)) throw new RangeError(`sleep(${ms}): expected 0 to 600000 milliseconds`);
+  return new Promise((r) => setTimeout(r, ms));
+};
 
 /** Await a promise expected to reject; returns the rejection reason. */
 export async function rejection(promise) {

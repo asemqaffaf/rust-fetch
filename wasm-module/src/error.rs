@@ -659,7 +659,7 @@ mod tests {
     fn test_error_chain() {
         // reqwest's Display omits the cause; the chain appends it
         let builder = reqwest::Client::new()
-            .get("http://exa mple.com")
+            .get("https://exa mple.com")
             .build()
             .unwrap_err();
         assert_eq!(builder.to_string(), "builder error");

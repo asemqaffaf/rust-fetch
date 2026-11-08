@@ -11,7 +11,10 @@ const json = (res, value, status = 200, headers = {}) => {
   res.end(body);
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => {
+  if (!(ms >= 0 && ms <= 600_000)) throw new RangeError(`sleep(${ms}): expected 0 to 600000 milliseconds`);
+  return new Promise((resolve) => setTimeout(resolve, ms));
+};
 const bomb = zlib.gzipSync(Buffer.alloc(64 * 1024 * 1024));
 const compressed = {
   gzip: (data) => zlib.gzipSync(data),
@@ -187,6 +190,10 @@ export async function startServers(extra = () => false) {
         // (Node's fetch(), for one, doesn't ask for br)
         const encoding = url.searchParams.get('encoding');
         res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': encoding });
+        if (!Object.hasOwn(compressed, encoding)) {
+          res.writeHead(400);
+          return res.end('unknown encoding');
+        }
         return res.end(compressed[encoding](Buffer.from(JSON.stringify({ decoded: true }))));
       }
       case '/corrupt':
@@ -197,6 +204,10 @@ export async function startServers(extra = () => false) {
         return res.end(bomb);
       case '/bytes': {
         const n = Number(url.searchParams.get('n'));
+        if (!(n >= 0 && n <= 256 * 1024 * 1024)) {
+          res.writeHead(400);
+          return res.end('n out of range');
+        }
         res.writeHead(200, { 'content-type': 'application/octet-stream' });
         return res.end(Buffer.alloc(n, 120));
       }
