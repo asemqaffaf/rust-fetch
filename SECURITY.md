@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Each active `2.x` release line receives security patch releases. General bug fixes and performance improvements land on the latest published minor release line (`2.7.x`). Security backports for earlier `2.x` lines are published under dedicated npm dist-tags (`release-2.x`) so that `latest` never moves backwards and automated updates do not inadvertently downgrade packages.
+Each active `2.x` release line receives security patch releases. General bug fixes and performance improvements land on the latest published minor release line (`2.8.x`). Security backports for earlier `2.x` lines are published under dedicated npm dist-tags (`release-2.x`) so that `latest` never moves backwards and automated updates do not inadvertently downgrade packages.
 
 | Version | Supported | Latest patch | Distribution tag | Notes |
 | --- | --- | --- | --- | --- |
-| 2.8.x | Not published yet | — | — | Prepared on `main` and not on npm; this row changes when it is published. |
-| 2.7.x | Yes | 2.7.2 | `latest` | Current published release line. Receives feature updates, bug fixes, and security patches. |
+| 2.8.x | Yes | 2.8.0 | `latest` | Current published release line. Receives feature updates, bug fixes, and security patches. |
+| 2.7.x | Security fixes only | 2.7.2 | none yet | Backported security fixes only. It has no `release-2.7` dist-tag yet; install it with `rust-fetch@2.7`. |
 | 2.6.x | Security fixes only | 2.6.2 | `release-2.6` | Backported security fixes only. |
 | 2.5.x | Security fixes only | 2.5.3 | `release-2.5` | Backported security fixes only. |
 | 2.4.x | Security fixes only | 2.4.2 | `release-2.4` | Backported security fixes only. |
@@ -116,7 +116,7 @@ When fetching user-supplied URLs on Node.js (webhooks, proxies, link previews), 
 
 ## Distribution and release security
 
-- **Dist-tags and release discipline:** The `latest` dist-tag on npm is strictly reserved for the current published minor release line (`2.7.x` today). Backported security patches for older release lines (`2.1.x`–`2.6.x`) are published to dedicated dist-tags (`release-2.1` through `release-2.6`) so that consumer dependencies using caret ranges (`^2.x`) will not unexpectedly downgrade.
+- **Dist-tags and release discipline:** The `latest` dist-tag on npm is strictly reserved for the current published minor release line (`2.8.x` today). Backported security patches for older release lines (`2.1.x`–`2.6.x`) are published to dedicated dist-tags (`release-2.1` through `release-2.6`) so that consumer dependencies using caret ranges (`^2.x`) will not unexpectedly downgrade.
 - **Verify what you install:** in a project that has installed `rust-fetch`, run `npm audit signatures`. It checks the registry signature and the provenance attestation of every installed package that has one, and exits non-zero if either is invalid. `npm view rust-fetch@<version> dist.attestations` shows the attestation, whose source is this repository's `release.yml` workflow run for the tag `v<version>`. Provenance proves where a package was built, not that the source is free of defects, and it says nothing about the Wasm module's relation to the source. That is checked separately: the release workflow builds the Wasm twice in different directories and stops unless both builds and the file about to be published are identical, and `reproducible.yml` rebuilds the latest release's tag and compares it with the file on npm. To check it yourself, check out `v<version>`, build with the Rust and `wasm-pack` versions pinned in `release.yml` (`wasm-pack build --release --target web` in `wasm-module`), and compare the SHA-256 of `pkg/rust_fetch_bg.wasm` with the one in the tarball from `npm pack rust-fetch@<version>`. A different toolchain gives different bytes, which is not a sign of tampering. The repository is also scored by the [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/asemqaffaf/rust-fetch).
 - **Provenance and integrity:** Every release is built on GitHub Actions with pinned toolchains, signed with npm provenance attestations, and verified after publication. Tarballs are tested in clean environments against size, API, and benchmark regression gates before publishing.
 
