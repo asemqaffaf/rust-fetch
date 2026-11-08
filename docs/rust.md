@@ -30,4 +30,6 @@ Redirects: `.redirect(Redirect::Manual)` or `Redirect::Error`, and `.max_redirec
 
 The security and load options are there too, with the same defaults as in JavaScript: `allow_absolute_urls`, `max_response_bytes`, `sensitive_headers` and `allow_insecure_redirects` (on the `ClientBuilder` and per request), and `retry_budget(RetryBudget::new())` and `max_pending_requests` (on the `ClientBuilder`; `Client::retries_refused()` counts refusals). `maxLineBytes`, `maxEventBytes` and `allowPrivateNetwork` are JavaScript only.
 
-Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (`on_download_progress`) must be `Send + Sync` on native targets. Upload progress, WebSockets and interceptors are only in the JavaScript API.
+Request futures are `Send`, so you can `tokio::spawn` them. Progress callbacks (`on_download_progress`, `on_upload_progress`) must be `Send + Sync` on native targets.
+
+`on_upload_progress` reports the request body as the connection takes it, in pieces of up to 64 KiB (`loaded` of `Some(total)` bytes); a retried attempt starts again from 0, and a request without a body reports nothing. It is not available on `wasm32`, where requests go through `fetch()`, which has no upload progress. WebSockets and interceptors are only in the JavaScript API.
