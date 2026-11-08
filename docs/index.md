@@ -37,7 +37,7 @@ features:
     link: /conformance
   - title: Typed, validated responses
     details: Pass a Zod, Valibot or ArkType schema (any Standard Schema) and the body is validated and typed as the schema's output. A body that fails rejects with a ValidationError that is never retried.
-    link: /guide/requests#validating-responses
+    link: /guide/validation
   - title: Auth, caching and deduplication
     details: Bearer or basic auth sent only to your origins, with single-flight token refresh; an opt-in RFC 9111 response cache; identical in-flight requests share one request.
     link: /guide/configuration

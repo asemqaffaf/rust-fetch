@@ -196,6 +196,7 @@ export default defineConfig({
               items: [
                 { text: 'Client options', link: '/guide/configuration' },
                 { text: 'Requests and responses', link: '/guide/requests' },
+                { text: 'Validating with Zod', link: '/guide/validation' },
                 { text: 'Errors', link: '/guide/errors' },
               ],
             },
