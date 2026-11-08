@@ -10,7 +10,7 @@ How a vulnerability report becomes a fixed, published release on every supported
 | Rulesets on `main` | "Protect main", active | No deletion or force push; a pull request and nine passing status checks are required, with no approval count (one maintainer). Repository admins can bypass it. Tags are not covered: signed tags would block the tag push that publishes. |
 | Secret scanning push protection | Enabled on 2026-11-07 | A committed secret that matches a known pattern is blocked at push. |
 | People who can publish a release | One maintainer | A tag push runs `release.yml`, which publishes with the `NPM_TOKEN` secret, so it is the people with Write access who can ship. There is one. If that account is unavailable, nobody can ship a fix. See "Adding a second person who can ship a fix" below. |
-| Release drill | Dry run done on 2026-11-07, publish not exercised | See the dry run table below. |
+| Release drill | Two dry runs: local (2026-11-07) and through a draft advisory with a temporary private fork (2026-11-08); publish, CVE and a second person not exercised | See the two tables below. |
 
 Re-check these with `gh api repos/asemqaffaf/rust-fetch` (security_and_analysis), `gh api repos/asemqaffaf/rust-fetch/rulesets` and the npm package's maintainer list before relying on this table.
 
@@ -43,9 +43,12 @@ The 7-day triage target is an internal goal. It is not in SECURITY.md and nothin
 
 ### 3. Fix privately
 
-1. Work in a private fork or a temporary private fork of a draft advisory, not in a public branch.
+1. Work in a temporary private fork of a draft advisory (Security, Advisories, the draft, "Start a temporary private fork"), not in a public branch. Know its limits first (found in the second drill):
+   - The fork is empty for a minute or more after it is created, and the repository is large (about 430 MB). A fresh clone is slow and can look hung. Faster: add the fork as a second remote of the clone you already have (`git remote add fork <url>`) and push a branch to it.
+   - GitHub Actions does not run in it (the Actions API answers 404). Run `npm run test:js`, `cargo test` and `scripts/check-package.mjs --strict --no-bench` on your own machine; real CI runs only after the fix is merged into the public repository.
+   - A pull request in the fork cannot be merged with `gh pr merge` or the API ("forbidden on workspace repositories"). It is merged with the button on the advisory page, which is part of publishing.
 2. Write the regression test first and see it fail. Put it next to the related security test (`wasm-module/js/test/`, or a Rust test in `wasm-module/src/`).
-3. Fix on the newest line first. Run `npm run test:js`, `cargo test` for `wasm-module` and `native`, and `node scripts/check-unsafe.mjs` if Rust changed.
+3. Fix on the newest line first. A build rewrites the tracked copies in `wasm-module/pkg`, which blocks `git switch`; run `git checkout -- wasm-module/pkg` before changing branch. Run `npm run test:js`, `cargo test` for `wasm-module` and `native`, and `node scripts/check-unsafe.mjs` if Rust changed.
 4. Cherry-pick onto each supported older line. The older lines have no long-lived branch: create `release/X.Y.Z` from the last tag of that line (for example `git switch -c release/2.6.3 v2.6.2`), apply the fix, and rerun that line's tests. A fix that does not apply cleanly is re-written, not forced.
 5. Do not mention the vulnerability in commit messages or PR titles until publication. Use a neutral summary such as "harden header handling".
 
@@ -53,7 +56,7 @@ The 7-day triage target is an internal goal. It is not in SECURITY.md and nothin
 
 For every affected line `X.Y.Z`:
 
-1. Set the version in `package.json`, `wasm-module/Cargo.toml`, and `native/Cargo.toml`. `npm run build` regenerates `wasm-module/pkg/package.json` from `wasm-module/Cargo.toml`. `release.yml` builds, then fails when the tag differs from that generated version.
+1. Run `node scripts/bump-version.mjs X.Y.Z`. It sets the version in `package.json`, the three lockfile families, both `Cargo.toml` files and the two "On npm" lines, and writes nothing unless every place matches. Then `npm run build` regenerates `wasm-module/pkg/package.json` from `wasm-module/Cargo.toml`; commit the regenerated files in `wasm-module/pkg` with the release. `release.yml` builds, then fails when the tag differs from that generated version.
 2. Move the `Unreleased` entries in `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`. Keep the entry vague until publication, then fill in the advisory link.
 3. Update the "Latest patch" column in `SECURITY.md`.
 4. Merge through a PR once CI is green. On a private fork, merge the fork PR at publication time instead.
@@ -80,6 +83,7 @@ For every affected line `X.Y.Z`:
 3. Update the CHANGELOG entries with the advisory link.
 4. If a vulnerable version should no longer be installed, run `npm deprecate "rust-fetch@<range>" "Security fix in X.Y.Z, see the advisory"`. Deprecate; do not unpublish.
 5. Reply to the reporter with the release links.
+6. A drill advisory is closed, not published (`gh api -X PATCH repos/asemqaffaf/rust-fetch/security-advisories/<GHSA> -f state=closed`). Closing does not delete the temporary private fork, and the API refuses to delete it (403, "Must have admin rights" even for the owner). Delete the fork in the web interface (its Settings, Danger zone).
 
 ### 7. Afterwards
 
@@ -110,6 +114,26 @@ Rehearse everything except the publish:
 These timings are of an automated run by the maintainer's assistant, with no waiting for a second person. They show that the steps work and where they snag, not how long a human response takes.
 
 Status: DRY RUN DONE on 2026-11-07 (draft pull request #266, closed, branch deleted). Not exercised: the publish step, the tag-triggered `release.yml` (including the new reproducibility gate on a real tag), the advisory and CVE steps, the backport of a code fix, and a second person doing any step.
+
+## Dry run through a private fork (2026-11-08)
+
+A second rehearsal, this time through the advisory path that a real report would use. The report was invented; the advisory is labelled as a drill and was closed without publishing, and no CVE was requested.
+
+| Step | Started (JST) | Finished (JST) | Duration | Problem found |
+| --- | --- | --- | --- | --- |
+| Draft advisory (API) | 13:03:06 | 13:03:07 | 1 s | None. Works for the owner through `gh api`; the same form is in the web interface |
+| Temporary private fork | 13:03:11 | 13:03:14 | 3 s | The call returns at once but the fork is empty: a clone gave "no commits yet" and an early clone failed with HTTP 500. Branches were there when checked at 13:07:55, 4 min 41 s later; it was not checked in between |
+| Clone the fork | 13:03:22 | not finished | over 4 min | A fresh clone of the 430 MB repository hung, so the fork was added as a remote of the existing clone instead |
+| Regression test and fix on the newest line | 13:08:06 | 13:09:03 | 57 s | The test imported the browser entry instead of `node.js` and failed with an unrelated error; fixed. A build also dirtied the tracked `wasm-module/pkg` files, which blocked the next `git switch` |
+| Push and open a pull request in the fork | 13:09:03 | 13:09:05 | 2 s | No CI: Actions do not run in a temporary private fork |
+| Backport to `v2.7.2` | 13:09:31 | 13:09:33 | 2 s | Clean, because the change is a new test file. A code change would conflict as in the first drill |
+| Run the test against the published 2.7.2 | about 13:09:18 | about 13:09:25 | under 30 s (not timed exactly) | It passes there too: the drill's "bug" never existed, so this run did not prove that the test fails on an affected release, which step 7 of the procedure requires for a real one |
+| Merge the fork pull request | 13:09:40 | refused | n/a | `gh pr merge` is forbidden on the fork. Merging is only possible from the advisory page |
+| Close the advisory | 13:09:40 | 13:09:43 | 3 s | Works. The fork stays; the API cannot delete it |
+
+Total: 6 min 37 s from the first call to the closed advisory, of which about 4.5 minutes was waiting on the fork. These are the timings of the owner's assistant with no second person, not of a human responding to a report.
+
+Not exercised, so not proven: publishing the advisory (which merges the fork pull request), the CVE request, the tag-triggered `release.yml` for a security release, and a second person doing any step. Fixed because of the drill: the version bump now has a script (`scripts/bump-version.mjs`), and this page records the fork limits above.
 
 ## Adding a second person who can ship a fix
 
