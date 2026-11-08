@@ -13,6 +13,9 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import util from 'node:util';
 import { pathToFileURL } from 'node:url';
+// Connecting to a closed port takes about two seconds to fail on Windows (the SYN is retried), so the
+// deadline there is longer than the failure the scenarios wait for (#15)
+const REQUEST_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 2000;
 
 const pkg = process.env.RUST_FETCH_PKG ? pathToFileURL(`${process.env.RUST_FETCH_PKG}/`).href : new URL('../../pkg/', import.meta.url).href;
 const { WasmClient } = await import(new URL('node.js', pkg).href);
@@ -90,7 +93,7 @@ async function run(scenario, extraOptions = {}) {
     console[method] = (...args) => consoleOutput.push(args.map((arg) => (typeof arg === 'string' ? arg : util.inspect(arg, { depth: 6 }))).join(' '));
   }
   const client = new WasmClient({
-    retries: 0, timeoutMs: 2000, headers: headers(), sensitiveHeaders: ['x-api-key'],
+    retries: 0, timeoutMs: REQUEST_TIMEOUT_MS, headers: headers(), sensitiveHeaders: ['x-api-key'],
     debug: (entry) => debug.push(JSON.stringify(entry)),
     onRequestStart: (entry) => hooks.push(JSON.stringify(entry)),
     onRequestEnd: (entry) => hooks.push(JSON.stringify(entry)),
@@ -146,7 +149,7 @@ describe('secrets do not leak', () => {
     const original = console.debug;
     console.debug = (...args) => lines.push(args.map((arg) => (typeof arg === 'string' ? arg : util.inspect(arg, { depth: 6 }))).join(' '));
     try {
-      const client = new WasmClient({ retries: 0, timeoutMs: 2000, headers: headers(), sensitiveHeaders: ['x-api-key'], debug: true });
+      const client = new WasmClient({ retries: 0, timeoutMs: REQUEST_TIMEOUT_MS, headers: headers(), sensitiveHeaders: ['x-api-key'], debug: true });
       await client.get(url('/500')).catch(() => {});
     } finally { console.debug = original; }
     assert.ok(lines.length > 0, 'expected debug entries');

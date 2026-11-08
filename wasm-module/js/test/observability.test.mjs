@@ -117,7 +117,7 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
     assert.equal(error.url, 'bad://rewritten');
     assert.equal(error.attempts, 0);
   });
-  it('counts transport and agent queues without retaining completed requests', { skip: browser }, async () => {
+  it('counts transport and agent queues without retaining completed requests', { skip: browser || (process.platform === 'win32' && 'needs more than 256 simultaneous loopback connections, which Windows refuses (#15)') }, async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
     const local = await startServer(async (req, res) => { await gate; res.end('ok'); });

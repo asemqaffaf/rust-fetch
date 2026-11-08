@@ -890,7 +890,8 @@ describe(`Node.js transport (${nativeExpected ? 'native' : 'node:http'})`, () =>
       assert.equal(results[5999].body.url, '/echo?i=5999');
     });
 
-    it('times out and cancels requests while they wait', async () => {
+    // Needs more than 256 connections held open at once, which Windows loopback refuses (see WINDOWS above)
+    it('times out and cancels requests while they wait', { skip: WINDOWS && 'Windows refuses hundreds of simultaneous loopback connections (#15)' }, async () => {
       let holding = true;
       const held = [];
       const s = await startServer((req, res) => (holding ? held.push(res) : res.end('{}')));
