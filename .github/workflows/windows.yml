@@ -48,7 +48,8 @@ jobs:
       - name: Install JS dev dependencies
         run: npm ci
       - name: Build npm package
-        run: npm run build
+        shell: bash
+        run: scripts/ci-build-wasm.sh
       - name: Build native transport
         run: npm run build:native
       - name: JS integration + package tests
