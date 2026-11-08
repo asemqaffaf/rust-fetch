@@ -1,0 +1,19 @@
+---
+search: false
+editLink: false
+lastUpdated: false
+---
+
+# Stability and releases
+
+::: warning Documentation for 2.7.x
+This documents rust-fetch 2.7.x. For the latest version, see the [current documentation](/). The [changelog](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md#280---2026-11-08) lists what 2.8 added.
+:::
+
+
+- **Semantic versioning, staying on 2.x.** Nothing in 2.x breaks existing code: new behaviour is opt-in, defaults don't change, and the TypeScript API and the Rust API are checked against the previous release in CI (`api/rust-fetch.d.ts`, `cargo-semver-checks`). A breaking change would wait for 3.0, with a migration guide and at least one 2.x release warning about it first.
+- **Fewer, larger releases.** 2.0 to 2.5 shipped within three days in October 2026, while the project was getting started. From 2.6.0, minor releases come at most every two weeks. Patch releases are only for regressions and security fixes, each with a test that reproduces the problem.
+- **What gets fixed.** Each active 2.x release line receives security patch releases. Regressions and general bug fixes land on the latest minor release. Security issues are handled privately, as described in [SECURITY.md](https://github.com/asemqaffaf/rust-fetch/blob/main/SECURITY.md).
+- **Documentation for older versions.** This site documents the latest release; the version menu at the top lists the others: [2.6 documentation](/v2.6/) retains the full guides and reference for 2.6.x, and [2.5 documentation](/v2.5/) is the README as published with 2.5.2 (2.5 had no documentation site).
+- **How a release is checked.** Every release is built and published from CI with [npm provenance](https://docs.npmjs.com/generating-provenance-statements), after the Rust and JavaScript suites (100% line coverage enforced for the Rust core and the Node.js transport), real-browser tests in Chromium, Firefox and WebKit, the security regression tests, and the size and API checks. Each pull request is also benchmarked against the previous version. Before publishing, the exact tarball npm will receive is installed in an empty directory and checked: its files, a request against a local server, the security regression tests, and a benchmark against the version already on npm, where a regression stops the release ([`check-package.mjs`](https://github.com/asemqaffaf/rust-fetch/blob/main/scripts/check-package.mjs)). After publishing, a clean install from the registry must verify its signature and provenance. CI's GitHub Actions are pinned to commit SHAs, and its Rust to a fixed version.
+- **What changed and why.** [CHANGELOG.md](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md) lists every change, including performance regressions and their fixes (2.4.1), and [ROADMAP.md](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md) shows what's next.

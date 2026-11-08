@@ -42,6 +42,7 @@ export default defineConfig({
         text: `v${minorVersion}`,
         items: [
           { text: `${minorVersion} (latest)`, link: '/' },
+          { text: '2.7', link: '/v2.7/' },
           { text: '2.6', link: '/v2.6/' },
           { text: '2.5', link: '/v2.5/' },
           { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
@@ -107,6 +108,73 @@ export default defineConfig({
             { text: 'Stability and releases', link: '/v2.6/stability' },
             { text: 'Development and benchmarking', link: '/v2.6/development' },
             { text: 'FAQ', link: '/v2.6/faq' },
+          ],
+        },
+      ],
+      '/v2.7/': [
+        {
+          text: 'Start here',
+          items: [
+            { text: 'Introduction', link: '/v2.7/guide/introduction' },
+            { text: 'Getting started', link: '/v2.7/guide/getting-started' },
+            { text: 'Guide overview', link: '/v2.7/guide/' },
+          ],
+        },
+        {
+          text: 'Guide',
+          items: [
+            {
+              text: 'Basics',
+              items: [
+                { text: 'Client options', link: '/v2.7/guide/configuration' },
+                { text: 'Requests and responses', link: '/v2.7/guide/requests' },
+                { text: 'Errors', link: '/v2.7/guide/errors' },
+              ],
+            },
+            {
+              text: 'Reliability',
+              items: [
+                { text: 'Timeouts, retries and cancellation', link: '/v2.7/guide/timeouts-and-retries' },
+                { text: 'Concurrency and rate limits', link: '/v2.7/guide/load-limits' },
+                { text: 'Circuit breakers', link: '/v2.7/guide/circuit-breakers' },
+                { text: 'Observability', link: '/v2.7/guide/observability' },
+                { text: 'Interceptors', link: '/v2.7/guide/interceptors' },
+              ],
+            },
+            {
+              text: 'Streaming and real-time',
+              items: [
+                { text: 'Streaming and Server-Sent Events', link: '/v2.7/guide/streaming' },
+                { text: 'Uploads', link: '/v2.7/guide/uploads' },
+                { text: 'WebSockets', link: '/v2.7/guide/websockets' },
+              ],
+            },
+            {
+              text: 'Tooling',
+              items: [
+                { text: 'TypeScript', link: '/v2.7/guide/typescript' },
+              ],
+            },
+          ],
+        },
+        {
+          text: 'Production',
+          items: [
+            { text: 'Security', link: '/v2.7/security' },
+            { text: 'Performance', link: '/v2.7/performance' },
+            { text: 'Reliability under faults', link: '/v2.7/reliability' },
+            { text: 'Transport conformance', link: '/v2.7/conformance' },
+          ],
+        },
+        {
+          text: 'Reference',
+          items: [
+            { text: 'Architecture', link: '/v2.7/architecture' },
+            { text: 'Using it from Rust', link: '/v2.7/rust' },
+            { text: 'Compatibility and limitations', link: '/v2.7/compatibility' },
+            { text: 'Stability and releases', link: '/v2.7/stability' },
+            { text: 'Development and benchmarking', link: '/v2.7/development' },
+            { text: 'FAQ', link: '/v2.7/faq' },
           ],
         },
       ],
