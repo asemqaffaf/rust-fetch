@@ -63,6 +63,8 @@ Passed to each call; most override the client option of the same name. The full 
 | `signal` | An `AbortSignal` that cancels the request, its retries and its body |
 | `responseType` | `'auto'` (by `Content-Type`), `'json'`, `'text'`, `'binary'`, `'stream'` or `'ndjson'` |
 | `onDownloadProgress`, `onUploadProgress` | `({ loaded, total }) => void` |
+| `schema` | Any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType…): the body becomes its typed output; see [Validating responses](/guide/requests#validating-responses) |
+| `dedupe` | `true` shares identical in-flight `get` and `head` requests; see [Sharing identical requests](/guide/requests#sharing-identical-requests) |
 
 ## What a request resolves to
 
