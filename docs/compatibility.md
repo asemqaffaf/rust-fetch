@@ -11,7 +11,7 @@
 | TypeScript | Definitions included; TypeScript 5.2 or newer |
 | Upload progress, WebSockets | JavaScript API only, from 2.2.0. WebSockets need a built-in `WebSocket`: browsers, Node.js 22+, or Node.js 20 with `--experimental-websocket`. Tested in CI on Node.js 20 (with that flag), 22 and 24 |
 | Rust | The same client as a Rust library ([usage](/rust#using-it-from-rust)), on tokio or in your own wasm crates |
-| Native Node.js transport | In the repository, not yet in the npm package (no prebuilt binaries); build it with `npm run build:native`. Tested in CI on Linux with Node.js 20, 22 and 24, and run on macOS (Apple silicon); not tried on Windows |
+| Native Node.js transport | In the repository, not yet in the npm package (no prebuilt binaries); build it with `npm run build:native`. Tested in CI on Linux with Node.js 20, 22 and 24, on Windows (MSVC) with Node.js 22 and 24, and run on macOS (Apple silicon). On Windows the whole JavaScript suite passes against both Node.js transports except two tests that need more than 256 simultaneous loopback connections, which Windows refuses; for the same reason, Windows servers and clients that open hundreds of connections at the same moment can see `ECONNREFUSED` that Linux and macOS queue instead ([#15](https://github.com/asemqaffaf/rust-fetch/issues/15)) |
 
 ## Limitations
 

@@ -117,7 +117,7 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
     assert.equal(error.url, 'bad://rewritten');
     assert.equal(error.attempts, 0);
   });
-  it('counts transport and agent queues without retaining completed requests', { skip: browser }, async () => {
+  it('counts transport and agent queues without retaining completed requests', { skip: browser || (process.platform === 'win32' && 'needs more than 256 simultaneous loopback connections, which Windows refuses (#15)') }, async () => {
     let release;
     const gate = new Promise((resolve) => { release = resolve; });
     const local = await startServer(async (req, res) => { await gate; res.end('ok'); });
@@ -135,7 +135,7 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
       release(); await pending;
       assert.equal(client.stats().requests.active, 0);
       assert.equal(client.stats().pools.queued, 0);
-    } finally { release(); await pending; await local.close(); }
+    } finally { release(); await pending.catch(() => {}); await local.close(); } // close even when a request failed, or the process never exits
   });
   it('preserves primitive interceptor rejections while observing failures', async () => {
     const client = new WasmClient({ metrics: true, timings: true });

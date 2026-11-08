@@ -1,0 +1,56 @@
+name: Windows
+# #15. Builds the package and the native addon with MSVC and runs the JS suite against both Node transports
+# on Windows. Not a required check: it runs weekly and on changes to native/ or the JavaScript tests.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 20 * * 0'
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'wasm-module/js/test/**'
+      - '.github/workflows/windows.yml'
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  windows:
+    name: Windows (Node ${{ matrix.node }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      # Tests read docs and compare text; Git for Windows would otherwise convert line endings on checkout
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch on 2026-10-24
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: |
+            wasm-module
+            native
+      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        with:
+          tool: wasm-pack@0.15.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install JS dev dependencies
+        run: npm ci
+      - name: Build npm package
+        run: npm run build
+      - name: Build native transport
+        run: npm run build:native
+      - name: JS integration + package tests
+        # A per-test timeout turns a test that hangs on Windows into a named failure instead of a stuck job
+        run: npm run test:js -- --test-timeout=120000

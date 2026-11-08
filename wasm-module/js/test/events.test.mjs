@@ -373,7 +373,8 @@ describe('events', () => {
     // depends on the OS (about 830 events on macOS, over 5,000 on Linux, which autotunes loopback
     // buffers), so this checks that writing stopped, not where
     assert.ok(paused < FLOOD_EVENTS, `the server wrote all ${FLOOD_EVENTS} events`);
-    assert.ok(later - paused < 100, `the server wrote ${later - paused} more events while the loop was paused (${later} of ${FLOOD_EVENTS})`);
+    // Windows lets a few hundred more events into its (larger) loopback buffers after the first pause
+    assert.ok(later - paused < (process.platform === 'win32' ? 400 : 100), `the server wrote ${later - paused} more events while the loop was paused (${later} of ${FLOOD_EVENTS})`);
     for (let i = 0; i < 100 && !flood.closed; i++) await sleep(10);
     assert.ok(flood.closed, 'break closed the connection');
   });

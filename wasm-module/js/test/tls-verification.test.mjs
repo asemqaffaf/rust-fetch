@@ -23,7 +23,8 @@ const child = fileURLToPath(new URL('./tls-child.mjs', import.meta.url));
 let haveOpenssl = true;
 try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); } catch { haveOpenssl = false; }
 
-const dir = mkdtempSync(join(tmpdir(), 'rust-fetch-tls-'));
+// openssl reads backslashes in its config file as escapes, so the directory is written with forward slashes
+const dir = mkdtempSync(join(tmpdir(), 'rust-fetch-tls-')).replaceAll('\\', '/');
 const openssl = (...args) => execFileSync('openssl', args, { cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] });
 const fmt = (date) => date.toISOString().replace(/[-:T]/g, '').replace(/\.\d+/, '');
 const DAY = 86_400_000;
