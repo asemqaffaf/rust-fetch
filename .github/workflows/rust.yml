@@ -185,7 +185,7 @@ jobs:
         working-directory: wasm-module
         run: wasm-pack test --node
       - name: Build npm package
-        run: npm run build
+        run: scripts/ci-build-wasm.sh
       # The JS tests run against both Node transports: native, and node:http
       # (the *-js.test.mjs files, with the addon disabled)
       - name: Build native transport
@@ -259,7 +259,7 @@ jobs:
           node-version: 22
       - name: Build the base package
         working-directory: base
-        run: npm ci && npm run build && npm run build:native
+        run: npm ci && scripts/ci-build-wasm.sh && npm run build:native
       # The release workflow gates on the version published on npm, so show the
       # cumulative change against it too, not only against the PR's base (#182)
       - name: Install the published release

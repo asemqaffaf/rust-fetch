@@ -37,7 +37,7 @@ jobs:
       - name: Install JS dev dependencies
         run: npm ci
       - name: Build
-        run: npm run build
+        run: scripts/ci-build-wasm.sh
 
       - name: Reproducible build (blocks the release)
         # What is published must be what the tagged source builds to: two clean builds in different
