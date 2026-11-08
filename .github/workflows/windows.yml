@@ -18,7 +18,7 @@ jobs:
   windows:
     name: Windows (Node ${{ matrix.node }})
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -49,4 +49,5 @@ jobs:
       - name: Build native transport
         run: npm run build:native
       - name: JS integration + package tests
-        run: npm run test:js
+        # A per-test timeout turns a test that hangs on Windows into a named failure instead of a stuck job
+        run: npm run test:js -- --test-timeout=120000
