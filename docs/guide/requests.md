@@ -144,7 +144,7 @@ for await (const page of client.paginate('/events', {
 
 ## Validating responses
 
-`schema` takes any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType and others implement it; rust-fetch depends on none of them). The body of the response becomes the schema's output, typed as such.
+`schema` takes any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType and others implement it; rust-fetch depends on none of them). The body of the response becomes the schema's output, typed as such. The [validation guide](/guide/validation) has more examples (Zod, Valibot, error handling).
 
 ```ts
 import { z } from 'zod';
