@@ -52,8 +52,5 @@ jobs:
       - name: Build native transport
         run: npm run build:native
       - name: JS integration + package tests
-        env:
-          # Each test process that runs longer than a minute says which file it is and what keeps it alive
-          NODE_OPTIONS: --require=./scripts/hang-report.cjs
         # A per-test timeout turns a test that hangs on Windows into a named failure instead of a stuck job
         run: npm run test:js -- --test-timeout=120000
