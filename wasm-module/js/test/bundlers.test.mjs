@@ -1,11 +1,11 @@
-// Bundler compatibility (#71): build a small app that imports rust-fetch with Vite and webpack,
+// Bundler compatibility (#71): build a small app that imports rust-fetch with Vite, webpack and esbuild,
 // then load the build in a real browser and make requests. Loading the .wasm next to an ES module
 // is where bundlers differ, so the build output is what is tested, not just the import.
 //
 // Run `npm run build` first, then `npm run test:browsers`.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { cp, copyFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, extname } from 'node:path';
@@ -147,6 +147,29 @@ describe('webpack 5', () => {
     assert.equal(stats.hasErrors(), false, stats.toString({ errors: true }));
     await cp(join(fixtures, 'webpack-app', 'index.html'), join(outDir, 'index.html'));
     assert.ok((await files(outDir)).some((file) => file.endsWith('.wasm')), 'the .wasm is an emitted asset');
+    const { result, failures } = await runInBrowser(await serve(outDir));
+    assert.deepEqual(result, expected);
+    assert.deepEqual(failures, []);
+  });
+});
+
+describe('esbuild', () => {
+  // esbuild leaves `new URL('rust_fetch_bg.wasm', import.meta.url)` alone and has no asset pipeline for it,
+  // so the .wasm is copied next to the bundle (or passed to init() by URL). This documents that step.
+  it('bundles the app to one ES module and, with the .wasm beside it, it makes requests in the browser', async () => {
+    const { build } = await import('esbuild');
+    const outDir = join(work, 'esbuild-dist');
+    await build({
+      entryPoints: [join(fixtures, 'app.js')],
+      bundle: true,
+      format: 'esm',
+      target: 'es2022',
+      outfile: join(outDir, 'main.js'),
+      alias: { 'rust-fetch': join(pkg, 'rust_fetch.js') },
+      logLevel: 'warning',
+    });
+    await copyFile(join(pkg, 'rust_fetch_bg.wasm'), join(outDir, 'rust_fetch_bg.wasm'));
+    await cp(join(fixtures, 'esbuild-app', 'index.html'), join(outDir, 'index.html'));
     const { result, failures } = await runInBrowser(await serve(outDir));
     assert.deepEqual(result, expected);
     assert.deepEqual(failures, []);

@@ -7,7 +7,7 @@ Use rust-fetch's client instead: `new WasmClient({ timeoutMs: 10_000, retries: 3
 Yes, for most uses: it rejects on HTTP errors, has interceptors, timeouts, upload and download progress, and adds built-in retries, typed errors and WebSockets, with the same client in browsers and Node.js. axios is much smaller in a browser bundle (about 21 KB against 171 KB brotli). See [Compared with `fetch()` and axios](/guide/introduction#compared-with-fetch-and-axios).
 
 **Does it work in browsers and Node.js?**
-Both, with the same API: browsers and Web Workers (through bundlers such as Vite and webpack; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](/compatibility#supported-environments).
+Both, with the same API: browsers and Web Workers (through bundlers such as Vite, webpack and esbuild; call `init()` first) and Node.js 20, 22 and 24. TypeScript definitions are included. See [Supported environments](/compatibility#supported-environments).
 
 **Is it faster than `fetch()`?**
 In Node.js, the published client matches `fetch()` one request at a time and is ahead with large bodies, many requests in flight and sustained load, but behind on concurrent HTTPS. The native transport, not in the npm package yet, reached up to 1.95× `fetch()`'s throughput. In browsers it uses `fetch()` itself. See [Performance](/performance#performance).
