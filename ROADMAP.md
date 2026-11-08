@@ -121,7 +121,7 @@ Performance carried over from 2.4.0:
 | | |
 | --- | --- |
 | Prebuilt binaries as per-platform optional packages; loader, CI build matrix and publishing | [#14](https://github.com/asemqaffaf/rust-fetch/issues/14) |
-| Windows support and a Windows CI job | [#15](https://github.com/asemqaffaf/rust-fetch/issues/15) |
+| Windows support and a Windows CI job | [#15](https://github.com/asemqaffaf/rust-fetch/issues/15) (CI job passes on Node.js 22 and 24; prebuilt binaries wait on #14) |
 
 **Needs one-time setup first ([#14](https://github.com/asemqaffaf/rust-fetch/issues/14)):** npm trusted publishing is configured per package, so the per-platform packages must first exist on npm. Their names (scope), whether the native transport is on by default when installed, and the minimum glibc for Linux builds also need choosing.
 

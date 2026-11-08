@@ -1,7 +1,6 @@
 name: Windows
-# #15. The native transport and the JavaScript suite have only run on Linux and macOS. This builds the
-# package and the addon with MSVC and runs the JS suite against both Node transports, so Windows gaps
-# show up as test results.
+# #15. Builds the package and the native addon with MSVC and runs the JS suite against both Node transports
+# on Windows. Not a required check: it runs weekly and on changes to native/ or the JavaScript tests.
 on:
   workflow_dispatch:
   schedule:
@@ -9,6 +8,7 @@ on:
   pull_request:
     paths:
       - 'native/**'
+      - 'wasm-module/js/test/**'
       - '.github/workflows/windows.yml'
 permissions:
   contents: read
