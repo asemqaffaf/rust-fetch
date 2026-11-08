@@ -153,8 +153,6 @@ export default defineConfig({
               text: 'Tooling',
               items: [
                 { text: 'TypeScript', link: '/v2.7/guide/typescript' },
-                { text: 'Testing your code', link: '/v2.7/guide/testing' },
-                { text: 'API reference', link: '/v2.7/api/' },
               ],
             },
           ],
@@ -163,8 +161,6 @@ export default defineConfig({
           text: 'Production',
           items: [
             { text: 'Security', link: '/v2.7/security' },
-            { text: 'Threat model', link: '/v2.7/threat-model' },
-            { text: 'Independent review', link: '/v2.7/security-review' },
             { text: 'Performance', link: '/v2.7/performance' },
             { text: 'Reliability under faults', link: '/v2.7/reliability' },
             { text: 'Transport conformance', link: '/v2.7/conformance' },
