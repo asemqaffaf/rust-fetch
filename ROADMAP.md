@@ -204,7 +204,7 @@ Behavior changes to know about: a certificate that names the host only in its su
 | Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) | Done (`auth`, scoped to the client's origins) |
 | Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Vite, webpack and esbuild tested; Next.js, plain Rollup and SSR not |
 | Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) | Done (TypeDoc reference generated from the public types) |
-| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Node.js, LLM streaming and WebSocket examples; browser (Vite) and Worker examples not yet |
+| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Node.js, LLM streaming, WebSocket and Cloudflare Worker examples; the browser (Vite) example not yet |
 | Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) | Blocked: needs a JSR scope and account |
 | The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) | Done |
 | `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) | Done |

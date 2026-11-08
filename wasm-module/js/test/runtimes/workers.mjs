@@ -15,19 +15,25 @@ const pkg = fileURLToPath(new URL('../../../pkg/', import.meta.url));
 const workerd = fileURLToPath(new URL('./node_modules/.bin/workerd', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'rust-fetch-workers-'));
 
-const port = await new Promise((resolve) => {
-  const probe = net.createServer().listen(0, '127.0.0.1', () => {
-    const { port } = probe.address();
-    probe.close(() => resolve(port));
+const freePort = () =>
+  new Promise((resolve) => {
+    const probe = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
   });
-});
+const port = await freePort();
+const examplePort = await freePort();
 
 copyFileSync(join(pkg, 'rust_fetch.js'), join(dir, 'rust_fetch.js'));
 copyFileSync(join(pkg, 'rust_fetch_bg.wasm'), join(dir, 'rust_fetch_bg.wasm'));
+// examples/cloudflare-worker/worker.mjs, unchanged: it imports 'rust-fetch/...', so the modules are served under those names
+copyFileSync(fileURLToPath(new URL('../../../../examples/cloudflare-worker/worker.mjs', import.meta.url)), join(dir, 'example.mjs'));
 
 // The origin: what the client under test talks to
 writeFileSync(join(dir, 'origin.mjs'), `
 let flaky = 0;
+let userFlaky = 0;
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -35,6 +41,9 @@ export default {
     switch (url.pathname) {
       case '/hello': return json({ hello: 'world' });
       case '/echo': return json({ method: request.method, body: await request.json(), type: request.headers.get('content-type') });
+      case '/users/1': return json({ id: 1, name: 'Grace' });
+      case '/users/404': return new Response('no such user', { status: 404 });
+      case '/users/flaky': return ++userFlaky < 3 ? new Response(null, { status: 503, headers: { 'retry-after': '0' } }) : json({ id: 'flaky', attempts: userFlaky });
       case '/missing': return new Response('no such thing', { status: 404 });
       case '/flaky': return ++flaky < 3 ? new Response(null, { status: 503, headers: { 'retry-after': '0' } }) : json({ attempts: flaky });
       case '/sse': return new Response('data: {"n":1}\\n\\ndata: {"n":2}\\n\\ndata: [DONE]\\n\\n', { headers: { 'content-type': 'text/event-stream' } });
@@ -85,12 +94,24 @@ const config :Workerd.Config = (
       ],
       globalOutbound = "origin",
     )),
+    (name = "example", worker = (
+      compatibilityDate = "2026-01-01",
+      modules = [
+        (name = "example.mjs", esModule = embed "example.mjs"),
+        (name = "rust-fetch/rust_fetch.js", esModule = embed "rust_fetch.js"),
+        (name = "rust-fetch/rust_fetch_bg.wasm", wasm = embed "rust_fetch_bg.wasm"),
+      ],
+      globalOutbound = "origin",
+    )),
     (name = "origin", worker = (
       compatibilityDate = "2026-01-01",
       modules = [(name = "origin.mjs", esModule = embed "origin.mjs")],
     )),
   ],
-  sockets = [(name = "http", address = "127.0.0.1:${port}", http = (), service = "app")],
+  sockets = [
+    (name = "http", address = "127.0.0.1:${port}", http = (), service = "app"),
+    (name = "example", address = "127.0.0.1:${examplePort}", http = (), service = "example"),
+  ],
 );
 `);
 
@@ -119,6 +140,16 @@ try {
   assert.deepEqual(result.missing, { http: true, status: 404 });
   assert.deepEqual(result.flaky, { attempts: 3 });
   assert.deepEqual(result.events, [{ n: 1 }, { n: 2 }]);
+
+  // examples/cloudflare-worker: a success, an upstream 404, and an upstream that fails twice and then answers
+  const ask = async (path) => {
+    const answer = await fetch(`http://127.0.0.1:${examplePort}${path}`);
+    return [answer.status, await answer.json()];
+  };
+  assert.deepEqual(await ask('/users/1'), [200, { id: 1, name: 'Grace' }]);
+  assert.deepEqual(await ask('/users/404'), [404, { error: 'upstream answered 404' }]);
+  assert.deepEqual(await ask('/users/flaky'), [200, { id: 'flaky', attempts: 3 }]);
+  assert.deepEqual(await ask('/other'), [404, { error: 'not found' }]);
   console.log(`ok   rust-fetch on workerd ${(await new Promise((resolve) => { const v = spawn(workerd, ['--version']); let s = ''; v.stdout.on('data', (c) => (s += c)); v.on('close', () => resolve(s.trim())); })) || ''}`);
   code = 0;
 } catch (error) {
