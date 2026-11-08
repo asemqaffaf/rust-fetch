@@ -104,6 +104,15 @@ const client = () => new WasmClient();
 // whatever the listen backlog; Linux and macOS queue them. Bursts are smaller there (#15).
 const WINDOWS = process.platform === 'win32';
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const isLoopback = (target) => {
+  try {
+    return LOOPBACK.has(new URL(target).hostname);
+  } catch {
+    return false;
+  }
+};
+
 /**
  * A forward proxy recording what it sees: absolute-form requests for plain
  * HTTP, CONNECT tunnels for HTTPS. With `refuse`, it answers CONNECT with 403.
@@ -113,6 +122,8 @@ function startProxy({ refuse = false } = {}) {
   const sockets = new Set();
   const proxy = http.createServer((req, res) => {
     seen.push({ method: req.method, url: req.url, auth: req.headers['proxy-authorization'] ?? null });
+    // A test helper, not a general proxy: it only forwards to this machine, so it can never be used to reach anything else
+    if (!isLoopback(req.url)) return res.writeHead(403).end();
     const { 'proxy-authorization': _, ...headers } = req.headers;
     const upstream = http.request(req.url, { method: req.method, headers, agent: false }, (response) => {
       res.writeHead(response.statusCode, response.headers);
@@ -128,6 +139,7 @@ function startProxy({ refuse = false } = {}) {
     seen.push({ method: 'CONNECT', url: req.url, auth: req.headers['proxy-authorization'] ?? null });
     if (refuse) return socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
     const { hostname, port } = new URL(`http://${req.url}`);
+    if (!LOOPBACK.has(hostname)) return socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
     const upstream = net.connect(Number(port), hostname.replace(/^\[|\]$/g, ''), () => {
       socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       upstream.write(head);
