@@ -173,7 +173,20 @@ jobs:
           workspaces: |
             wasm-module
             native
+      # wasm-pack and the tools it fetches (wasm-opt from binaryen, wasm-bindgen) come from GitHub releases,
+      # whose downloads failed for hours on 2026-11-08. Keeping them in the Actions cache means a run only
+      # downloads them once. The versions are in the key, so changing the wasm-pack pin or binaryen's
+      # version (wasm-pack's) starts a fresh cache.
+      - name: Restore wasm-pack and its tools
+        id: wasm-tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/.wasm-pack
+            ~/.cargo/bin/wasm-pack
+          key: wasm-pack-0.15.0-binaryen-117-${{ runner.os }}
       - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+        if: steps.wasm-tools.outputs.cache-hit != 'true'
         with:
           tool: wasm-pack@0.15.0 # pinned: wasm-opt, and so the published Wasm, depends on it
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
