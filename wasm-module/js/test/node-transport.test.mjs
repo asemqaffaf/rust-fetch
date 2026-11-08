@@ -71,7 +71,7 @@ before(async () => {
       case '/compressed': {
         const payload = Buffer.from(JSON.stringify({ compressed: true, text: 'Zoë'.repeat(100) }));
         const encoding = url.searchParams.get('encoding');
-        const encoded = {
+        const encoders = {
           gzip: () => zlib.gzipSync(payload),
           'x-gzip': () => zlib.gzipSync(payload),
           deflate: () => zlib.deflateSync(payload),
@@ -79,7 +79,9 @@ before(async () => {
           br: () => zlib.brotliCompressSync(payload),
           'gzip, br': () => zlib.brotliCompressSync(zlib.gzipSync(payload)),
           identity: () => payload,
-        }[encoding]();
+        };
+        if (!Object.hasOwn(encoders, encoding)) return res.writeHead(400).end('unknown encoding');
+        const encoded = encoders[encoding]();
         res.writeHead(200, {
           'content-type': 'application/json',
           'content-encoding': encoding === 'raw-deflate' ? 'deflate' : encoding,

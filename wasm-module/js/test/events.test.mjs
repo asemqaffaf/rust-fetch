@@ -45,10 +45,15 @@ before(async () => {
       }
       case '/v1/event-size': {
         // "ok", then one event of `lines` data lines of `size` bytes each, then "after"
+        const lines = Number(url.searchParams.get('lines'));
+        const size = Number(url.searchParams.get('size'));
+        if (!(lines >= 0 && lines <= 100_000 && size >= 0 && size <= 16 * 1024 * 1024)) {
+          res.writeHead(400);
+          return res.end('lines or size out of range');
+        }
         sse(res);
         res.on('close', () => (flood.closed = true));
-        const lines = Number(url.searchParams.get('lines'));
-        const line = `data: ${'e'.repeat(Number(url.searchParams.get('size')))}\n`;
+        const line = `data: ${'e'.repeat(size)}\n`;
         res.write(`data: ok\n\n${line.repeat(lines)}\ndata: after\n\n`);
         return; // stays open: the client has to close it
       }

@@ -1137,7 +1137,7 @@ async fn reqwest_errors_map_to_matching_kinds() {
     });
     let raw = reqwest::Client::new();
 
-    let builder = raw.get("http://exa mple.com").send().await.unwrap_err();
+    let builder = raw.get("https://exa mple.com").send().await.unwrap_err();
     assert!(matches!(Error::from(builder), Error::InvalidInput { .. }));
 
     let timeout = raw
