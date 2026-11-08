@@ -1,8 +1,9 @@
-// Preload for diagnosing a Node.js process that does not exit (used by .github/workflows/windows.yml, #15).
-// If the process is still alive after 90 seconds, print what keeps it alive and exit with code 3.
-// The timer is unref'd, so it never keeps a healthy process running.
-setTimeout(() => {
-  const handles = process.getActiveResourcesInfo();
-  console.error(`hang-report: pid ${process.pid} still running after 90 s; active resources:`, JSON.stringify(handles));
-  process.exit(3);
-}, 90_000).unref();
+// Preload for diagnosing Node.js processes that do not exit (used by .github/workflows/windows.yml, #15).
+// Every 60 seconds a process is still alive, it prints its script and what keeps it alive. It never exits
+// the process, so a legitimately slow test is not cut off; the job's own timeout does that. The timer is
+// unref'd, so it never keeps a healthy process running.
+const started = Date.now();
+setInterval(() => {
+  const seconds = Math.round((Date.now() - started) / 1000);
+  console.error(`hang-report: pid ${process.pid} ${process.argv[1] ?? ''} still running after ${seconds} s; active resources: ${JSON.stringify(process.getActiveResourcesInfo())}`);
+}, 60_000).unref();
