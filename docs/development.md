@@ -11,7 +11,7 @@ npm run test:browsers  # the same package in Chromium, Firefox and WebKit (requi
 npm run bench      # rust-fetch vs native fetch (requires a build)
 npm run size       # size budget for the built package
 npm run api:check  # public TypeScript API vs the committed snapshot
-npm run coverage:js  # Node.js transport coverage (100% lines and functions)
+npm run coverage:js  # Node.js transport and `rust-fetch/testing` coverage (100% lines and functions)
 
 cd wasm-module
 wasm-pack test --node    # wasm unit tests for the JS bindings
@@ -33,7 +33,7 @@ cargo llvm-cov --ignore-filename-regex 'src/(wasm/|http\.rs)|tests/'   # coverag
 | Resource tests | `wasm-module/js/test/memory.test.mjs`, `v8-crash.test.mjs`, `events.test.mjs` | Memory per pending request under a budget, the V8 crash on Node.js 20 and 22, and Server-Sent Events backpressure and limits |
 | Package tests | `wasm-module/js/test/package.test.mjs` | Installs the packed tarball and uses it via `import`, `require`, the browser entry and its types |
 
-CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, or of the Node.js transport, drops below 100%. It also runs the wasm and JS suites on Node.js 20, 22 and 24 (against both Node.js transports), and checks formatting, lints of the native transport, dependencies (security advisories and licenses), API compatibility and the size budget. The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
+CI runs the Rust suites with a coverage gate that fails if line or function coverage of the Rust core, of the Node.js transport, or of the `rust-fetch/testing` entry, drops below 100%. The generated WebAssembly glue and the JavaScript option layers (`auth`, `schema`, `dedupe`, `httpCache` and the others) have tests but are not under the gate. It also runs the wasm and JS suites on Node.js 20, 22 and 24 (against both Node.js transports), and checks formatting, lints of the native transport, dependencies (security advisories and licenses), API compatibility and the size budget. The JS-only bindings in `src/wasm/` and `src/http.rs` need a JS engine, so they're covered by the wasm and JS suites instead.
 
 ## Benchmarks
 
