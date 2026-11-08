@@ -202,7 +202,7 @@ Behavior changes to know about: a certificate that names the host only in its su
 | Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) | Done |
 | `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) | Done |
 | Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) | Done (`auth`, scoped to the client's origins) |
-| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Vite and webpack tested; Next.js, esbuild, Rollup and SSR not |
+| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Vite, webpack and esbuild tested; Next.js, plain Rollup and SSR not |
 | Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) | Done (TypeDoc reference generated from the public types) |
 | Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Node.js, LLM streaming and WebSocket examples; browser (Vite) and Worker examples not yet |
 | Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) | Blocked: needs a JSR scope and account |
