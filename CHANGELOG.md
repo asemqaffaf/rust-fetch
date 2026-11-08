@@ -7,8 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Bundle size figures in the README, the FAQ, the introduction, the compatibility page and `llms.txt` were out of date (121 KB for the WebAssembly module and 131 KB in all): the module is about 148 KB brotli-compressed and the whole browser entry about 171 KB, before a bundler minifies the glue. They are the numbers `npm run size` checks.
+## [2.8.0] - 2026-11-08
 
 ### Added
 - A browser example (#73, `examples/browser-upload/`): a Vite page with a file input, a progress bar driven by `onUploadProgress`, and a cancel button. `bundlers.test.mjs` builds it unchanged with Vite 8 and drives it in Chromium: a 12 MB upload moves the bar in steps and ends full with every byte received, and a stalled upload is cancelled. With the Worker example this completes the example list in #73.
@@ -39,21 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The JavaScript coverage gate (`npm run coverage:js`) now also covers `rust-fetch/testing` (`createMockTransport`) at 100% of lines and functions, with its test in the gated set. The option layers in the glue (`auth`, `schema`, `dedupe`, `httpCache` and the rest) are tested but not gated: the generated WebAssembly glue shares the file, and gating it at 100% is not possible.
 - The built `wasm-module/pkg/rust_fetch_bg.wasm` is no longer committed (#232, OpenSSF Scorecard Binary-Artifacts). The repository holds only the source; `npm run build` produces the module, and CI, the release and the reproducibility check already built it. After cloning, run `npm run build` before the JavaScript tests.
-
-### Security
-- OpenSSF Scorecard findings (#232): `release.yml` no longer grants `contents: write` to the whole workflow, only to its one job; the two fuzzing Dockerfiles pin their base image by digest, and Dependabot now updates those digests; each release attaches the published npm tarball and its Sigstore signature (`rust-fetch-X.Y.Z.tgz.sigstore.json`, verify with `cosign verify-blob`) to the GitHub release.
-
-## [2.8.0] - 2026-11-07
-
-### Changed
 - Rust dependencies updated within their ranges (39 packages across the Wasm module and the native addon), including wasm-bindgen 0.2.130, `aws-lc-rs` 1.19.0 and `aws-lc-sys` 0.47.0. The Wasm module grows to 453.2 kB raw (+1.8%) and the JavaScript glue to 101.7 kB, so their size budgets rise deliberately. `wasm-streams` stays at 0.5: `reqwest` 0.13.5 depends on it, and a second version fails the Wasm link.
 
 ### Fixed
+- Bundle size figures in the README, the FAQ, the introduction, the compatibility page and `llms.txt` were out of date (121 KB for the WebAssembly module and 131 KB in all): the module is about 148 KB brotli-compressed and the whole browser entry about 171 KB, before a bundler minifies the glue. They are the numbers `npm run size` checks.
 - Errors no longer carry the URL password or fragment (#238, #239). `http://user:secret@host/p?q=1#f` now appears in `error.url` as `http://user:***@host/p?q=1`, on the error and on every error in its `cause` chain, on the Node.js transports and the native addon. Before, the raw URL stayed on `error.cause.url`, and `redactUrl` was not applied there. `redactUrl` now covers the whole `cause` chain. The glue size budget grew by 0.6 kB for it.
 - **node:http TLS policy matches the native addon (#244):** a certificate without a `subjectAltName` is now refused on the `node:http` transport (Node otherwise falls back to the subject common name, which browsers and rustls do not), and connections use OpenSSL security level 2, so RSA keys below 2048 bits, SHA-1 signatures and DH below 2048 bits are refused on every supported Node version (before Node 24 the default level allowed RSA 1024). Node glue grows to 60.3 kB raw (gzip 19.3, brotli 16.8); its budget rises deliberately from 59.8/19.2/16.8 to 60.5/19.4/16.95 kB.
 - `baseUrl` with a query or fragment (`https://api.example.com/v1?x=1`) is now refused with an `InvalidInputError` (`parameter: 'baseUrl'`). A path appended after one became part of it, so `get('users')` requested `/v1?x=1/users`, which is the base path itself, not `/v1/users`. `baseUrl` is also kept in its parsed form, so surrounding spaces, tabs or newlines, an upper-case host and a default port no longer reach the request path (`" https://api.example.com/v1 "` requested `/v1%20/users`). The origin was never affected. Found by the new URL differential check (#217).
 
 ### Security
+- OpenSSF Scorecard findings (#232): `release.yml` no longer grants `contents: write` to the whole workflow, only to its one job; the two fuzzing Dockerfiles pin their base image by digest, and Dependabot now updates those digests; each release attaches the published npm tarball and its Sigstore signature (`rust-fetch-X.Y.Z.tgz.sigstore.json`, verify with `cosign verify-blob`) to the GitHub release.
 - The release checklist says how a second person gets the ability to ship a security fix (#234): Write access and a tag ruleset, because a tag push runs `release.yml`, plus a rehearsal. No second person has been named yet.
 - OpenSSF Scorecard (#232, `.github/workflows/scorecard.yml`): weekly and on pushes to main, uploaded to code scanning and published to the public Scorecard API, which the README badge reads.
 - Memory-safety CI (#230, `.github/workflows/memory-safety.yml`): Miri on the unit tests of the pure Rust modules and AddressSanitizer on the whole host test suite, on pull requests that touch the Rust source and weekly. The native addon is built with AddressSanitizer in a third job and run through the JavaScript tests that use it (#223).

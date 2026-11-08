@@ -18,8 +18,8 @@ Dates aren't promised; the order is.
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
 | [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
-| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Merged, not released: two items need people (an independent reviewer, a second releaser) |
-| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Mostly merged, not released; ships with 2.8.0 not before 2026-11-16 (the two-week minor cadence) |
+| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Merged, not released; ships together with the data and developer experience work below as one 2.8.0. Two items need people (an independent reviewer, a second releaser) |
+| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Merged, and ships in 2.8.0 (decided 2026-11-08, to avoid two minors in eight days). The 2.9.0 milestone now holds the open items |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
 
@@ -163,7 +163,7 @@ The conformance suite checks 69 behaviors across six adapters (414 observations)
 
 ## 2.8.0: security verification
 
-*Goal: every security claim has a test, and the project says plainly what has not been reviewed by anyone else.* Tracking issue: [#235](https://github.com/asemqaffaf/rust-fetch/issues/235). This release was the first half of the former 2.8.0; the data and developer experience work moved to [2.9.0](#290-data-and-developer-experience).
+*Goal: every security claim has a test, and the project says plainly what has not been reviewed by anyone else.* Tracking issue: [#235](https://github.com/asemqaffaf/rust-fetch/issues/235). This release was the first half of the former 2.8.0; the data and developer experience work moved to [2.9.0](#290-data-and-developer-experience) and, being merged first, is released together with it as 2.8.0.
 
 | Item | Issue | Status |
 | --- | --- | --- |
@@ -189,7 +189,7 @@ Behavior changes to know about: a certificate that names the host only in its su
 
 ## 2.9.0: data and developer experience
 
-*Goal: less code around each request, and easier testing.* All of these are on `main` under *Unreleased* in the [changelog](CHANGELOG.md); the 2.8.0 section there was never published, so the first release after it carries both.
+*Goal: less code around each request, and easier testing.* All of these are on `main` and in the 2.8.0 section of the [changelog](CHANGELOG.md), which was never published: 2.8.0 carries both this work and the security verification above.
 
 **Also in the 2.9.0 milestone (added 2026-11-08):** the issues of the former *Native transport delivery*, *WebRTC signaling* and *Exploring* milestones are now in the [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8), so it shows everything open. That is a place to track them, not a promise to ship them in 2.9.0. Some wait on decisions outside the code (npm package names and permissions for prebuilt binaries, [#14](https://github.com/asemqaffaf/rust-fetch/issues/14)), some need benchmark runs on a quiet machine ([#114](https://github.com/asemqaffaf/rust-fetch/issues/114), [#156](https://github.com/asemqaffaf/rust-fetch/issues/156)), and [#36](https://github.com/asemqaffaf/rust-fetch/issues/36) carries a recommendation of "not planned". The items under *Exploring* below keep their own sections.
 
