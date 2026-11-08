@@ -39,7 +39,8 @@ export default defineConfig({
         ],
       },
       {
-        text: `v${minorVersion}`,
+        // Not the latest version's number: the same menu is on the archived pages
+        text: 'Version',
         items: [
           { text: `${minorVersion} (latest)`, link: '/' },
           { text: '2.7', link: '/v2.7/' },
