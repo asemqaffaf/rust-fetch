@@ -20,6 +20,26 @@ Package ratings combine different signals. A capability alert such as network ac
 
 What the library defends against, per adapter, and what it leaves to you: the [threat model](./threat-model.md).
 
+## Releases and supply-chain checks
+
+What protects the package between the source and your `node_modules`, and how to check it yourself.
+
+- **Signed release tarball.** Each GitHub release has the published npm tarball (`rust-fetch-X.Y.Z.tgz`, downloaded from the registry so it is the bytes you install) and its Sigstore signature (`rust-fetch-X.Y.Z.tgz.sigstore.json`). The signature is keyless, bound to the release workflow and recorded in the Rekor log. Verify it with [cosign](https://docs.sigstore.dev/):
+
+  ```sh
+  npm pack rust-fetch@X.Y.Z
+  cosign verify-blob rust-fetch-X.Y.Z.tgz \
+    --bundle rust-fetch-X.Y.Z.tgz.sigstore.json \
+    --certificate-identity "https://github.com/asemqaffaf/rust-fetch/.github/workflows/release.yml@refs/tags/vX.Y.Z" \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  ```
+
+- **Reproducible build.** `scripts/check-wasm-reproducible.sh` builds the tagged source twice in different directories with the pinned toolchain and fails unless both builds, and the Wasm about to be published, are identical. A failing check blocks a release. Pull requests that touch the Rust source run the same check, and weekly the latest release is rebuilt from its tag and compared with the tarball on npm.
+- **OpenSSF Scorecard.** `scorecard.yml` runs weekly and on pushes to `main`, uploads to code scanning and publishes to the public [Scorecard](https://scorecard.dev/viewer/?uri=github.com/asemqaffaf/rust-fetch) (the README badge reads it). Its findings are worked through: `release.yml` grants `contents: write` only to its one job, the fuzzing Dockerfiles pin their base image by digest, and the compiled `.wasm` is no longer committed (`npm run build` produces it).
+- **Memory safety.** Miri runs on the unit tests of the pure Rust modules and AddressSanitizer on the whole host test suite, on pull requests that touch the Rust source and weekly; the native addon is built with AddressSanitizer and run through the JavaScript tests that use it. Both crates `deny(unsafe_code)` (see [Unsafe code](#unsafe-code)).
+- **Fuzzing.** The parser targets, the Node.js transport boundary and URL resolution are fuzzed (see [Development](/development#parser-and-boundary-fuzzing)). `wasm-module/fuzz/oss-fuzz/` holds the files for an OSS-Fuzz application, which has not been submitted.
+- **Shipping a fix.** [The security release checklist](/security-release-checklist) is the procedure from report to published advisory, with the timings of the release drill (done through a draft advisory and a temporary private fork). One maintainer can publish today; the checklist says how a second person would get the ability.
+
 ## Security compared with `fetch()` and axios
 
 The same attacks against each client, with the protections it offers turned on (`npm run security:compare`; Node.js 22.13, axios 1.20). Each rust-fetch row is also a regression test in CI (`wasm-module/js/test/security.test.mjs`), named after the advisories it covers.

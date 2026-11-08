@@ -4,6 +4,7 @@ The npm package is built from `wasm-module/` with [wasm-pack](https://rustwasm.g
 
 ```bash
 npm run build      # wasm-pack build + package metadata (wasm-module/pkg)
+# the built rust_fetch_bg.wasm is not committed: run this after cloning, before the JavaScript tests
 npm run build:native  # build the native Node.js transport (native/) into wasm-module/pkg
 npm test           # Rust unit + integration tests, then the JS tests
 npm run test:js    # JS end-to-end tests against the built package (requires a build)
@@ -54,6 +55,10 @@ npm run bench:compare -- ../rust-fetch-main/wasm-module/pkg --also "Against npm=
 ## Static analysis
 
 CodeQL (`security-extended` queries) analyzes the JavaScript/TypeScript, Rust and GitHub Actions sources on pushes to `main`, on pull requests and weekly; results appear in the repository's Security tab. The `Workflow security lint` job runs [zizmor](https://docs.zizmor.sh/) on every change under `.github/` to catch template injection, excessive permissions, unpinned actions and persisted credentials. Fix a finding, or dismiss it with a written reason, before merging.
+
+## Windows
+
+A Windows job (`.github/workflows/windows.yml`) builds the package and the native addon with MSVC and runs the JavaScript suite against both Node.js transports on Node.js 22 and 24, weekly and on changes to `native/` or the JavaScript tests. Two tests that need more than 256 simultaneous loopback connections are skipped there, because Windows refuses that many; the connection bursts in two others are smaller.
 
 ## Panics
 

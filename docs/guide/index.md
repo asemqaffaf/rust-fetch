@@ -5,7 +5,7 @@ Every method and the options you'll use most, on one page, with links to the det
 1. [Client options](/guide/configuration) and [Requests and responses](/guide/requests): what a client holds, and what each call takes and returns.
 2. [Errors](/guide/errors) and [Timeouts, retries and cancellation](/guide/timeouts-and-retries): what can fail, and what the client does about it.
 3. [Interceptors](/guide/interceptors): auth headers, token refresh and logging in one place.
-4. What your app needs: [Streaming and Server-Sent Events](/guide/streaming), [Uploads](/guide/uploads), [WebSockets](/guide/websockets), [TypeScript](/guide/typescript).
+4. What your app needs: [Streaming and Server-Sent Events](/guide/streaming), [Uploads](/guide/uploads), [WebSockets](/guide/websockets), [TypeScript](/guide/typescript), [Testing your code](/guide/testing); runnable code is in the [Examples](/guide/examples).
 5. Before production: [Security](/security), the [hardened configurations](/security#hardened-configurations) to copy, and [Observability](/guide/observability).
 
 ## Client methods

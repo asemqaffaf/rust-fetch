@@ -153,6 +153,7 @@ export default defineConfig({
               items: [
                 { text: 'TypeScript', link: '/guide/typescript' },
                 { text: 'Testing your code', link: '/guide/testing' },
+                { text: 'Examples', link: '/guide/examples' },
                 { text: 'API reference', link: '/api/' },
               ],
             },
@@ -164,6 +165,7 @@ export default defineConfig({
             { text: 'Security', link: '/security' },
             { text: 'Threat model', link: '/threat-model' },
             { text: 'Independent review', link: '/security-review' },
+            { text: 'Security release checklist', link: '/security-release-checklist' },
             { text: 'Performance', link: '/performance' },
             { text: 'Reliability under faults', link: '/reliability' },
             { text: 'Transport conformance', link: '/conformance' },
