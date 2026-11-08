@@ -12,17 +12,20 @@ import { json, startServer } from './helpers.mjs';
 
 const pkgDir = fileURLToPath(new URL('../../pkg/', import.meta.url));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// Node 20.12+ refuses to start a .cmd file without a shell (CVE-2024-27980)
+const shell = process.platform === 'win32';
 let project;
 let server;
 let packed;
 
 before(async () => {
   project = mkdtempSync(join(tmpdir(), 'rust-fetch-consumer-'));
-  [packed] = JSON.parse(execFileSync(npm, ['pack', '--json', '--pack-destination', project], { cwd: pkgDir }));
+  [packed] = JSON.parse(execFileSync(npm, ['pack', '--json', '--pack-destination', project], { cwd: pkgDir, shell }));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'consumer', private: true, type: 'module' }));
   execFileSync(npm, ['install', '--no-audit', '--no-fund', '--ignore-scripts', join(project, packed.filename)], {
     cwd: project,
     stdio: 'ignore',
+    shell,
   });
   // The validators the type tests import: the repository's own dev dependencies, linked rather than installed
   for (const validator of ['zod', 'valibot']) {

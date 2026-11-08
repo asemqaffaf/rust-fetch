@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -21,7 +22,7 @@ before(async () => {
   await init();
   const binary = new URL(`../../pkg/rust-fetch-native.${process.platform}-${process.arch}.node`, import.meta.url);
   if (process.env.RUST_FETCH_NATIVE !== '0' && existsSync(binary)) {
-    addon = createRequire(import.meta.url)(binary.pathname);
+    addon = createRequire(import.meta.url)(fileURLToPath(binary));
     originalSend = addon.send;
     addon.send = (...args) => { if (args[0].extra?.uploadNext) nativeSends++; return originalSend(...args); };
   }

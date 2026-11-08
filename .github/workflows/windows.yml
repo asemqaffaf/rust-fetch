@@ -24,6 +24,9 @@ jobs:
       matrix:
         node: [22, 24]
     steps:
+      # Tests read docs and compare text; Git for Windows would otherwise convert line endings on checkout
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false

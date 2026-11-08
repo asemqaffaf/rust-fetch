@@ -135,7 +135,7 @@ describe('observability (' + (browser ? 'fetch' : process.env.RUST_FETCH_NATIVE 
       release(); await pending;
       assert.equal(client.stats().requests.active, 0);
       assert.equal(client.stats().pools.queued, 0);
-    } finally { release(); await pending; await local.close(); }
+    } finally { release(); await pending.catch(() => {}); await local.close(); } // close even when a request failed, or the process never exits
   });
   it('preserves primitive interceptor rejections while observing failures', async () => {
     const client = new WasmClient({ metrics: true, timings: true });

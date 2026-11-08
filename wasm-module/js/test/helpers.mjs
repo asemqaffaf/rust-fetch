@@ -31,7 +31,7 @@ export async function startServer(handler) {
     sockets.add(s);
     s.on('close', () => sockets.delete(s));
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', 4096, resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   const port = server.address().port;
   return {
