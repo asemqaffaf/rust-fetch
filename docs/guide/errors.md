@@ -60,6 +60,8 @@ try {
 }
 ```
 
+The narrowed types are exported too: `RustFetchHttpError` (`status`, `statusText`), `RustFetchValidationError` (`issues`, `status`) and so on, and `RustFetchErrorOf<K>` for any kind `K`.
+
 There is one guard per kind (`isTimeoutError`, `isNetworkError`, `isParseError`, `isInvalidInputError`, `isCancelledError`, `isCircuitOpenError`, `isJsInteropError`), and `isRustFetchError(value)` accepts any kind. A guard reads `kind` and `message`, so an object that only looks like one passes; don't use it as a security check.
 
 With a [retry budget](/guide/timeouts-and-retries#retries), an error whose retry the budget refused also has `retryBudgetExhausted: true`, whatever its `kind`.

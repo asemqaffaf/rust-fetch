@@ -25,6 +25,8 @@ await init();
 const client = new WasmClient();
 ```
 
+`initSync(module)` is the synchronous form for code that already has the compiled module or its bytes (for example a `WebAssembly.Module` or an `ArrayBuffer` your bundler inlined): `import { initSync, WasmClient } from 'rust-fetch'; initSync({ module: wasmBytes });`. Use `init()` unless you need to avoid the `await`.
+
 `init()` is safe to call more than once, and calling it in Node.js is harmless, so shared code can always call it. Serve the `.wasm` file with `Content-Type: application/wasm`, so the browser compiles it while it downloads, and consider preloading it (see [Startup](/performance#startup)).
 
 ## Handling errors
