@@ -8,6 +8,7 @@
 # that finally succeeds is the same build, so the published Wasm does not change.
 set -u
 log=$(mktemp)
+trap 'rm -f "$log"' EXIT
 attempts=5
 for attempt in $(seq 1 "$attempts"); do
   npm run build 2>&1 | tee "$log"

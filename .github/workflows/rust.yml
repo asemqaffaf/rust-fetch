@@ -272,7 +272,7 @@ jobs:
           node-version: 22
       - name: Build the base package
         working-directory: base
-        run: npm ci && scripts/ci-build-wasm.sh && npm run build:native
+        run: npm ci && ([ -f scripts/ci-build-wasm.sh ] && scripts/ci-build-wasm.sh || ../scripts/ci-build-wasm.sh) && npm run build:native
       # The release workflow gates on the version published on npm, so show the
       # cumulative change against it too, not only against the PR's base (#182)
       - name: Install the published release
