@@ -29,7 +29,7 @@ const client = new WasmClient({
 - `client.post_json(url, body, options?)`, `put_json`, `patch_json`: always JSON
 - TypeScript: `client.get<User>('/users/42')` resolves to `HttpResponse<User>` (the type isn't validated at runtime)
 - Bodies: string, `Uint8Array`/`ArrayBuffer`/`DataView`, `Blob`/`File`, `FormData` (multipart), `URLSearchParams`, or any value sent as JSON
-- Options: `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
+- Options: `schema`, `dedupe`, `resume`, `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
 - WebSockets through a proxy (Node.js): `client.websocket(url, { dispatcher: new ProxyAgent(proxyUrl) })` with `ProxyAgent` from the `undici` package
 - Security: credentials are dropped on cross-origin redirects; CR/LF in headers rejected; only http(s); set `allowAbsoluteUrls: false` with a `baseUrl` so user-supplied paths can't redirect requests (and the client's `Authorization`) to another host
 - `maxResponseBytes` (client or per request; `null` per request for none): limit on the decompressed body, checked against Content-Length, counted while reading and while decompressing (decompression bombs never expand); rejects with a `NetworkError` carrying `maxResponseBytes`
@@ -60,11 +60,58 @@ Every failure rejects with an `Error` whose `kind` (and `name`) is one of:
 - `CancelledError`: the `signal` aborted
 - `InvalidInputError`: bad URL, header, option or body, before sending; has `parameter`
 - `ParseError`: `responseType: 'json'` and the body isn't JSON
+- `ValidationError`: only with the `schema` option; the body did not match the schema; has `issues`, `status`; never retried
 - `JsInteropError`: unexpected JS/Wasm conversion failure
+
+Type guards narrow `catch (error)`: `isRustFetchError(value, kind?)`, `isHttpError`, `isTimeoutError`, `isNetworkError`, `isParseError`, `isInvalidInputError`, `isCancelledError`, `isCircuitOpenError`, `isValidationError`, `isJsInteropError` (they check the error's shape, so they work across realms and package copies). `CancelledError` carries the abort signal's `reason` (also as `cause`). `redactUrl` covers the whole `cause` chain, and URL passwords and fragments are never in `error.url`.
 
 Idempotency keys (client or request, including SSE): `idempotencyKey: true` generates one UUID per logical call, reused on retries/reconnections; a string supplies an explicit key; `false` opts out. `idempotencyHeader` defaults to `Idempotency-Key`. Requires server deduplication; allows POST/PATCH retries under the configured policy, without enabling retries or bypassing the budget. Explicit client strings are reused across calls; prefer `true`.
 
 Retries are off by default. Per-request `retries` (also in `events()`) replaces the client policy: `0` disables; omitted fields in an object use standard defaults; `null`/`undefined` inherit. The client's shared retry budget still applies; SSE `reconnect` is separate. When on, POST and PATCH aren't retried unless `retryNonIdempotent: true`; `Retry-After` (seconds) is honoured; only `retryOn` statuses (default 408, 429, 500, 502, 503, 504), network errors and timeouts are retried. A request that fails every attempt rejects with the last attempt's error.
+
+## Validated responses (Zod, Valibot, ArkType)
+
+`schema` accepts any [Standard Schema](https://standardschema.dev) validator; rust-fetch depends on none of them. The body becomes the schema's typed output; a body that fails rejects with a `ValidationError` (`issues`, not retried, `message` only counts issues). Not with `responseType: 'stream'` or `'ndjson'`.
+
+```ts
+import { z } from 'zod';
+const User = z.object({ id: z.number(), name: z.string() });
+const { body } = await client.get('/users/42', { schema: User }); // body: { id: number; name: string }
+```
+
+Guide: https://asemqaffaf.github.io/rust-fetch/guide/validation
+
+## Auth, derived clients, pagination, caching
+
+- `auth` (client option): `{ bearer: token | (() => token | Promise<token>), refresh?: async () => void, origins?: [...] }` or `{ basic: { username, password } }`. Sent only to the `baseUrl` origin and `auth.origins` (a client needs one of them), never to another origin. On `401` with `refresh`, concurrent failures trigger one refresh (single flight) and each request is replayed once; a second `401` rejects with the `HttpError`.
+- `client.extend(overrides)`: a derived client with the parent's options and interceptors; headers merge by name, other options are replaced; circuit breakers, rate limits, concurrency limits, retry budgets and metrics are not shared.
+- `client.paginate(url, { items?, next?, maxPages = 1000, crossOrigin?, signal, ...requestOptions })`: async iterator over pages (or items). Follows `Link rel="next"` by default, or the URL / `{ url?, params? }` that `next(response)` returns. A next URL on another origin throws an `InvalidInputError` unless `crossOrigin: true`.
+- `dedupe: true` (client or per `get`/`head`): identical in-flight requests share one request; each caller gets its own response copy; cancelling one caller leaves the others. Writes, streams and requests with callbacks are never shared.
+- `httpCache: true | { maxEntries, maxBytes, maxEntryBytes }` (client, opt-in): private in-memory RFC 9111 cache for `GET`; fresh responses come from memory (`response.cached`), stale ones with `ETag`/`Last-Modified` are revalidated (`response.revalidated`); `no-store`, `no-cache`, `Vary` honoured; successful writes invalidate their URL. Named `httpCache` because `cache` is the browser fetch cache mode.
+- `responseType: 'blob'`: the body as a `Blob` typed with the response's `Content-Type`.
+- `resume: true | { maxResumes = 3 }` on a streamed `get`: after a broken connection the download continues with `Range`/`If-Range` from the last byte, only for a `200` with `Accept-Ranges: bytes`, a strong `ETag` or `Last-Modified` and no `Content-Encoding`, and only if the continuation is a `206` at the right byte; `response.resumes` counts continuations.
+- `baseUrl` with a query or fragment is refused with an `InvalidInputError`.
+
+## Testing
+
+```js
+import { createMockTransport } from 'rust-fetch/testing'; // separate entry, not in production bundles
+const mock = createMockTransport().on('GET', '/users/42', { status: 200, body: { id: 42 } }).onAny({ status: 503 });
+const client = new WasmClient({ baseUrl: 'https://api.test', transport: mock }); // mock.calls, mock.reset()
+```
+
+Real retries, timeouts, cancellation, error mapping and decoding still run; streamed responses, `events()` and `websocket()` are not covered. Guide: https://asemqaffaf.github.io/rust-fetch/guide/testing
+
+## Runtimes, examples and Rust
+
+- Tested: Node.js 20, 22 and 24 (also on Windows 22 and 24 in CI), Chromium, Firefox, WebKit, Bun, Deno and Cloudflare Workers (`workerd`; the `.wasm` is imported as a module and passed to `init({ module_or_path })`). A deployed Worker, Vercel Edge and other edge runtimes are not tested. Bundlers tested: Vite 8, webpack 5, esbuild (esbuild does not emit the `.wasm`; copy it next to the bundle).
+- Runnable examples (CI-tested): Node.js client, LLM streaming (SSE and NDJSON), reconnecting WebSocket with request/response and channel recipes, browser upload with progress and cancel, Cloudflare Worker. https://asemqaffaf.github.io/rust-fetch/guide/examples
+- Rust crate: `RequestBuilder::on_upload_progress(callback)` on native targets (not `wasm32`); interceptors and WebSockets are JavaScript only. https://asemqaffaf.github.io/rust-fetch/rust
+- Not a built-in: Socket.IO (use `socket.io-client`); resumable uploads (tus).
+
+## Security and releases
+
+Claims table with the test behind each, threat model, hostile-response and TLS verification matrices, fuzzing, memory-safety CI, reproducible builds, a Sigstore signature on each release tarball (`cosign verify-blob`), OpenSSF Scorecard: https://asemqaffaf.github.io/rust-fetch/security . Threat model: https://asemqaffaf.github.io/rust-fetch/threat-model . Independent review call: https://asemqaffaf.github.io/rust-fetch/security-review . The documentation avoids unsupported wording ("bank-level", "true SSRF protection"); see "Wording this project does not use" in the security guide.
 
 ## Interceptors
 
@@ -122,7 +169,10 @@ Needs a built-in `WebSocket`: browsers and Node.js 22+ (Node.js 20 with `--exper
 ## Docs
 
 - [Documentation](https://asemqaffaf.github.io/rust-fetch/): full guide, security, performance results and limitations
+- [Release notes](https://asemqaffaf.github.io/rust-fetch/changelog): every release, read from the changelog
 - [CHANGELOG](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md): changes per version
+- [API reference](https://asemqaffaf.github.io/rust-fetch/api/): generated from the public TypeScript types
+- [Examples](https://asemqaffaf.github.io/rust-fetch/guide/examples)
 - [Roadmap](https://github.com/asemqaffaf/rust-fetch/blob/main/ROADMAP.md): planned work
 
 ## Optional

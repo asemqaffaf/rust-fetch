@@ -35,7 +35,7 @@ export default defineConfig({
           { text: 'Stability and releases', link: '/stability' },
           { text: 'Development', link: '/development' },
           { text: 'FAQ', link: '/faq' },
-          { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
+          { text: 'Release notes', link: '/changelog' },
         ],
       },
       {
@@ -46,7 +46,7 @@ export default defineConfig({
           { text: '2.7', link: '/v2.7/' },
           { text: '2.6', link: '/v2.6/' },
           { text: '2.5', link: '/v2.5/' },
-          { text: 'Changelog', link: 'https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md' },
+          { text: 'Release notes', link: '/changelog' },
         ],
       },
     ],
