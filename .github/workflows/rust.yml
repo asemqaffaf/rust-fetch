@@ -33,7 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: wasm-module
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-llvm-cov
       - name: Check formatting
@@ -185,7 +185,7 @@ jobs:
             ~/.cache/.wasm-pack
             ~/.cargo/bin/wasm-pack
           key: wasm-pack-0.15.0-binaryen-117-${{ runner.os }}
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         if: steps.wasm-tools.outputs.cache-hit != 'true'
         with:
           tool: wasm-pack@0.15.0 # pinned: wasm-opt, and so the published Wasm, depends on it
@@ -264,7 +264,7 @@ jobs:
           workspaces: |
             base/wasm-module
             base/native
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b # v2.89.0
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: wasm-pack@0.15.0 # pinned: wasm-opt, and so the published Wasm, depends on it
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
