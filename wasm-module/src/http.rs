@@ -47,7 +47,8 @@ async fn fetch_body(url: String, response_type: &str) -> Result<JsValue> {
     )?;
     let options = js_sys::Object::new();
     js_sys::Reflect::set(&options, &"responseType".into(), &response_type.into())?;
-    let response = send_request(&client, request, &options, &std::sync::Arc::default()).await?;
+    let response =
+        send_request(&client, request, &options, &std::sync::Arc::default(), true).await?;
     Ok(js_sys::Reflect::get(&response, &"body".into())?)
 }
 
@@ -73,6 +74,7 @@ pub async fn fetch_with_options(
         request,
         &JsValue::UNDEFINED,
         &std::sync::Arc::default(),
+        true,
     )
     .await
 }

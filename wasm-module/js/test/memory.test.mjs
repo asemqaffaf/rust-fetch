@@ -6,6 +6,7 @@
 // test; this keeps it from creeping back.
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { WasmClient } from '../../pkg/node.js';
@@ -42,5 +43,58 @@ describe('memory per pending request', () => {
     controller.abort();
     await Promise.all(pending);
     assert.ok(perRequest <= BUDGET, `${(perRequest / 1024).toFixed(2)} KB per pending request`);
+  });
+});
+
+describe('completed requests release timer and signal closures', () => {
+  it('does not retain JS heap across sequential deadlineMs and signal requests', { timeout: 60_000 }, async () => {
+    const okServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    await new Promise((resolve) => okServer.listen(0, '127.0.0.1', resolve));
+    const target = `http://127.0.0.1:${okServer.address().port}/`;
+    const nodeEntry = new URL('../../pkg/node.js', import.meta.url).href;
+    const script = `
+      import { WasmClient } from ${JSON.stringify(nodeEntry)};
+      const url = ${JSON.stringify(target)};
+      const measure = async (label, client, makeOpts) => {
+        for (let i = 0; i < 1000; i++) await client.get(url, makeOpts());
+        gc(); gc();
+        const base = process.memoryUsage().heapUsed;
+        const count = 15_000;
+        for (let i = 0; i < count; i++) await client.get(url, makeOpts());
+        gc(); gc();
+        const perReq = (process.memoryUsage().heapUsed - base) / count;
+        return { label, perReq };
+      };
+      const deadlineClient = new WasmClient({ timeoutMs: 3000, deadlineMs: 5000, retries: 0 });
+      const signalClient = new WasmClient({ timeoutMs: 3000, retries: 0 });
+      const results = [
+        await measure('deadlineMs', deadlineClient, () => ({ responseType: 'json' })),
+        await measure('signal', signalClient, () => ({ responseType: 'json', signal: new AbortController().signal })),
+      ];
+      console.log(JSON.stringify(results));
+    `;
+    try {
+      const { code, stdout, stderr } = await new Promise((resolve) => {
+        const child = spawn(process.execPath, ['--expose-gc', '--input-type=module', '-e', script], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 55_000,
+        });
+        let out = '', err = '';
+        child.stdout.on('data', (d) => (out += d));
+        child.stderr.on('data', (d) => (err += d));
+        child.on('exit', (code) => resolve({ code, stdout: out.trim(), stderr: err }));
+      });
+      assert.equal(code, 0, stderr);
+      const results = JSON.parse(stdout);
+      for (const { label, perReq } of results) {
+        assert.ok(perReq < 200, `${label} retained ${perReq.toFixed(1)} bytes/req after forced GC`);
+      }
+    } finally {
+      okServer.closeAllConnections();
+      await new Promise((resolve) => okServer.close(resolve));
+    }
   });
 });

@@ -98,11 +98,11 @@ export interface UploadProgress {
 export interface RetryOptions {
     /** Maximum number of retries after the first attempt. Default: 3 */
     maxRetries?: number;
-    /** Delay before the first retry, in ms. Default: 100 */
+    /** Base delay before the first retry, in ms; each backoff is randomized to 50–100% (jitter). Default: 100 */
     initialDelayMs?: number;
     /** Upper bound for any retry delay (including `Retry-After`), in ms. Default: 10000 */
     maxDelayMs?: number;
-    /** Exponential backoff multiplier. Default: 2 */
+    /** Exponential backoff multiplier (`initialDelayMs * multiplier^(attempt - 1)`, with 50–100% jitter). Default: 2 */
     multiplier?: number;
     /** HTTP status codes to retry. Default: [408, 429, 500, 502, 503, 504] */
     retryOn?: number[];

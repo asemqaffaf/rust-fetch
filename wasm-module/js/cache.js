@@ -63,7 +63,7 @@
   const bypass = (options) => options == null || typeof options !== 'object' ? options : Object.assign({ __proto__: Object.getPrototypeOf(options) }, options, { httpCache: undefined });
   const GET_LIKE = new Set(['get', 'fetch', 'request']);
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     CachingClient.prototype[name] = function (...args) {
       const state = caches.get(this), raw = Base.prototype[name];
       if (!state) return raw.apply(this, args);

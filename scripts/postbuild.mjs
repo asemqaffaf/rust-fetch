@@ -81,6 +81,7 @@ function streamStrategy(strategy) {
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
+const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
 const blob = readFileSync(new URL('wasm-module/js/blob.js', root), 'utf8');
 const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
@@ -94,6 +95,7 @@ const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
 ${upload.trimEnd()}
+${clientHelpers.trimEnd()}
 ${observability.trimEnd()}
 ${blob.trimEnd()}
 ${transport.trimEnd()}
@@ -144,6 +146,9 @@ manifest.exports = {
   './package.json': './package.json',
 };
 manifest.engines = { node: '>=20' };
+// Both entry modules run setup on import (initSync/transport binding in node.js,
+// EventStream/WasmClient wrapping in rust_fetch.js).
+manifest.sideEffects = ['./node.js', './rust_fetch.js', './snippets/*'];
 // crates.io allows five keywords (Cargo.toml); npm search uses as many as are relevant
 manifest.keywords = [
   'http', 'http-client', 'fetch', 'fetch-api', 'request', 'rest', 'api-client', 'axios-alternative',

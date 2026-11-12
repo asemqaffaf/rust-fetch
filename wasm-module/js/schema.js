@@ -20,7 +20,7 @@
   };
   class SchemaClient extends Base {}
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     const raw = Base.prototype[name];
     const method = name === 'request' || name === 'fetch' ? undefined : name.replace('_json', '').toUpperCase();
     SchemaClient.prototype[name] = function (...args) {

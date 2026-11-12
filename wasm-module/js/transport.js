@@ -11,7 +11,7 @@
     }
   }
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     TransportClient.prototype[name] = function (...args) {
       const transport = custom.get(this);
       if (transport) {

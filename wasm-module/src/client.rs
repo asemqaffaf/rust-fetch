@@ -1541,19 +1541,18 @@ impl RequestBuilder {
         } else {
             self.config.timeout
         };
-        // Boxed so the deadline wrapper moves a pointer, not the retry loop.
-        crate::timeouts::with_deadline(
-            self.effective_deadline(),
-            Box::pin(self.client.execute_retrying(
+        // `send_js` is always called from `send_prepared` under `send_request`'s
+        // `with_deadline`, so a second deadline wrapper here would duplicate the timer.
+        self.client
+            .execute_retrying(
                 url.as_str(),
                 timeout,
                 self.retry_policy(),
                 self.retry_refused.as_deref().map(|state| &state.refused),
                 || request.send(),
-            )),
-        )
-        .await
-        .map(|(response, _permit)| response)
+            )
+            .await
+            .map(|(response, _permit)| response)
     }
 
     #[cfg(target_arch = "wasm32")]

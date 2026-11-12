@@ -123,11 +123,11 @@ export interface UploadProgress {
 export interface RetryOptions {
   /** Maximum number of retries after the first attempt. Default: 3 */
   maxRetries?: number;
-  /** Delay before the first retry, in ms. Default: 100 */
+  /** Base delay before the first retry, in ms; each backoff is randomized to 50–100% (jitter). Default: 100 */
   initialDelayMs?: number;
   /** Upper bound for any retry delay (including `Retry-After`), in ms. Default: 10000 */
   maxDelayMs?: number;
-  /** Exponential backoff multiplier. Default: 2 */
+  /** Exponential backoff multiplier (`initialDelayMs * multiplier^(attempt - 1)`, with 50–100% jitter). Default: 2 */
   multiplier?: number;
   /** HTTP status codes to retry. Default: [408, 429, 500, 502, 503, 504] */
   retryOn?: number[];
@@ -771,35 +771,17 @@ impl WasmClient {
 
     /// Make a GET request
     pub fn get(&self, url: String, options: Option<RequestOptions>) -> ResponsePromise {
-        self.perform(
-            Method::Get,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Auto(JsValue::UNDEFINED),
-            into_js(options),
-        )
+        self.perform_empty(Method::Get, url, options)
     }
 
     /// Make a HEAD request
     pub fn head(&self, url: String, options: Option<RequestOptions>) -> ResponsePromise {
-        self.perform(
-            Method::Head,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Auto(JsValue::UNDEFINED),
-            into_js(options),
-        )
+        self.perform_empty(Method::Head, url, options)
     }
 
     /// Make a DELETE request
     pub fn delete(&self, url: String, options: Option<RequestOptions>) -> ResponsePromise {
-        self.perform(
-            Method::Delete,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Auto(JsValue::UNDEFINED),
-            into_js(options),
-        )
+        self.perform_empty(Method::Delete, url, options)
     }
 
     /// Make a POST request; the body is taken from `init.body`
@@ -824,13 +806,7 @@ impl WasmClient {
         body: JsValue,
         options: Option<RequestOptions>,
     ) -> ResponsePromise {
-        self.perform(
-            Method::Post,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Json(body),
-            into_js(options),
-        )
+        self.perform_json(Method::Post, url, body, options)
     }
 
     /// Make a PUT request with a JSON body
@@ -840,13 +816,7 @@ impl WasmClient {
         body: JsValue,
         options: Option<RequestOptions>,
     ) -> ResponsePromise {
-        self.perform(
-            Method::Put,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Json(body),
-            into_js(options),
-        )
+        self.perform_json(Method::Put, url, body, options)
     }
 
     /// Make a PATCH request with a JSON body
@@ -856,13 +826,7 @@ impl WasmClient {
         body: JsValue,
         options: Option<RequestOptions>,
     ) -> ResponsePromise {
-        self.perform(
-            Method::Patch,
-            url,
-            JsValue::UNDEFINED,
-            BodyMode::Json(body),
-            into_js(options),
-        )
+        self.perform_json(Method::Patch, url, body, options)
     }
 
     /// Make a request with any method, headers and body
@@ -882,8 +846,7 @@ impl WasmClient {
                 BodyMode::Auto(into_js(body)),
                 into_js(options),
             ),
-            Err(error) => js_sys::Promise::reject(&error_context(error.into(), &method, &url, 0))
-                .unchecked_into(),
+            Err(error) => reject_request(error, &method, &url),
         }
     }
 
@@ -899,20 +862,49 @@ impl WasmClient {
         };
         match method {
             Ok(method) => self.perform_init(method, url, init),
-            Err(error) => js_sys::Promise::reject(&error_context(
-                error.into(),
+            Err(error) => reject_request(
+                error,
                 &prop(&init, "method")
                     .and_then(|v| v.as_string())
                     .unwrap_or_default(),
                 &url,
-                0,
-            ))
-            .unchecked_into(),
+            ),
         }
     }
 }
 
 impl WasmClient {
+    fn perform_empty(
+        &self,
+        method: Method,
+        url: String,
+        options: Option<RequestOptions>,
+    ) -> ResponsePromise {
+        self.perform(
+            method,
+            url,
+            JsValue::UNDEFINED,
+            BodyMode::Auto(JsValue::UNDEFINED),
+            into_js(options),
+        )
+    }
+
+    fn perform_json(
+        &self,
+        method: Method,
+        url: String,
+        body: JsValue,
+        options: Option<RequestOptions>,
+    ) -> ResponsePromise {
+        self.perform(
+            method,
+            url,
+            JsValue::UNDEFINED,
+            BodyMode::Json(body),
+            into_js(options),
+        )
+    }
+
     fn perform_init(&self, method: Method, url: String, init: JsValue) -> ResponsePromise {
         let body = prop(&init, "body").unwrap_or(JsValue::UNDEFINED);
         self.perform(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), init)
@@ -931,15 +923,7 @@ impl WasmClient {
         let context_method = method.to_reqwest();
         let deadline = match request_deadline(&options, client.config.phases.deadline) {
             Ok(deadline) => deadline.map(Box::new),
-            Err(error) => {
-                return js_sys::Promise::reject(&error_context(
-                    error.into(),
-                    context_method.as_str(),
-                    &context_url,
-                    0,
-                ))
-                .unchecked_into()
-            }
+            Err(error) => return reject_request(error, context_method.as_str(), &context_url),
         };
         // Snapshot, so interceptors added while a request is in flight don't affect it
         let (request_interceptors, response_interceptors) = {
@@ -947,34 +931,36 @@ impl WasmClient {
             (interceptors.request.clone(), interceptors.response.clone())
         };
         futures::promise(async move {
-            let absolute = deadline.as_deref().copied();
+            let has_request_interceptors = !request_interceptors.is_empty();
+            let outer_deadline = has_request_interceptors
+                .then_some(deadline.as_deref().copied())
+                .flatten();
             let result = async {
                 let mut request = JsRequest::new(method, url, &headers, body, &options)?;
                 for (_, interceptor) in &request_interceptors {
-                    request = request.intercept(interceptor).await?;
+                    request = match request.intercept(interceptor).await {
+                        Ok(request) => request,
+                        Err(error) => return Ok(Err(error)),
+                    };
                 }
                 request.deadline = deadline;
                 // Without interceptors the outer error fallback already owns
                 // this URL. Copy only when an interceptor could have changed it.
-                let intercepted_url =
-                    (!request_interceptors.is_empty()).then(|| request.url.clone());
-                send(
+                let intercepted_url = has_request_interceptors.then(|| request.url.clone());
+                Ok(send(
                     &client,
                     request,
                     &options,
                     intercepted_url.as_deref().unwrap_or(&context_url),
+                    !has_request_interceptors,
                 )
-                .await
-                .map_err(JsValue::from)
+                .await)
             };
-            use futures_util::FutureExt;
             // Boxed: the deadline wrapper then moves a pointer, not this state.
-            let result =
-                crate::timeouts::with_deadline(absolute, Box::pin(result.map(Ok::<_, Error>)))
-                    .await
-                    .unwrap_or_else(|error| Err(JsValue::from(error)));
+            let mut result = crate::timeouts::with_deadline(outer_deadline, Box::pin(result))
+                .await
+                .unwrap_or_else(|error| Err(JsValue::from(error)));
 
-            let mut result = result;
             for (_, on_fulfilled, on_rejected) in &response_interceptors {
                 result = match (result, on_fulfilled, on_rejected) {
                     (Ok(response), Some(handler), _) => call_async(handler, &response).await,
@@ -1188,6 +1174,14 @@ impl<'a> Options<'a> {
             })
             .transpose()
     }
+
+    /// An optional boolean option, validated if present
+    #[inline(never)]
+    fn bool(&self, name: &str) -> Result<Option<bool>> {
+        self.get(name)
+            .map(|value| parse_bool(&value, name))
+            .transpose()
+    }
 }
 
 #[derive(Default)]
@@ -1251,11 +1245,12 @@ pub(crate) fn send<'a>(
     request: JsRequest,
     options: &'a JsValue,
     original_url: &'a str,
+    apply_deadline: bool,
 ) -> impl std::future::Future<Output = std::result::Result<JsValue, JsValue>> + 'a {
     use futures_util::TryFutureExt;
     let refused = std::sync::Arc::new(RequestState::default());
     let method = request.method.to_reqwest();
-    send_request(client, request, options, &refused).map_err(move |error| {
+    send_request(client, request, options, &refused, apply_deadline).map_err(move |error| {
         let error = refused.with_cause(JsValue::from(error));
         let error = with_abort_reason(
             error,
@@ -1281,6 +1276,7 @@ pub(crate) fn send_request<'a>(
     request: JsRequest,
     options: &'a JsValue,
     #[allow(unused_variables)] refused: &std::sync::Arc<RequestState>,
+    apply_deadline: bool,
 ) -> impl std::future::Future<Output = Result<JsValue>> + 'a {
     use futures_util::future::Either;
     let options = Options::new(options);
@@ -1299,7 +1295,7 @@ pub(crate) fn send_request<'a>(
     // Box the request's large state machine once, so the deadline, error and
     // promise wrappers move a pointer instead of copying it on every request.
     Either::Right(crate::timeouts::with_deadline(
-        deadline,
+        deadline.filter(|_| apply_deadline),
         Box::pin(send_prepared(client, builder, body, options)),
     ))
 }
@@ -1541,8 +1537,8 @@ fn rare_client_options(
             parse_delay(&per, "rateLimit.perMs")?,
         ));
     }
-    if let Some(per_origin) = opts.get("limitsPerOrigin") {
-        builder = builder.limits_per_origin(parse_bool(&per_origin, "limitsPerOrigin")?);
+    if let Some(per_origin) = opts.bool("limitsPerOrigin")? {
+        builder = builder.limits_per_origin(per_origin);
     }
     if let Some(max) = opts.get("maxPendingRequests") {
         builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
@@ -1556,20 +1552,20 @@ fn rare_client_options(
     if let Some(names) = opts.get("sensitiveHeaders") {
         builder = builder.sensitive_headers(parse_header_names(&names)?);
     }
-    if let Some(allow) = opts.get("allowInsecureRedirects") {
-        builder = builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
+    if let Some(allow) = opts.bool("allowInsecureRedirects")? {
+        builder = builder.allow_insecure_redirects(allow);
     }
     #[cfg(target_arch = "wasm32")]
     {
         builder = builder.fetch_options(parse_fetch_options(opts, None)?);
-        if let Some(allow) = opts.get("allowAbsoluteUrls") {
-            builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+        if let Some(allow) = opts.bool("allowAbsoluteUrls")? {
+            builder = builder.allow_absolute_urls(allow);
         }
         if let Some(limit) = opts.get("maxResponseBytes") {
             builder = builder.max_response_bytes(parse_max_response_bytes(&limit)?);
         }
-        if let Some(allow) = opts.get("allowPrivateNetwork") {
-            builder = builder.allow_private_network(parse_bool(&allow, "allowPrivateNetwork")?);
+        if let Some(allow) = opts.bool("allowPrivateNetwork")? {
+            builder = builder.allow_private_network(allow);
         }
         if let Some(proxy) = opts.get("proxy") {
             builder = builder.proxy(Some(parse_proxy(&proxy)?));
@@ -1617,14 +1613,14 @@ pub(crate) fn request_builder(
     if let Some(params) = options.get("params") {
         builder = builder.query(parse_params(&params)?);
     }
-    if let Some(allow) = options.get("allowAbsoluteUrls") {
-        builder = builder.allow_absolute_urls(parse_bool(&allow, "allowAbsoluteUrls")?);
+    if let Some(allow) = options.bool("allowAbsoluteUrls")? {
+        builder = builder.allow_absolute_urls(allow);
     }
     if let Some(names) = options.get("sensitiveHeaders") {
         builder = builder.sensitive_headers(parse_header_names(&names)?);
     }
-    if let Some(allow) = options.get("allowInsecureRedirects") {
-        builder = builder.allow_insecure_redirects(parse_bool(&allow, "allowInsecureRedirects")?);
+    if let Some(allow) = options.bool("allowInsecureRedirects")? {
+        builder = builder.allow_insecure_redirects(allow);
     }
     // `null` removes the client's limit for this request
     match options.raw("maxResponseBytes") {
@@ -1647,8 +1643,8 @@ pub(crate) fn request_builder(
     {
         builder = idempotency::apply(builder, options, &client.config.idempotency)?;
         builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
-        if let Some(allow) = options.get("allowPrivateNetwork") {
-            builder.allow_private_network = parse_bool(&allow, "allowPrivateNetwork")?;
+        if let Some(allow) = options.bool("allowPrivateNetwork")? {
+            builder.allow_private_network = allow;
         }
     }
     Ok((builder, body))
@@ -2530,8 +2526,9 @@ fn invalid(parameter: &str, reason: &str) -> Error {
     }
 }
 
-fn rejected(error: Error) -> ResponsePromise {
-    js_sys::Promise::reject(&JsValue::from(error)).unchecked_into()
+#[inline(never)]
+fn reject_request(error: Error, method: &str, url: &str) -> ResponsePromise {
+    js_sys::Promise::reject(&error_context(error.into(), method, url, 0)).unchecked_into()
 }
 
 impl Headers {

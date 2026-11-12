@@ -55,6 +55,7 @@ new WasmClient({
 });
 ```
 
+- Backoff grows exponentially as `initialDelayMs * multiplier^(attempt - 1)`, capped at `maxDelayMs`, and each delay is randomized to 50–100% (jitter) so concurrent clients do not retry in lockstep.
 - A `Retry-After` header in seconds is honoured, capped at `maxDelayMs`.
 - POST and PATCH aren't retried by default. The server may already have acted on a failed attempt, so retrying can duplicate work.
 - `InvalidInputError`, `ParseError` and unlisted statuses are never retried.
