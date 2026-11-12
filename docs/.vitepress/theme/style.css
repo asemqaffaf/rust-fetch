@@ -1,0 +1,11 @@
+/* Remove VitePress's negative hero pull-up when an archive banner sits above it */
+.archived-home-banner + .VPHero {
+  margin-top: 0;
+  padding-top: 2rem;
+}
+
+@media (min-width: 40rem) {
+  .archived-home-banner + .VPHero {
+    padding-top: 2.5rem;
+  }
+}

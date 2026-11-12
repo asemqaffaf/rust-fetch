@@ -38,11 +38,11 @@ features:
 search: false
 editLink: false
 lastUpdated: false
+archiveNotice:
+  version: '2.6.x'
+  nextVersion: '2.7'
+  changelog: https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md#270---2026-11-02
 ---
-
-::: warning Documentation for 2.6.x
-This documents rust-fetch 2.6.x. For the latest version, see the [current documentation](/). The [changelog](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md#270---2026-11-02) lists what 2.7 added.
-:::
 
 ```js
 import { WasmClient } from 'rust-fetch';
