@@ -91,7 +91,7 @@ jobs:
         with:
           toolchain: 1.99.1
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@1919c4a95903d2c33e4a221102edca87309fc14b
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b
         with:
           tool: wasm-pack@0.15.0 # pinned: wasm-opt, and so the published Wasm, depends on it
       - run: npm ci && npm run build
