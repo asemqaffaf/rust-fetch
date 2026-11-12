@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-11-13
+
+Patch release for 2.8.x fixing per-request WebAssembly closure heap retention under `deadlineMs` and `AbortSignal`, declaring `sideEffects` in the npm manifest, and updating backoff/API documentation. Public APIs and defaults are unchanged.
+
+### Fixed
+- **Synchronous `deadlineMs` and `AbortSignal` closure cleanup (`#327`):** Replace `JsFuture`-backed `Delay` and `Aborted` futures in `wasm-module/src/wasm/futures.rs` with an `Rc<WakeState>` and owned `Closure<dyn FnMut()>` cleared and dropped synchronously when a future is dropped or detached, fixing per-request JavaScript heap retention when requests finish before their deadline or abort signal fires. Also eliminate duplicate nested `with_deadline` timer wrappers across Wasm request execution (`wasm-module/src/wasm/mod.rs`), verified with forced-GC 15,000-request regression tests (`wasm-module/js/test/memory.test.mjs`).
+
+### Changed
+- **Package `sideEffects` and JS glue cleanup (`#327`):** Declare `sideEffects: ["./node.js", "./rust_fetch.js", "./snippets/*"]` in the generated npm `package.json`, deduplicate `optionsArgIndex(name)` across JavaScript wrapper layers into `wasm-module/js/client-helpers.js`, and keep `rust_fetch_bg.wasm` within the `455.5 kB` raw size budget (`wasm-module/src/client.rs`, `wasm-module/src/http.rs`).
+
+### Documentation
+- **Backoff jitter & `llms.txt` (`#327`):** Document the 50–100% retry backoff jitter in `RetryOptions` TypeScript JSDoc and the timeouts/retries guide, and update `llms.txt` across the repo root and package to cover the full 2.x API, runtime modes, observability, security defaults, and Rust crate exports.
+
 ## [2.8.0] - 2026-11-08
 
 ### Added
@@ -436,7 +449,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.2...v2.8.0
 [2.7.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...v2.7.2
 [2.7.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.0...v2.7.1

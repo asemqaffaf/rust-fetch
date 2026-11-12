@@ -5,7 +5,7 @@
     "Asem Qaffaf <asem@qaffaf.com>"
   ],
   "description": "Resilient HTTP client for JavaScript, TypeScript and Rust: fetch() with timeouts, retries, typed errors, interceptors, upload and download progress, and WebSockets, from one Rust core compiled to WebAssembly for browsers and Node.js",
-  "version": "2.8.0",
+  "version": "2.8.1",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
@@ -17,6 +17,8 @@
     "rust_fetch.js",
     "rust_fetch.d.ts",
     "node.js",
+    "testing.js",
+    "testing.d.ts",
     "llms.txt",
     "LICENSE-MIT",
     "LICENSE-APACHE",
@@ -28,6 +30,8 @@
   "homepage": "https://asemqaffaf.github.io/rust-fetch/",
   "types": "rust_fetch.d.ts",
   "sideEffects": [
+    "./node.js",
+    "./rust_fetch.js",
     "./snippets/*"
   ],
   "keywords": [
@@ -70,6 +74,10 @@
     "./rust_fetch.js": {
       "types": "./rust_fetch.d.ts",
       "default": "./rust_fetch.js"
+    },
+    "./testing": {
+      "types": "./testing.d.ts",
+      "default": "./testing.js"
     },
     "./rust_fetch_bg.wasm": "./rust_fetch_bg.wasm",
     "./package.json": "./package.json"

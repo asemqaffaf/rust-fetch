@@ -81,9 +81,20 @@ let nativeTlsWarning = native !== undefined && process.env.NODE_TLS_REJECT_UNAUT
 // its sockets queues requests instead, reusing the same connections.
 const MAX_SOCKETS = 256;
 const POOL_OPTIONS = { keepAlive: true, scheduling: 'lifo', timeout: 5000, maxSockets: MAX_SOCKETS, maxFreeSockets: MAX_SOCKETS };
+// TLS policy for the node:http transport, the same as the native addon's (#244). Node falls back to the subject
+// common name when a certificate has no subjectAltName, which browsers and rustls do not, and before Node 24 its
+// default security level allowed RSA keys down to 1024 bits. Level 2 also refuses SHA-1 signatures and DH below 2048 bits.
+function checkServerIdentity(host, cert) {
+  if (!cert?.subjectaltname) {
+    const reason = `Certificate for ${host} has no subjectAltName, and the subject common name is not used`;
+    return Object.assign(new Error(reason), { code: 'ERR_TLS_CERT_ALTNAME_INVALID', reason, host, cert });
+  }
+  return tls.checkServerIdentity(host, cert);
+}
+const HTTPS_POOL_OPTIONS = { ...POOL_OPTIONS, checkServerIdentity, ciphers: `${tls.DEFAULT_CIPHERS}:@SECLEVEL=2` };
 const pools = new Map([
   [http, checked(new http.Agent(POOL_OPTIONS))],
-  [https, checked(new https.Agent(POOL_OPTIONS))],
+  [https, checked(new https.Agent(HTTPS_POOL_OPTIONS))],
 ]);
 // Connection accounting is enabled only by observed requests.
 const observedSockets = new WeakSet();
@@ -197,7 +208,7 @@ const pendingTunnels = new WeakMap();
 /** HTTPS through a proxy: each pooled connection is a TLS session inside a CONNECT tunnel */
 class TunnelAgent extends https.Agent {
   constructor(proxy) {
-    super(POOL_OPTIONS);
+    super(HTTPS_POOL_OPTIONS);
     this.proxy = proxy;
   }
 
@@ -349,6 +360,8 @@ for (const [address, prefix] of [
   ['::', 96], // unspecified, loopback and the deprecated IPv4-compatible addresses
   ['100::', 64], // discard
   ['100:0:0:1::', 64], // dummy prefix
+  ['2001:2::', 48], // benchmarking (RFC 5180)
+  ['2001:10::', 28], // ORCHID, deprecated (RFC 4843)
   ['2001:db8::', 32], // documentation
   ['3fff::', 20], // documentation
   ['5f00::', 16], // segment routing SIDs

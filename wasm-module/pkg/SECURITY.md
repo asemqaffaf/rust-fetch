@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Each active `2.x` release line receives security patch releases. General bug fixes and performance improvements land on the latest minor release line (`2.8.x`). Security backports for earlier `2.x` lines are published under dedicated npm dist-tags (`release-2.x`) so that `latest` never moves backwards and automated updates do not inadvertently downgrade packages.
+Each active `2.x` release line receives security patch releases. General bug fixes and performance improvements land on the latest published minor release line (`2.8.x`). Security backports for earlier `2.x` lines are published under dedicated npm dist-tags (`release-2.x`) so that `latest` never moves backwards and automated updates do not inadvertently downgrade packages.
 
 | Version | Supported | Latest patch | Distribution tag | Notes |
 | --- | --- | --- | --- | --- |
-| 2.8.x | Yes | 2.8.0 | `latest` | Current release line. Receives feature updates, bug fixes, and security patches. |
-| 2.7.x | Security fixes only | 2.7.2 | `release-2.7` | Backported security fixes only. |
+| 2.8.x | Yes | 2.8.1 | `latest` | Current published release line. Receives feature updates, bug fixes, and security patches. |
+| 2.7.x | Security fixes only | 2.7.2 | none yet | Backported security fixes only. It has no `release-2.7` dist-tag yet; install it with `rust-fetch@2.7`. |
 | 2.6.x | Security fixes only | 2.6.2 | `release-2.6` | Backported security fixes only. |
 | 2.5.x | Security fixes only | 2.5.3 | `release-2.5` | Backported security fixes only. |
 | 2.4.x | Security fixes only | 2.4.2 | `release-2.4` | Backported security fixes only. |
@@ -35,9 +35,31 @@ Please include:
 
 You will receive an acknowledgement within 48 to 72 hours. Validated vulnerabilities are patched in private branches, reviewed against our test and benchmark gates, backported across all supported `2.x` release lines, and published simultaneously with a GitHub Security Advisory and CVE identifier.
 
+## How security is handled and verified
+
+Security fixes come before features in every release line. A fix ships with a regression test, and a protection is described in this file or the [security guide](https://asemqaffaf.github.io/rust-fetch/security) only while a test checks it: `claims.test.mjs` fails when a test named in the [claims table](https://asemqaffaf.github.io/rust-fetch/security#claims-and-the-tests-behind-them) no longer exists. Gaps are written down, not left out: see the known gaps in the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model), which lists what is not covered and why.
+
+Automated checks, all in GitHub Actions:
+
+| Check | What it covers |
+| --- | --- |
+| Tests and coverage on Node 20, 22 and 24 | The Wasm core, both Node transports, the native addon and the browser build, including hostile responses, redirects and credentials, the TLS matrix, the SSRF ranges and a secret-leak canary |
+| `cargo-deny` and `npm audit` | Advisories, licenses and sources for Rust and JavaScript dependencies, on every change and weekly |
+| CodeQL | JavaScript, TypeScript, Rust and workflow code |
+| Workflow lint | Security lint of the workflow files themselves |
+| Fuzzing | Parsers and the JavaScript boundary, with a corpus kept between runs, and a differential check of URL resolution against the WHATWG URL parser |
+| Memory safety | `deny(unsafe_code)` in both crates; the only `unsafe` is the Wasm allocator, listed with its invariants in `docs/unsafe.md` and checked in CI; Miri and AddressSanitizer, including the native addon |
+| Reproducible Wasm build | The published Wasm file is rebuilt and compared on pull requests that touch it |
+| OpenSSF Scorecard | Repository and release practices, weekly |
+| Release | npm provenance for every release, size, API and benchmark gates, and verification after publishing |
+
+Not done yet: an independent security review (#223). Until one is published, the evidence above is the project's own. There is an [open call for reviewers](https://asemqaffaf.github.io/rust-fetch/security-review) with the scope, what we provide and how to report.
+
+See also the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model) (assets, trust boundaries and attackers per adapter) and the [Content Security Policy](https://asemqaffaf.github.io/rust-fetch/security#content-security-policy) section for the browser build.
+
 ## Security architecture and built-in protections
 
-`rust-fetch` provides built-in defenses against common client-side and server-side network attacks. Detailed configuration examples and threat models are documented in the [Security Guide](https://asemqaffaf.github.io/rust-fetch/security).
+`rust-fetch` provides built-in defenses against common client-side and server-side network attacks. Detailed configuration examples are in the [Security Guide](https://asemqaffaf.github.io/rust-fetch/security), and what the library defends against and what it leaves to you is in the [threat model](https://asemqaffaf.github.io/rust-fetch/threat-model).
 
 ### Zero dependencies and supply-chain security
 
@@ -87,14 +109,15 @@ When fetching user-supplied URLs on Node.js (webhooks, proxies, link previews), 
 
 ### Transport and worker isolation
 
-- **Native adapter isolation:** Each native Node adapter owns its TLS configuration, connection pool, and cancellation scope. Worker threads cannot alter another thread's verification settings or cancel requests across shared IDs.
+- **Native adapter isolation (by design, not yet tested across threads):** Each native Node adapter is built to own its TLS configuration, connection pool, and cancellation scope, so that one worker thread cannot alter another thread's verification settings or cancel its requests. No test runs several worker threads against one addon yet; TLS trust is process-wide (`NODE_EXTRA_CA_CERTS`).
 - **Thread-safe request cleanup (2.7.1):** Native request-ID cleanup completes synchronously on the owning JavaScript thread before promise resolution.
 - **Raw response header parsing:** Response headers in Node.js are parsed from `rawHeaders` into null-prototype maps. Authentic headers named `__proto__` are preserved as data properties and cannot overwrite object prototypes.
-- **Observability redaction:** Debug logging and lifecycle hooks redact userinfo, query strings, and sensitive headers; request bodies and raw error messages are never exported to trace context or logs.
+- **Observability redaction:** Debug logging and lifecycle hooks redact userinfo, query strings, and sensitive headers, and keep response bodies out of hooks and logs (tested). Errors the client throws carry the request URL without its password and fragment (the password reads `***`), on the error and on every error in its `cause` chain; the query string stays unless you set `redactUrl`, which covers the whole chain (tested). Keep credentials out of URLs anyway, and redact errors before you log them.
 
 ## Distribution and release security
 
-- **Dist-tags and release discipline:** The `latest` dist-tag on npm is strictly reserved for the current minor release line (`2.8.x`). Backported security patches for older release lines (`2.1.x`–`2.6.x`) are published to dedicated dist-tags (`release-2.1` through `release-2.6`) so that consumer dependencies using caret ranges (`^2.x`) will not unexpectedly downgrade.
+- **Dist-tags and release discipline:** The `latest` dist-tag on npm is strictly reserved for the current published minor release line (`2.8.x` today). Backported security patches for older release lines (`2.1.x`–`2.6.x`) are published to dedicated dist-tags (`release-2.1` through `release-2.6`) so that consumer dependencies using caret ranges (`^2.x`) will not unexpectedly downgrade.
+- **Verify what you install:** in a project that has installed `rust-fetch`, run `npm audit signatures`. It checks the registry signature and the provenance attestation of every installed package that has one, and exits non-zero if either is invalid. `npm view rust-fetch@<version> dist.attestations` shows the attestation, whose source is this repository's `release.yml` workflow run for the tag `v<version>`. Provenance proves where a package was built, not that the source is free of defects, and it says nothing about the Wasm module's relation to the source. That is checked separately: the release workflow builds the Wasm twice in different directories and stops unless both builds and the file about to be published are identical, and `reproducible.yml` rebuilds the latest release's tag and compares it with the file on npm. To check it yourself, check out `v<version>`, build with the Rust and `wasm-pack` versions pinned in `release.yml` (`wasm-pack build --release --target web` in `wasm-module`), and compare the SHA-256 of `pkg/rust_fetch_bg.wasm` with the one in the tarball from `npm pack rust-fetch@<version>`. A different toolchain gives different bytes, which is not a sign of tampering. The repository is also scored by the [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/asemqaffaf/rust-fetch).
 - **Provenance and integrity:** Every release is built on GitHub Actions with pinned toolchains, signed with npm provenance attestations, and verified after publication. Tarballs are tested in clean environments against size, API, and benchmark regression gates before publishing.
 
 ## Package contents and expected capabilities

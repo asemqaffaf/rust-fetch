@@ -48,8 +48,9 @@ export type RequestBody = UploadBody | UploadBodyFactory | string | Uint8Array |
  * - `ndjson`: a `ReadableStream` of parsed JSON values, one per line of newline-delimited JSON, returned as soon as the headers arrive
  *
  * Empty bodies are `null` for `auto`/`json`, `""` for `text` and an empty `Uint8Array` for `binary`.
+ * `blob` is a `Blob` typed with the response's `Content-Type` (an empty one for an empty body).
  */
-export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson';
+export type ResponseBodyType = 'auto' | 'json' | 'text' | 'binary' | 'blob' | 'stream' | 'ndjson';
 
 /**
  * What to do when the server redirects (301, 302, 303, 307 or 308), like `fetch()`'s `redirect`:
@@ -97,11 +98,11 @@ export interface UploadProgress {
 export interface RetryOptions {
     /** Maximum number of retries after the first attempt. Default: 3 */
     maxRetries?: number;
-    /** Delay before the first retry, in ms. Default: 100 */
+    /** Base delay before the first retry, in ms; each backoff is randomized to 50–100% (jitter). Default: 100 */
     initialDelayMs?: number;
     /** Upper bound for any retry delay (including `Retry-After`), in ms. Default: 10000 */
     maxDelayMs?: number;
-    /** Exponential backoff multiplier. Default: 2 */
+    /** Exponential backoff multiplier (`initialDelayMs * multiplier^(attempt - 1)`, with 50–100% jitter). Default: 2 */
     multiplier?: number;
     /** HTTP status codes to retry. Default: [408, 429, 500, 502, 503, 504] */
     retryOn?: number[];
@@ -204,7 +205,48 @@ export interface WasmClient {
     stats(): ClientStats;
 }
 
+/** Options of `client.paginate()`: the request options of each page, and these. */
+export interface PaginateOptions extends RequestOptions {
+    /** The items of a page (an array, or a promise of one). Without it, `paginate()` yields the pages. */
+    items?: (response: HttpResponse) => Iterable<any> | Promise<Iterable<any>>;
+    /** Where the next page is: a URL (relative ones resolve against the page's URL), or `{ url?, params? }` (`params` are merged into the request's), or nothing for the last page. Default: the `Link` header's `rel="next"`. */
+    next?: (response: HttpResponse) => string | { url?: string; params?: RequestOptions['params'] } | null | undefined | false | Promise<string | { url?: string; params?: RequestOptions['params'] } | null | undefined | false>;
+    /** Stop after this many pages. Default 1000. */
+    maxPages?: number;
+    /** Follow a next URL on another origin. Default `false`: it throws an `InvalidInputError`, so credentials never follow a server's redirect to another host. */
+    crossOrigin?: boolean;
+}
+
+export interface AuthOptions {
+    /** `Authorization: Bearer …` on every request to the client's origin: a token, or a function returning one (sync or async), called for each request */
+    bearer?: string | (() => string | undefined | Promise<string | undefined>);
+    /** `Authorization: Basic …` instead of a bearer token */
+    basic?: { username: string; password: string };
+    /** Called when a request gets `401`: once for all requests failing at the same time (single flight). Each failed request is then replayed once with the new token (not requests with a stream body); a second `401` rejects with the `HttpError`. If it rejects, the `HttpError` is thrown with the failure as `cause`. Needs `bearer`. */
+    refresh?: () => void | Promise<void>;
+    /** Other origins that may receive the credentials, such as `https://uploads.example.com`. The origin of `baseUrl` always may; no other origin ever does. */
+    origins?: string[];
+}
+
+/** Limits of the client's response cache (`httpCache`). */
+export interface HttpCacheOptions {
+    /** Entries kept, least recently used dropped first. Default 100. */
+    maxEntries?: number;
+    /** Estimated bytes kept in all. Default 50,000,000. */
+    maxBytes?: number;
+    /** Larger responses are not stored. Default 1,000,000. */
+    maxEntryBytes?: number;
+}
+
 export interface ClientOptions extends BrowserRequestOptions {
+    /** An opt-in private cache for `GET` responses, following RFC 9111: fresh responses (`Cache-Control: max-age`, `Expires`) come from memory, stale ones with an `ETag` or `Last-Modified` are revalidated with `If-None-Match` / `If-Modified-Since`, and `no-store`, `no-cache` and `Vary` are honoured. Responses carry `cached` and `revalidated`. Not related to the browser's `cache` option. Off by default. */
+    httpCache?: boolean | HttpCacheOptions;
+    /** Share one request and response between identical `get` and `head` requests in flight at once. Off by default. */
+    dedupe?: boolean;
+    /** Authentication for requests to the client's origin (`baseUrl`, plus `auth.origins`). Needs one of them. A request that sets its own `Authorization` header keeps it. */
+    auth?: AuthOptions;
+    /** Answer this client's buffered requests from your own code instead of the network, keeping the retry, timeout and error behaviour. Streamed responses, `events()` and `websocket()` do not use it. Build one with `createMockTransport()` from `rust-fetch/testing`. */
+    transport?: (request: any) => PromiseLike<any>;
     /** Collect attempt and logical-request timings. Off by default. */
     timings?: boolean;
     /** Collect bounded per-client latency/count samples from construction. Off by default. */
@@ -328,7 +370,34 @@ export interface ClientOptions extends BrowserRequestOptions {
 }
 
 /** Per request; `BrowserRequestOptions` set here override the client's one by one */
+/** The Standard Schema interface (https://standardschema.dev), implemented by Zod, Valibot, ArkType and others. rust-fetch depends on none of them. */
+export interface StandardSchema<Output = unknown> {
+    readonly '~standard': {
+        readonly version: 1;
+        readonly vendor: string;
+        readonly validate: (value: unknown) => StandardSchemaResult<Output> | Promise<StandardSchemaResult<Output>>;
+        readonly types?: { readonly input: unknown; readonly output: Output } | undefined;
+    };
+}
+export type StandardSchemaResult<Output> =
+| { readonly value: Output; readonly issues?: undefined }
+| { readonly issues: ReadonlyArray<StandardSchemaIssue> };
+export interface StandardSchemaIssue {
+    readonly message: string;
+    readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined;
+}
+/** The type a schema validates to */
+export type InferSchemaOutput<S> = S extends StandardSchema<infer Output> ? Output : never;
+
 export interface RequestOptions extends BrowserRequestOptions {
+    /** `get` with `responseType: 'stream'` only: when the connection breaks mid-body, continue with a `Range` request (checked with `If-Range`) instead of failing, up to `maxResumes` times (default 3). Needs a server that sends `Accept-Ranges: bytes`, an `ETag` or `Last-Modified`, and no `Content-Encoding`; otherwise the stream fails as usual. `response.resumes` counts the continuations. */
+    resume?: boolean | { maxResumes?: number };
+    /** `false` skips the client's `httpCache` for this request: nothing is served from it or stored in it. */
+    httpCache?: boolean;
+    /** `get` and `head` only: share one request and response with identical requests in flight at once (same URL, headers and options), or `false` to opt out when the client's `dedupe` is on. Each caller gets its own response object. Not with streamed `responseType`s. */
+    dedupe?: boolean;
+    /** Validate the response body with a Standard Schema (Zod, Valibot, ArkType…). The body of the response becomes the schema's output; a body that fails rejects with a `ValidationError` (not retried). Not with `responseType: 'stream'` or `'ndjson'`. */
+    schema?: StandardSchema;
     headers?: HeadersLike;
     params?: QueryParams;
     /** Overrides the client timeout for this request, in ms. `0` disables it. */
@@ -406,6 +475,12 @@ export type ResponseFulfilledInterceptor = (response: HttpResponse) => HttpRespo
 export type ResponseRejectedInterceptor = (error: RustFetchError) => HttpResponse | Promise<HttpResponse>;
 
 export interface HttpResponse<T = any> {
+    /** With `resume`: how many times the download continued after a broken connection */
+    resumes?: number;
+    /** With `httpCache`: `true` when served from the cache (fresh, or after a `304`) */
+    cached?: boolean;
+    /** With `httpCache`: `true` when a stale stored response was confirmed with a `304 Not Modified` */
+    revalidated?: boolean;
     /** Enabled by timings/hooks; streamed totals finalize at EOF/cancel. */
     timings?: RequestTimings;
     status: number;
@@ -428,7 +503,8 @@ export type RustFetchErrorKind =
 | 'TimeoutError'
 | 'InvalidInputError'
 | 'JsInteropError'
-| 'CancelledError';
+| 'CancelledError'
+| 'ValidationError';
 
 export interface RustFetchError extends Error {
     method?: string;
@@ -456,6 +532,10 @@ export interface RustFetchError extends Error {
     maxLineBytes?: number;
     /** NetworkError for a Server-Sent Event larger than `maxEventBytes`: the limit */
     maxEventBytes?: number;
+    /** CancelledError: the signal's abort reason (`controller.abort(reason)`; an `AbortError` by default, a `TimeoutError` for `AbortSignal.timeout()`). Also `cause`. */
+    reason?: unknown;
+    /** ValidationError: what the schema reported */
+    issues?: ReadonlyArray<StandardSchemaIssue>;
     /** `true` when the client's `retryBudget` refused to retry this failure (the error is the last attempt's) */
     retryBudgetExhausted?: boolean;
     /** CircuitOpenError: the origin whose circuit refused the request */
@@ -469,6 +549,38 @@ export interface RustFetchError extends Error {
     /** NetworkError from `WebSocketConnection.send()` with a full queue: the limit reached */
     maxQueuedBytes?: number;
 }
+
+/** A `RustFetchError` narrowed to one `kind`, with the fields that kind always has. */
+export type RustFetchErrorOf<K extends RustFetchErrorKind> = RustFetchError & { kind: K } & (
+K extends 'HttpError' ? { status: number; statusText: string } :
+K extends 'TimeoutError' ? { timeoutMs: number } :
+K extends 'InvalidInputError' ? { parameter: string } :
+K extends 'CircuitOpenError' ? { origin: string; retryAfterMs: number } :
+K extends 'ValidationError' ? { issues: ReadonlyArray<StandardSchemaIssue>; status: number } :
+{}
+);
+export type RustFetchHttpError = RustFetchErrorOf<'HttpError'>;
+export type RustFetchTimeoutError = RustFetchErrorOf<'TimeoutError'>;
+export type RustFetchNetworkError = RustFetchErrorOf<'NetworkError'>;
+export type RustFetchParseError = RustFetchErrorOf<'ParseError'>;
+export type RustFetchInvalidInputError = RustFetchErrorOf<'InvalidInputError'>;
+export type RustFetchCancelledError = RustFetchErrorOf<'CancelledError'>;
+export type RustFetchCircuitOpenError = RustFetchErrorOf<'CircuitOpenError'>;
+export type RustFetchJsInteropError = RustFetchErrorOf<'JsInteropError'>;
+export type RustFetchValidationError = RustFetchErrorOf<'ValidationError'>;
+
+/** `true` for an error thrown by rust-fetch, whichever realm or copy of the package made it; with `kind`, only for that kind. */
+export function isRustFetchError(value: unknown): value is RustFetchError;
+export function isRustFetchError<K extends RustFetchErrorKind>(value: unknown, kind: K): value is RustFetchErrorOf<K>;
+export function isHttpError(value: unknown): value is RustFetchHttpError;
+export function isTimeoutError(value: unknown): value is RustFetchTimeoutError;
+export function isNetworkError(value: unknown): value is RustFetchNetworkError;
+export function isParseError(value: unknown): value is RustFetchParseError;
+export function isInvalidInputError(value: unknown): value is RustFetchInvalidInputError;
+export function isCancelledError(value: unknown): value is RustFetchCancelledError;
+export function isCircuitOpenError(value: unknown): value is RustFetchCircuitOpenError;
+export function isJsInteropError(value: unknown): value is RustFetchJsInteropError;
+export function isValidationError(value: unknown): value is RustFetchValidationError;
 
 
 
@@ -704,6 +816,11 @@ export class IntoUnderlyingSource {
  * HTTP client for JavaScript
  */
 export class WasmClient {
+    /** A new client with this client's options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */
+    extend(overrides?: ClientOptions | null): WasmClient;
+    /** Pages of a paginated API, or its items with `items`. Follows the `Link: rel="next"` header unless `next` says otherwise; each page is a normal GET. */
+    paginate<T>(url: string, options: PaginateOptions & { items: (response: HttpResponse) => Iterable<T> | Promise<Iterable<T>> }): AsyncGenerator<T, void, undefined>;
+    paginate(url: string, options?: PaginateOptions): AsyncGenerator<HttpResponse, void, undefined>;
     free(): void;
     [Symbol.dispose](): void;
     /**
@@ -722,6 +839,7 @@ export class WasmClient {
     /**
      * Make a DELETE request
      */
+    delete<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     delete<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Remove an interceptor; returns whether it was registered
@@ -734,14 +852,17 @@ export class WasmClient {
     /**
      * Make a request described by a `fetch`-style init object
      */
+    fetch<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     fetch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a GET request
      */
+    get<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     get<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a HEAD request
      */
+    head<S extends StandardSchema>(url: string, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     head<T = any>(url: string, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Create a new client
@@ -750,26 +871,32 @@ export class WasmClient {
     /**
      * Make a PATCH request; the body is taken from `init.body`
      */
+    patch<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     patch<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PATCH request with a JSON body
      */
+    patch_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     patch_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request; the body is taken from `init.body`
      */
+    post<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     post<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a POST request with a JSON body
      */
+    post_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     post_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request; the body is taken from `init.body`
      */
+    put<S extends StandardSchema>(url: string, init: FetchInit & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     put<T = any>(url: string, init?: FetchInit | null): Promise<HttpResponse<T>>;
     /**
      * Make a PUT request with a JSON body
      */
+    put_json<S extends StandardSchema>(url: string, body: any, options: RequestOptions & { schema: S }): Promise<HttpResponse<InferSchemaOutput<S>>>;
     put_json<T = any>(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse<T>>;
     /**
      * Make a request with any method, headers and body
@@ -947,19 +1074,19 @@ export interface InitOutput {
     readonly websocketconnection_sendJson: (a: number, b: any) => [number, number];
     readonly websocketconnection_state: (a: number) => any;
     readonly websocketconnection_url: (a: number) => [number, number];
-    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___js_sys_f4e9d3fa7962a758___Function_fn_wasm_bindgen_ed44100cd7efa7ca___JsValue_____wasm_bindgen_ed44100cd7efa7ca___sys__Undefined___js_sys_f4e9d3fa7962a758___Function_fn_wasm_bindgen_ed44100cd7efa7ca___JsValue_____wasm_bindgen_ed44100cd7efa7ca___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___wasm_bindgen_ed44100cd7efa7ca___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_ed44100cd7efa7ca___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___wasm_bindgen_ed44100cd7efa7ca___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke___web_sys_50b1796554f11e47___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_ed44100cd7efa7ca___convert__closures_____invoke_______true_: (a: number, b: number) => void;
+    readonly wasm_bindgen_62e38f1167266ad9___convert__closures_____invoke___js_sys_6560307743d9e97c___Function_fn_wasm_bindgen_62e38f1167266ad9___JsValue_____wasm_bindgen_62e38f1167266ad9___sys__Undefined___js_sys_6560307743d9e97c___Function_fn_wasm_bindgen_62e38f1167266ad9___JsValue_____wasm_bindgen_62e38f1167266ad9___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_62e38f1167266ad9___convert__closures_____invoke___wasm_bindgen_62e38f1167266ad9___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_62e38f1167266ad9___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_62e38f1167266ad9___convert__closures_____invoke___wasm_bindgen_62e38f1167266ad9___JsValue______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_62e38f1167266ad9___convert__closures_____invoke___web_sys_5d65fa1d64006a8a___features__gen_ProgressEvent__ProgressEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_62e38f1167266ad9___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
