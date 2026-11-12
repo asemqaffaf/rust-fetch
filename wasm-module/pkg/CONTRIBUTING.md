@@ -19,7 +19,7 @@ You need:
 - Optional, for coverage: [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
 
 ```bash
-npm run build      # build the npm package into wasm-module/pkg
+npm run build      # build the npm package into wasm-module/pkg (the .wasm is not committed; run this before the JS tests)
 npm run build:native  # build the native Node.js transport next to it (optional)
 npm test           # Rust unit + integration tests, then the JS tests
 cd wasm-module && wasm-pack test --node   # wasm tests for the JS bindings
@@ -69,6 +69,8 @@ When unsure, treat it as breaking.
 | `vX.Y.Z` tags | One per published version, on the commit that was published |
 
 Fixes that also apply to an older major version are made on `main` first, then cherry-picked into `v1.x`.
+
+Security fixes follow [the security release checklist](docs/security-release-checklist.md): private fix, one release per supported line, advisory on publication.
 
 ## Releasing
 

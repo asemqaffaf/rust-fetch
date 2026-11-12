@@ -4,6 +4,7 @@
 [![CI](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml/badge.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
 [![Coverage: 100% (enforced)](https://img.shields.io/badge/coverage-100%25%20enforced-brightgreen.svg)](https://github.com/asemqaffaf/rust-fetch/actions/workflows/rust.yml)
 [![codecov](https://codecov.io/gh/asemqaffaf/rust-fetch/graph/badge.svg)](https://app.codecov.io/gh/asemqaffaf/rust-fetch)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/asemqaffaf/rust-fetch/badge)](https://scorecard.dev/viewer/?uri=github.com/asemqaffaf/rust-fetch)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#contributing-and-license)
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-654FF0?style=flat&logo=WebAssembly&logoColor=white)](https://webassembly.org/)
 
@@ -12,7 +13,7 @@
 📖 **Documentation: [asemqaffaf.github.io/rust-fetch](https://asemqaffaf.github.io/rust-fetch/)**
 
 - **Errors you can branch on.** Every failure rejects with a typed `Error`: `HttpError` (with the status and response body), `TimeoutError`, `NetworkError`, `CancelledError` and [more](https://asemqaffaf.github.io/rust-fetch/guide/errors), so one `catch` handles them all.
-- **Safe with servers and URLs you don't control.** Block requests to private networks (SSRF, checked on the resolved address, for requests and WebSockets), cap response, line and event sizes including decompression bombs, keep absolute URLs from taking your credentials away from `baseUrl`, and drop credential headers on cross-origin redirects. Header injection is rejected. [Security](https://asemqaffaf.github.io/rust-fetch/security).
+- **Guards against servers and URLs you don't control.** Block requests to private networks (SSRF, checked on the resolved address, for requests and WebSockets), cap response, line and event sizes including decompression bombs, keep absolute URLs from taking your credentials away from `baseUrl`, and drop credential headers on cross-origin redirects. Header injection is rejected. [Security](https://asemqaffaf.github.io/rust-fetch/security).
 - **Timeouts and retries done right.** `timeoutMs` covers each attempt up to the last byte of the body. Optional connect, header and body-idle timers identify the phase; `deadlineMs` includes queues, retries and unread stream lifetime. Retries back off with jitter, honour `Retry-After`, never repeat a POST or PATCH unless you allow it (including with an idempotency key for APIs that deduplicate), can be configured per request, and can share a client-wide retry budget.
 - **Bounded under load.** Shed load beyond a pending-request limit, hold slow servers back with backpressure, and keep about 7 KB per pending request in Node.js.
 - **One core, every runtime.** The request policy is written once in Rust and compiled to WebAssembly, and a [conformance suite](https://asemqaffaf.github.io/rust-fetch/conformance) holds every transport (node:http, the native addon, `fetch()`, real browsers) to the same results.
@@ -72,7 +73,7 @@ try {
 More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-started), and configurations to copy for credentialed APIs, user-supplied URLs and streaming APIs in [Hardened configurations](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations).
 
 > **Release status**
-> - **On npm (2.8.0):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **On npm (2.8.1):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](https://asemqaffaf.github.io/rust-fetch/performance#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Compared with `fetch()` and axios
@@ -91,9 +92,9 @@ More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
 | Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 131 KB: the WebAssembly module (121 KB) and its JS glue |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 171 KB: the WebAssembly module (148 KB) and its JS glue (23 KB, before your bundler minifies it) |
 
-The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
+The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors or WebSockets (it has upload progress on native targets) ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
 
 ## Documentation
 
@@ -103,10 +104,16 @@ The rust-fetch column describes the JavaScript API; the Rust crate has no interc
 - **[Performance](https://asemqaffaf.github.io/rust-fetch/performance)**: our measurements and independent benchmarks, including where rust-fetch loses
 - **[Transport conformance](https://asemqaffaf.github.io/rust-fetch/conformance)**: every behaviour on every transport
 - **Reference**: [architecture](https://asemqaffaf.github.io/rust-fetch/architecture) · [using it from Rust](https://asemqaffaf.github.io/rust-fetch/rust) · [compatibility and limitations](https://asemqaffaf.github.io/rust-fetch/compatibility) (and upgrading to 2.0) · [stability and releases](https://asemqaffaf.github.io/rust-fetch/stability) · [development and benchmarking](https://asemqaffaf.github.io/rust-fetch/development) · [FAQ](https://asemqaffaf.github.io/rust-fetch/faq)
+- **[API reference](https://asemqaffaf.github.io/rust-fetch/api/)**: every class, function, option and type, generated from the published TypeScript definitions
+- **[Examples](https://github.com/asemqaffaf/rust-fetch/tree/main/examples)**: runnable and tested in CI
 - **[Changelog](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md)**
 
 The documentation is in [`docs/`](https://github.com/asemqaffaf/rust-fetch/tree/main/docs) and published from it on every change to `main`.
 
+
+## Testing your code
+
+`createMockTransport()` (from `rust-fetch/testing`) answers a client's requests from routes you write, with no server or network, while the real retry, timeout and error behaviour runs: `new WasmClient({ baseUrl, transport: createMockTransport().on('GET', '/users/42', { body: { id: 42 } }) })`. See [Testing your code](https://asemqaffaf.github.io/rust-fetch/guide/testing).
 
 ## Observability
 

@@ -6,7 +6,7 @@ Each active `2.x` release line receives security patch releases. General bug fix
 
 | Version | Supported | Latest patch | Distribution tag | Notes |
 | --- | --- | --- | --- | --- |
-| 2.8.x | Yes | 2.8.0 | `latest` | Current published release line. Receives feature updates, bug fixes, and security patches. |
+| 2.8.x | Yes | 2.8.1 | `latest` | Current published release line. Receives feature updates, bug fixes, and security patches. |
 | 2.7.x | Security fixes only | 2.7.2 | none yet | Backported security fixes only. It has no `release-2.7` dist-tag yet; install it with `rust-fetch@2.7`. |
 | 2.6.x | Security fixes only | 2.6.2 | `release-2.6` | Backported security fixes only. |
 | 2.5.x | Security fixes only | 2.5.3 | `release-2.5` | Backported security fixes only. |
