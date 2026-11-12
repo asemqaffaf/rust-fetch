@@ -109,7 +109,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   }
   function request(state, name, raw, client, args) {
     const c = state.config;
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     let method = name === 'request' ? args[0] : name === 'fetch' ? own(args[1], 'method') ?? 'GET' : name.replace('_json', '').toUpperCase();
     const inputUrl = args[name === 'request' ? 1 : 0], input = args[index];
     const streaming = ['stream', 'ndjson'].includes(own(input, 'responseType'));
@@ -236,7 +236,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
   Object.defineProperty(ObservableClient, 'name', { value: 'WasmClient' });
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
     const raw = Original.prototype[name];
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     ObservableClient.prototype[name] = function (...args) {
       let state = states.get(this);
       if (!state) { state = stateFor(); states.set(this, state); }

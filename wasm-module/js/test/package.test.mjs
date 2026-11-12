@@ -73,6 +73,8 @@ describe('published package', () => {
       'testing.d.ts',
       'testing.js',
     ]);
+    const manifest = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+    assert.ok(Array.isArray(manifest.sideEffects) && manifest.sideEffects.includes('./node.js') && manifest.sideEffects.includes('./rust_fetch.js'));
   });
 
   it('works via `import` in Node.js without calling init()', async () => {

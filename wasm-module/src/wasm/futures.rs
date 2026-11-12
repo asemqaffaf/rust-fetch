@@ -7,12 +7,13 @@
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 use crate::error::{Error, Result};
+use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::rc::Rc;
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
 extern "C" {
@@ -23,30 +24,73 @@ extern "C" {
     pub(crate) fn clear_timeout(handle: &JsValue);
 }
 
-/// A `setTimeout`-based delay that clears its timer when dropped, so a
-/// finished request never keeps a Node.js process alive.
+struct WakeState {
+    fired: Cell<bool>,
+    waker: Cell<Option<Waker>>,
+}
+
+impl WakeState {
+    fn new() -> Rc<Self> {
+        Rc::new(Self {
+            fired: Cell::new(false),
+            waker: Cell::new(None),
+        })
+    }
+
+    fn callback(state: &Rc<Self>) -> Closure<dyn FnMut()> {
+        let state = Rc::clone(state);
+        Closure::<dyn FnMut()>::new(move || {
+            state.fired.set(true);
+            if let Some(waker) = state.waker.take() {
+                waker.wake();
+            }
+        })
+    }
+
+    fn park(&self, cx: &Context<'_>) -> Poll<()> {
+        self.waker.set(Some(cx.waker().clone()));
+        Poll::Pending
+    }
+}
+
+/// A `setTimeout`-based delay that clears its timer and drops its closure
+/// synchronously when dropped, so a finished request never keeps a Node.js
+/// process alive or leaves unsettled `Promise`/`FinalizationRegistry` entries.
 pub(crate) struct Delay {
-    inner: JsFuture,
-    handle: JsValue,
     remaining: Duration,
+    handle: JsValue,
+    callback: Option<Closure<dyn FnMut()>>,
+    state: Rc<WakeState>,
 }
 
 impl Delay {
     pub(crate) fn new(duration: Duration) -> Self {
+        Self {
+            remaining: duration,
+            handle: JsValue::UNDEFINED,
+            callback: None,
+            state: WakeState::new(),
+        }
+    }
+
+    fn arm(&mut self) {
         // Browser/Node timers clamp at i32::MAX ms. Chain long waits and
         // round sub-millisecond durations up rather than shortening them.
-        let chunk = duration.min(Duration::from_millis(i32::MAX as u64));
-        let rounded = chunk.as_millis() + u128::from(chunk.subsec_nanos() % 1_000_000 != 0);
+        let chunk = self.remaining.min(Duration::from_millis(i32::MAX as u64));
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "chunk <= i32::MAX ms (~24.8 days)"
+        )]
+        let rounded = chunk.as_secs() as u32 * 1000
+            + chunk.subsec_millis()
+            + u32::from(chunk.subsec_nanos() % 1_000_000 != 0);
         let ms = i32::try_from(rounded).unwrap_or(i32::MAX);
-        let mut handle = JsValue::UNDEFINED;
-        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-            handle = set_timeout(&resolve, ms);
-        });
-        Self {
-            inner: JsFuture::from(promise),
-            handle,
-            remaining: duration.saturating_sub(chunk),
-        }
+        self.remaining = self.remaining.saturating_sub(chunk);
+        self.state.fired.set(false);
+
+        let callback = WakeState::callback(&self.state);
+        self.handle = set_timeout(callback.as_ref().unchecked_ref(), ms);
+        self.callback = Some(callback);
     }
 }
 
@@ -55,14 +99,16 @@ impl Future for Delay {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         loop {
-            match Pin::new(&mut self.inner).poll(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(_) if self.remaining.is_zero() => return Poll::Ready(()),
-                Poll::Ready(_) => {
-                    let remaining = self.remaining;
-                    *self = Self::new(remaining);
-                }
+            if self.callback.is_none() {
+                self.arm();
             }
+            if !self.state.fired.get() {
+                return self.state.park(cx);
+            }
+            if self.remaining.is_zero() {
+                return Poll::Ready(());
+            }
+            self.callback = None;
         }
     }
 }
@@ -73,28 +119,28 @@ impl Drop for Delay {
     }
 }
 
-/// Resolves once an `AbortSignal` fires; removes its listener when dropped.
+/// Resolves once an `AbortSignal` fires; removes its listener and drops its
+/// closure synchronously when dropped.
 pub(crate) struct Aborted {
-    inner: JsFuture,
     signal: web_sys::AbortSignal,
-    listener: Option<js_sys::Function>,
+    state: Rc<WakeState>,
+    listener: Option<Closure<dyn FnMut()>>,
 }
 
 impl Aborted {
     pub(crate) fn new(signal: web_sys::AbortSignal) -> Self {
-        let mut listener = None;
-        let promise = js_sys::Promise::new(&mut |resolve, _reject| {
-            if signal.aborted() {
-                let _ = resolve.call0(&JsValue::UNDEFINED);
-            } else {
-                let _ = signal.add_event_listener_with_callback("abort", &resolve);
-                listener = Some(resolve);
-            }
-        });
         Self {
-            inner: JsFuture::from(promise),
             signal,
-            listener,
+            state: WakeState::new(),
+            listener: None,
+        }
+    }
+
+    fn detach(&mut self) {
+        if let Some(listener) = self.listener.take() {
+            let _ = self
+                .signal
+                .remove_event_listener_with_callback("abort", listener.as_ref().unchecked_ref());
         }
     }
 }
@@ -103,22 +149,24 @@ impl Future for Aborted {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        // Promise callbacks run on a later microtask; check the flag directly
-        // so an already-aborted signal wins the race against ready work.
+        if self.listener.is_none() && !self.signal.aborted() {
+            let listener = WakeState::callback(&self.state);
+            let _ = self
+                .signal
+                .add_event_listener_with_callback("abort", listener.as_ref().unchecked_ref());
+            self.listener = Some(listener);
+        }
         if self.signal.aborted() {
+            self.detach();
             return Poll::Ready(());
         }
-        Pin::new(&mut self.inner).poll(cx).map(|_| ())
+        self.state.park(cx)
     }
 }
 
 impl Drop for Aborted {
     fn drop(&mut self) {
-        if let Some(listener) = &self.listener {
-            let _ = self
-                .signal
-                .remove_event_listener_with_callback("abort", listener);
-        }
+        self.detach();
     }
 }
 

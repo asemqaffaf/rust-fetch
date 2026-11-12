@@ -1,174 +1,122 @@
 # rust-fetch
 
-> Resilient HTTP client for JavaScript and TypeScript (npm package `rust-fetch`), with a Rust core compiled to WebAssembly that behaves the same in browsers, Web Workers and Node.js 20+. It adds what `fetch()` lacks: typed errors, per-attempt timeouts, retries with backoff, interceptors, upload and download progress, streaming, Server-Sent Events and newline-delimited JSON (for LLM streaming APIs), and WebSockets with reconnection. Also usable as a Rust crate.
+> Resilient HTTP, Server-Sent Events, and WebSocket client for JavaScript/TypeScript (`npm install rust-fetch`) and Rust (`rust-fetch` crate). Core request policy (URL resolution, validation, retries with jittered backoff, phase timeouts/deadlines, rate/concurrency limits, circuit breaking, SSRF checks, typed errors, interceptors) is compiled from Rust to WebAssembly so behaviour matches across browsers, Web Workers, Cloudflare Workers (`workerd`), Deno, Bun, and Node.js 20+. The package has zero runtime dependencies, no install scripts, and `sideEffects: ["./node.js", "./rust_fetch.js", "./snippets/*"]`.
 
-Documentation: https://asemqaffaf.github.io/rust-fetch/ (guide, security, performance, transport conformance).
+Documentation: https://asemqaffaf.github.io/rust-fetch/ (guide, security, threat model, performance, transport conformance, API reference).
 
-Use rust-fetch when you want `fetch()` plus production policy (timeouts, retries, error handling) in one client, the same in the browser and in Node.js. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (rust-fetch adds about 171 KB brotli to a browser bundle).
+Use `rust-fetch` when you want `fetch()` plus consistent production policy (phase timeouts, logical deadlines, jittered retries, interceptors, streaming, typed errors, SSRF protection) in one client. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (`rust_fetch_bg.wasm` is ~148 KB brotli; the unminified browser entry `.wasm` + JS glue is ~171 KB brotli).
 
-## Install and set up
+## Install and setup
 
 ```js
 // npm install rust-fetch
-import { WasmClient } from 'rust-fetch';          // Node.js: ready on import
-// Browsers and bundlers: import init, { WasmClient } from 'rust-fetch'; await init();
+// Node.js 20+: Wasm loads automatically on import (safe `await init()` no-op also works)
+import { WasmClient } from 'rust-fetch';
+// Unit testing mock transport (not in production bundles):
+// import { createMockTransport } from 'rust-fetch/testing';
+
+// Browsers, workers, and bundlers: call init() (or initSync()) once before creating a client
+import init, { initSync, WasmClient as BrowserClient } from 'rust-fetch';
+await init();                                    // fetches/compiles the .wasm (or await init({ module_or_path }))
+// initSync({ module: compiledModuleOrBytes });  // sync form when WebAssembly.Module/bytes are already available
+// Direct positional `init(input)` / `initSync(bytes)` forms are deprecated; prefer object arguments.
 
 const client = new WasmClient({
-  baseUrl: 'https://api.example.com/v1', // relative URLs are appended to it
-  headers: { authorization: 'Bearer …' }, // sent with every request
-  timeoutMs: 10_000,                      // per attempt, including the body; default 30000; 0 disables
-  retries: 3,                             // or { maxRetries, initialDelayMs, maxDelayMs, multiplier, retryOn, retryOnNetworkError, retryOnTimeout, retryNonIdempotent }
-  // retryBudget: true,                   // client-wide retry limit: { ratio: 0.2, minPerSecond: 10, windowMs: 10000 }; refusals reject with the attempt's error plus retryBudgetExhausted: true
+  baseUrl: 'https://api.example.com/v1', // relative URLs resolve under it; baseUrl query/fragment is rejected
+  headers: { authorization: 'Bearer …' }, // plain object, Headers, Map, or [name, value][]
+  timeoutMs: 10_000,                      // per attempt (including body); default 30000; 0 disables
+  deadlineMs: 30_000,                     // total logical call deadline (queues, retries, backoff, body)
+  retries: 3,                             // or RetryOptions object; off by default
+  // retryBudget: true,                   // client-wide retry budget { ratio: 0.2, minPerSecond: 10, windowMs: 10000 }
 });
 ```
 
-## Requests
+- Subpath exports: `"."` (`node` → `./node.js`, `default` → `./rust_fetch.js`, types `./rust_fetch.d.ts`), `./rust_fetch.js`, `./testing` (`./testing.js`, `./testing.d.ts`), `./rust_fetch_bg.wasm`, `./package.json`.
+- Resource cleanup: `WasmClient`, `EventStream`, and `WebSocketConnection` implement `.free()` and `[Symbol.dispose]()` (`using client = new WasmClient()`).
+- Standalone helpers (without `WasmClient`): `fetch_json(url)`, `fetch_text(url)`, `fetch_with_options(url, method, headers, body?)`, `create_client()` (deprecated aliases: `fetch_json_promise`, `fetch_wasm_api`, `fetch_wasm_html`, `fetch_wasm_json`, `fetch_wasm_map`).
 
-- `client.get(url, options?)`, `head`, `delete`: no body
-- `client.post(url, { body, ...options })`, `put`, `patch`; `client.fetch(url, { method, body, ...options })`
-- `client.post_json(url, body, options?)`, `put_json`, `patch_json`: always JSON
-- TypeScript: `client.get<User>('/users/42')` resolves to `HttpResponse<User>` (the type isn't validated at runtime)
-- Bodies: string, `Uint8Array`/`ArrayBuffer`/`DataView`, `Blob`/`File`, `FormData` (multipart), `URLSearchParams`, or any value sent as JSON
-- Options: `schema`, `dedupe`, `resume`, `headers`, `params` (query string), `timeoutMs`, `responseType` (`'auto' | 'json' | 'text' | 'binary' | 'stream' | 'ndjson'`), `signal` (AbortSignal), `onDownloadProgress({ loaded, total })`, `onUploadProgress({ loaded, total })`, `redirect`, `maxRedirects`
-- WebSockets through a proxy (Node.js): `client.websocket(url, { dispatcher: new ProxyAgent(proxyUrl) })` with `ProxyAgent` from the `undici` package
-- Security: credentials are dropped on cross-origin redirects; CR/LF in headers rejected; only http(s); set `allowAbsoluteUrls: false` with a `baseUrl` so user-supplied paths can't redirect requests (and the client's `Authorization`) to another host
-- `maxResponseBytes` (client or per request; `null` per request for none): limit on the decompressed body, checked against Content-Length, counted while reading and while decompressing (decompression bombs never expand); rejects with a `NetworkError` carrying `maxResponseBytes`
-- `maxPendingRequests` (client option, every transport): refuse a request at once while the client has this many started and not settled, in flight or waiting (retries included; streams until their headers); rejects with a `NetworkError` carrying `maxPendingRequests`, nothing sent
-- `maxLineBytes` (client, per `ndjson` request or `events()` stream; `null` for none): longest line in UTF-8 bytes without its line break, checked before buffering; earlier lines are delivered, then the stream errors with a `NetworkError` carrying `maxLineBytes` and closes (events aren't reconnected); SSE `data:` lines are checked one at a time, not an event's total
-- `maxEventBytes` (client, or per `events()` stream; `null` for none): most bytes of data one SSE event can hold (its `data:` lines joined); checked before buffering; earlier events delivered, then a `NetworkError` carrying `maxEventBytes`, no reconnect
-- `websocket()` `maxQueuedMessages` / `maxQueuedBytes`: limit what `send()` queues before the connection opens or while reconnecting; past either, `send()` throws a `NetworkError` carrying the limit and doesn't queue
-- Hardened configurations ([Security](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations)): a fixed API with credentials (`allowAbsoluteUrls: false`, `redirect: 'error'`, `retryBudget`, `maxPendingRequests`, `maxResponseBytes`), fetching user URLs (`allowPrivateNetwork: false`, `maxRedirects`, limits, no credentials), streaming APIs (`maxLineBytes`, an `AbortSignal` for the whole stream)
-- Redirect credentials: `Authorization`, `Cookie`, `Proxy-Authorization` are always dropped cross-origin (Node.js); `sensitiveHeaders: ['x-api-key']` drops your own too; `allowInsecureRedirects: false` rejects https:→http: redirects (NetworkError); client or per request; not applied in browsers
-- `allowPrivateNetwork: false` (Node.js, client or per request, and per `websocket()`): SSRF protection; blocks loopback/private/link-local/metadata/reserved addresses, checked on resolved addresses at connect time, on every redirect, and on every WebSocket (re)connection; can't be combined with a WebSocket `dispatcher`
-- Node.js proxies (client option): `proxy: 'env'` (`HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`; also on with `NODE_USE_ENV_PROXY=1`) or `proxy: 'http://user:pass@host:3128'`; HTTPS via CONNECT tunnels
-- Browser `fetch()` options (client or per request; ignored in Node.js): `credentials`, `mode` (`'no-cors'` resolves with an opaque `status: 0` response), `cache`, `keepalive`, `priority`, `referrer`, `referrerPolicy`, `integrity`
-- Redirects (client or per request): `redirect: 'follow'` (default, up to `maxRedirects`, default 20), `'manual'` (resolves with the 3xx and its `location` header, `ok: false`; in browsers an opaque response with `status: 0`), `'error'` (rejects with a `NetworkError`)
+## Requests, bodies, responses, and redirects
 
-Resolves (2xx only) to `{ status, statusText, ok, url, headers, body }`. With `responseType: 'auto'`, `body` is parsed JSON for `application/json` and `*+json`, a string for text types, a `Uint8Array` otherwise, `null` when empty.
+- Methods: `client.get(url, options?)`, `head(url, options?)`, `delete(url, options?)`, `post(url, init?)`, `put(url, init?)`, `patch(url, init?)`, `fetch(url, init?)`, `post_json(url, body, options?)`, `put_json(url, body, options?)`, `patch_json(url, body, options?)`, `request(method, url, headers?, body?, options?)`. `TRACE` and `CONNECT` are rejected.
+- `params`: plain object (`arrays` repeat keys, `null`/`undefined` skipped) or `URLSearchParams`.
+- TypeScript: `client.get<User>('/users/42')` returns `Promise<HttpResponse<User>>`; passing `schema` infers `InferSchemaOutput<S>` automatically.
+- Request bodies: `string` (`text/plain`), `Uint8Array`/`ArrayBuffer`/`ArrayBufferView` (`application/octet-stream`), `Blob`/`File` (blob's `type`), `FormData` (`multipart/form-data` with boundary), `URLSearchParams` (`application/x-www-form-urlencoded`), `ReadableStream`/`AsyncIterable`/Node `Readable` (one-shot streamed upload with backpressure; automatic retries disabled), `() => UploadBody | Promise<UploadBody>` factory (replayed on retries, body-preserving redirects in Node, and SSE reconnects; opened on admission), or any JSON-serializable value (`application/json`). Explicit `Content-Type` headers are preserved except for `FormData`.
+- `responseType`: `'auto'` (default: JSON for `application/json` & `*+json`, string for `text/*`/XML/JS/form, `Uint8Array` otherwise, `null` when empty), `'json'` (strict `JSON.parse`), `'text'`, `'binary'` (`Uint8Array`), `'blob'` (`Blob` with `Content-Type`), `'stream'` (`ReadableStream<Uint8Array>`), `'ndjson'` (`ReadableStream` of parsed JSON lines).
+- `HttpResponse<T>`: `{ status, statusText, ok, url, headers, body, cached?, revalidated?, resumes?, timings? }`. `headers` keys are lower-cased with repeated values joined by `, `. `ok` is `true` for 2xx and `false` for redirects returned under `redirect: 'manual'`.
+- `redirect`: `'follow'` (default, up to `maxRedirects`, default `20`), `'manual'` (resolves with redirect response + `location` header; browsers return opaque `status: 0` with no headers/body and apply their own redirect limit), `'error'` (rejects with `NetworkError`).
+- Browser `fetch()` options (`BrowserRequestOptions`, settable on client or per request; validated in Node and ignored): `credentials` (`'same-origin' | 'include' | 'omit'`), `mode` (`'cors' | 'same-origin' | 'no-cors'`), `cache` (`'default' | 'no-store' | 'reload' | 'no-cache' | 'force-cache' | 'only-if-cached'`), `keepalive`, `priority` (`'high' | 'low' | 'auto'`), `referrer`, `referrerPolicy`, `integrity`.
 
-Client load limits: `maxConcurrent` bounds attempts in flight (streams/SSE hold slots until EOF/cancel); `rateLimit: { requests, perMs }` is a token bucket including retries. Both off by default; FIFO admission in Rust; queued signals cancel without spending tokens, timeout starts on admission. `429 Retry-After` pauses the bucket. `limitsPerOrigin: true` isolates origins; use `maxPendingRequests` to bound the queue.
+## Timeouts, retries, idempotency, and cancellation
 
-Circuit breaker (client, opt-in): `circuitBreaker: { failureThreshold: 5, resetAfterMs: 30000 }`; per origin, shared by Rust clones; network/timeout/5xx failed attempts (including retries) open it; one half-open probe after reset. Open calls fail with `CircuitOpenError`, `origin`, `retryAfterMs`; they are not retried. `onCircuitChange({origin,from,to})` observes transitions outside the lock. Streams/SSE count success at headers; WebSockets use their own reconnection policy.
+- **Timeouts** (client, request, and `events()`; omitted/`null`/`undefined` inherit client setting, `0` disables that timer independently):
+  - `timeoutMs` (default `30000` ms): per attempt, including response body; for `responseType: 'stream'`, `'ndjson'`, `events()`, and `websocket()` covers wait until headers/open.
+  - `connectTimeoutMs`: connection + DNS/TLS establishment on Node/native; browsers ignore unobservable connect timing.
+  - `responseTimeoutMs`: admitted attempt until final response headers arrive (including redirects).
+  - `idleTimeoutMs`: max wait between incoming response/SSE chunks (buffered, streamed, `'ndjson'`, `events()`), or max silence after open/between messages on `websocket()` (no heartbeats sent; inherits client `idleTimeoutMs`).
+  - `deadlineMs`: total logical deadline across request interceptors, body prep, queue wait, all attempts/backoff/SSE reconnects, and the full response body; closes even an unread stream at the deadline. Expiring raises `TimeoutError` with `phase` (`'connect' | 'response' | 'idle' | 'total'`; `timeoutMs` and `deadlineMs` use `'total'`).
+- **Retries** (`retries`: count or `RetryOptions`, off by default; per-request object replaces client policy cleanly, using standard defaults for omitted fields; `0` disables):
+  - Defaults: `maxRetries: 3`, `initialDelayMs: 100`, `maxDelayMs: 10_000`, `multiplier: 2`, `retryOn: [408, 429, 500, 502, 503, 504]`, `retryOnNetworkError: true`, `retryOnTimeout: true`, `retryNonIdempotent: false`.
+  - Backoff grows as `initialDelayMs * multiplier^(attempt - 1)`, capped at `maxDelayMs`, with each delay randomized to **50–100% jitter**; `Retry-After` (seconds) is honoured up to `maxDelayMs`. POST/PATCH are not retried unless `retryNonIdempotent: true` or an `idempotencyKey` is active. `InvalidInputError`, `ParseError`, `ValidationError`, `CircuitOpenError`, and unlisted statuses are never retried.
+  - `retryBudget: true | { ratio: 0.2, minPerSecond: 10, windowMs: 10_000 }`: client-wide sliding budget for retries; exhausted budget rejects immediately with the last attempt's error + `retryBudgetExhausted: true` and increments `client.retriesRefused`.
+- **Idempotency keys** (client, request, `events()`): `idempotencyKey: true` (UUID per logical call via `crypto.randomUUID()`, reused across retries/SSE reconnects), explicit ASCII string, or `false` to opt out; `idempotencyHeader` defaults to `'Idempotency-Key'`. Requires server-side deduplication; allows POST/PATCH retries under the active retry policy without bypassing budgets or limits.
+- **Cancellation** (`signal: AbortSignal`): cancels queued waits, active attempts, pending retry delays, unread/active streams, `events()`, and `websocket()`. Rejects with `CancelledError` carrying `error.reason` and `error.cause` (e.g. `DOMException` `TimeoutError` from `AbortSignal.timeout()`).
 
-## Errors
+## Limits, circuit breakers, caching, auth, schema, pagination, and derived clients
 
-Every failure rejects with an `Error` whose `kind` (and `name`) is one of:
-- `HttpError`: non-2xx; has `status`, `statusText`, `body` (response text)
-- `TimeoutError`: an attempt exceeded `timeoutMs`; has `timeoutMs`
-- `CircuitOpenError`: opt-in circuit breaker is open; has `origin`, `retryAfterMs`
-- `NetworkError`: DNS, connection, TLS, CORS, truncated body, or a WebSocket failure
-- `CancelledError`: the `signal` aborted
-- `InvalidInputError`: bad URL, header, option or body, before sending; has `parameter`
-- `ParseError`: `responseType: 'json'` and the body isn't JSON
-- `ValidationError`: only with the `schema` option; the body did not match the schema; has `issues`, `status`; never retried
-- `JsInteropError`: unexpected JS/Wasm conversion failure
+- Load limits: `maxConcurrent` (streams/SSE hold slots until EOF/cancel), `rateLimit: { requests, perMs }` (token bucket refilled continuously, FIFO admission in Rust, paused on `429 Retry-After`; queue waits cancel without spending tokens), `limitsPerOrigin: true` (isolates limits per origin; default `false`), `maxPendingRequests` (sheds excess started/unfinished requests immediately across all transports with `NetworkError.maxPendingRequests`).
+- Circuit breaker (client, opt-in): `circuitBreaker: { failureThreshold: 5, resetAfterMs: 30_000 }`, `onCircuitChange({ origin, from, to })`. Per origin (`'closed' | 'open' | 'half-open'`); failed network/timeout/5xx attempts open it; one probe runs after `resetAfterMs`. Open calls fail fast with `CircuitOpenError` (`origin`, `retryAfterMs`, not retried).
+- `schema`: any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType; zero dependencies). Invalid response bodies reject with `ValidationError` (`issues`, `status`, never retried). Not supported with `responseType: 'stream'` or `'ndjson'`.
+- `auth` (client option): `{ bearer: token | (() => token | undefined | Promise<token | undefined>), refresh?: () => void | Promise<void>, origins?: string[] }` or `{ basic: { username, password } }`. Sent only to `baseUrl` origin and `auth.origins` (one is required); explicit per-request `Authorization` wins. With `refresh`, concurrent `401` responses trigger one single-flight refresh and replay buffered requests once (streamed bodies are not replayed). Applies to HTTP requests and `events()`.
+- `client.extend(overrides?)`: returns a derived client with case-insensitive merged `headers`, replaced non-header options, and cloned initial interceptors; circuit breakers, rate limits, concurrency limits, retry budgets, and metrics are isolated from the parent.
+- `client.paginate(url, { items?, next?, maxPages = 1000, crossOrigin = false, signal, ...requestOptions })`: `AsyncGenerator` yielding pages (or mapped `items`). Follows `Link` `rel="next"` by default or custom `next(response)`. Cross-origin `next` URLs throw `InvalidInputError` unless `crossOrigin: true`.
+- `dedupe: true` (client or per `get`/`head`): deduplicates identical in-flight requests (URL, headers, options) and gives each caller its own response copy; cancelling one caller leaves others running. Skips writes, streamed responses, and callbacks.
+- `httpCache: true | { maxEntries = 100, maxBytes = 50_000_000, maxEntryBytes = 1_000_000 }`: private in-memory RFC 9111 cache for `GET` (`response.cached`, `response.revalidated` on `304`, honours `no-store`/`no-cache`/`Vary`, invalidated by successful writes); pass `httpCache: false` per request to bypass.
+- `resume: true | { maxResumes = 3 }` on streamed `get`: resumes broken downloads with `Range`/`If-Range` when server sent `200`, `Accept-Ranges: bytes`, strong `ETag` or `Last-Modified`, and no `Content-Encoding` (`response.resumes` counts continuations; rejects if server changes content instead of `206`).
 
-Type guards narrow `catch (error)`: `isRustFetchError(value, kind?)`, `isHttpError`, `isTimeoutError`, `isNetworkError`, `isParseError`, `isInvalidInputError`, `isCancelledError`, `isCircuitOpenError`, `isValidationError`, `isJsInteropError` (they check the error's shape, so they work across realms and package copies). `CancelledError` carries the abort signal's `reason` (also as `cause`). `redactUrl` covers the whole `cause` chain, and URL passwords and fragments are never in `error.url`.
+## Errors and type guards
 
-Idempotency keys (client or request, including SSE): `idempotencyKey: true` generates one UUID per logical call, reused on retries/reconnections; a string supplies an explicit key; `false` opts out. `idempotencyHeader` defaults to `Idempotency-Key`. Requires server deduplication; allows POST/PATCH retries under the configured policy, without enabling retries or bypassing the budget. Explicit client strings are reused across calls; prefer `true`.
+Every failure rejects with a `RustFetchError` carrying `kind` and `name`, plus common metadata (`method`, `url`, `attempts`, `cause`, `timings`, `retryBudgetExhausted`):
+- `HttpError`: non-2xx; has `status`, `statusText`, `body` (text)
+- `TimeoutError`: has `timeoutMs`, `phase` (`'connect' | 'response' | 'idle' | 'total'`)
+- `CircuitOpenError`: has `origin`, `retryAfterMs`
+- `NetworkError`: DNS, connection, TLS, CORS, SSRF block, disallowed redirect scheme, truncated body, or limit exceeded (`maxResponseBytes`, `maxPendingRequests`, `maxLineBytes`, `maxEventBytes`, `maxQueuedMessages`, `maxQueuedBytes`)
+- `CancelledError`: aborted `signal`; has `reason` and `cause`
+- `InvalidInputError`: invalid URL, header, option, or body before sending; has `parameter`
+- `ParseError`: invalid JSON (including `ndjson`/`events()`/`websocket()` with `messageType: 'json'`) or non-`text/event-stream` SSE response
+- `ValidationError`: `schema` mismatch; has `issues`, `status`; never retried
+- `JsInteropError`: unexpected JS/Wasm boundary conversion failure
 
-Retries are off by default. Per-request `retries` (also in `events()`) replaces the client policy: `0` disables; omitted fields in an object use standard defaults; `null`/`undefined` inherit. The client's shared retry budget still applies; SSE `reconnect` is separate. When on, POST and PATCH aren't retried unless `retryNonIdempotent: true`; `Retry-After` (seconds) is honoured; only `retryOn` statuses (default 408, 429, 500, 502, 503, 504), network errors and timeouts are retried. A request that fails every attempt rejects with the last attempt's error.
+Type guards check error shape across realms/copies and narrow in TypeScript (`RustFetchErrorOf<K>`, `RustFetchHttpError`, etc.): `isRustFetchError(value, kind?)`, `isHttpError`, `isTimeoutError`, `isNetworkError`, `isParseError`, `isInvalidInputError`, `isCancelledError`, `isCircuitOpenError`, `isValidationError`, `isJsInteropError`.
 
-## Validated responses (Zod, Valibot, ArkType)
+## Observability, tracing, and metrics
 
-`schema` accepts any [Standard Schema](https://standardschema.dev) validator; rust-fetch depends on none of them. The body becomes the schema's typed output; a body that fails rejects with a `ValidationError` (`issues`, not retried, `message` only counts issues). Not with `responseType: 'stream'` or `'ndjson'`.
+- `timings: true`: attaches `timings: { queuedMs, retryDelayMs, totalMs, attempts }` to `HttpResponse` and `RustFetchError`. Each attempt includes `startMs`, `ttfbMs` (`null` when unavailable), `totalMs`, `status`, `error`, `transport`, `connectMs`, `tlsMs`, `connectionReused`.
+- `metrics: true` or `client.stats()`: returns detached `ClientStats` (`requests`, `attempts`, `retries`, `latency` with `minMs`/`maxMs`/`meanMs`/`p50Ms`/`p95Ms`/`p99Ms` over up to 1,024 samples, bounded `origins`, and shared Node `pools` (`{ queued, native, http }` or `null` in browsers)).
+- Hooks & logs: `onRequestStart(entry)`, `onRequestEnd(entry)`, `debug: true | ((entry) => void)` (`DEBUG=rust-fetch` in Node; explicit `debug: false` overrides), and synchronous `redactUrl(url)`. Diagnostic hooks/logs strip query strings, fragments, and URL credentials (`error.url` masks passwords as `***` and drops fragments across the `cause` chain), and redact `Authorization`, `Cookie`, `Proxy-Authorization`, `Set-Cookie`, and `sensitiveHeaders` to `[REDACTED]`.
+- W3C Trace Context: disabled by default; requires `propagateTrace: true`, exact origin allowlist `traceOrigins`, and synchronous `traceContext: () => ({ traceparent, tracestate? })`. Stripped on cross-origin Node redirects; browser tracing refuses redirects.
 
-```ts
-import { z } from 'zod';
-const User = z.object({ id: z.number(), name: z.string() });
-const { body } = await client.get('/users/42', { schema: User }); // body: { id: number; name: string }
-```
+## Security defaults and Node.js transports
 
-Guide: https://asemqaffaf.github.io/rust-fetch/guide/validation
+- **Header/URL/SSRF safety:** Rejects CR/LF header injection; rejects non-`http(s)` redirects; drops `Authorization`, `Cookie`, `Proxy-Authorization`, and `sensitiveHeaders` on cross-origin Node redirects; `allowInsecureRedirects: false` blocks `https:` → `http:` redirects (Node); `allowAbsoluteUrls: false` enforces `baseUrl` isolation; `allowPrivateNetwork: false` (Node, per client/request/`websocket()`) blocks loopback, private, link-local, metadata (`169.254.169.254`), CGNAT, and reserved IPv6 ranges at DNS resolve time and across redirects/reconnects. `maxResponseBytes`, `maxLineBytes`, and `maxEventBytes` reject oversized bodies/lines/events before expanding (`null` per request/stream disables client limit). JS wrappers guard against `Object.prototype` pollution.
+- **Node.js transports & TLS:** Uses `node:http`/`node:https` with a 256-socket-per-origin LIFO keep-alive pool (5 s idle timeout, 1,024-slot in-flight queue), or optional `rust-fetch-native` addon when built (`npm run build:native`; disabled by `RUST_FETCH_NATIVE=0`, custom global agents, `NODE_USE_ENV_PROXY`, or per-request `onUploadProgress`, download progress, streaming responses, `events()`, `proxy`, `allowPrivateNetwork: false`). Both require SubjectAltName (no CN fallback) and OpenSSL `@SECLEVEL=2`; respects `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED=0` (with Node warning), and `proxy: 'env' | url` (`NODE_USE_ENV_PROXY=1`). On Node 20–23, import applies V8 `--no-turbo-inline-js-wasm-calls` to avoid a V8 Wasm cancellation crash (or pass it explicitly at Node launch).
 
-## Auth, derived clients, pagination, caching
+## Streaming, Server-Sent Events, uploads, and WebSockets
 
-- `auth` (client option): `{ bearer: token | (() => token | Promise<token>), refresh?: async () => void, origins?: [...] }` or `{ basic: { username, password } }`. Sent only to the `baseUrl` origin and `auth.origins` (a client needs one of them), never to another origin. On `401` with `refresh`, concurrent failures trigger one refresh (single flight) and each request is replayed once; a second `401` rejects with the `HttpError`.
-- `client.extend(overrides)`: a derived client with the parent's options and interceptors; headers merge by name, other options are replaced; circuit breakers, rate limits, concurrency limits, retry budgets and metrics are not shared.
-- `client.paginate(url, { items?, next?, maxPages = 1000, crossOrigin?, signal, ...requestOptions })`: async iterator over pages (or items). Follows `Link rel="next"` by default, or the URL / `{ url?, params? }` that `next(response)` returns. A next URL on another origin throws an `InvalidInputError` unless `crossOrigin: true`.
-- `dedupe: true` (client or per `get`/`head`): identical in-flight requests share one request; each caller gets its own response copy; cancelling one caller leaves the others. Writes, streams and requests with callbacks are never shared.
-- `httpCache: true | { maxEntries, maxBytes, maxEntryBytes }` (client, opt-in): private in-memory RFC 9111 cache for `GET`; fresh responses come from memory (`response.cached`), stale ones with `ETag`/`Last-Modified` are revalidated (`response.revalidated`); `no-store`, `no-cache`, `Vary` honoured; successful writes invalidate their URL. Named `httpCache` because `cache` is the browser fetch cache mode.
-- `responseType: 'blob'`: the body as a `Blob` typed with the response's `Content-Type`.
-- `resume: true | { maxResumes = 3 }` on a streamed `get`: after a broken connection the download continues with `Range`/`If-Range` from the last byte, only for a `200` with `Accept-Ranges: bytes`, a strong `ETag` or `Last-Modified` and no `Content-Encoding`, and only if the continuation is a `206` at the right byte; `response.resumes` counts continuations.
-- `baseUrl` with a query or fragment is refused with an `InvalidInputError`.
+- **Streaming & download progress:** `responseType: 'stream'` and `'ndjson'` resolve at headers; read via `res.body.getReader()` or `for await` (cancel unused streams so sockets close promptly). `onDownloadProgress({ loaded, total })` works on buffered and `'blob'` responses too (`total` is `null` if unknown).
+- **Upload progress (`onUploadProgress({ loaded, total })`):** In browsers, buffered uploads use `XMLHttpRequest` (cross-origin preflighted; falls back to single completion callback over `fetch()` in service workers or with `responseTimeoutMs`/`idleTimeoutMs`). In Node.js, runs via `node:http` in 64 KB chunks. `total` is `0` for unknown-length streaming bodies; buffered uploads cannot combine `onUploadProgress` with `responseType: 'stream'`.
+- **Interceptors:** `addRequestInterceptor(fn)`, `addResponseInterceptor(onFulfilled?, onRejected?)`, `ejectInterceptor(id)`, `clearInterceptors()` (`auth` interceptor stays across `clearInterceptors()`).
+- **SSE (`client.events(url, options?)`):** Any method/headers/body; `{ event, data, id }`; `messageType: 'auto' | 'json'` (`end` defaults to `'[DONE]'` with `'json'`); reconnects with `Last-Event-ID` & server `retry:` (`reconnect` defaults `true` for GET, `false` otherwise); 64-event async-iterator backpressure buffer or `onEvent`; exposes `state`, `url`, `lastEventId`, `opened`, `closed`, `close()`, `next()`, `return()`, `[Symbol.asyncIterator]()`.
+- **WebSockets (`client.websocket(url, options?)`):** Works in browsers and Node.js 22+ (Node 20 with `--experimental-websocket`); `http:`/`https:` resolve to `ws:`/`wss:`; supports `idleTimeoutMs`, `protocols`, `params`, Node-only `headers` & undici `dispatcher` (e.g. `ProxyAgent`), `timeoutMs`, `reconnect` (`maxRetries`, `initialDelayMs: 1000`, `maxDelayMs: 30000`, `multiplier: 2`, jittered; reconnects on failed attempts and codes 1001, 1006, 1011–1014), `allowAbsoluteUrls`, `allowPrivateNetwork`, `maxQueuedMessages`, `maxQueuedBytes`, `signal`, `messageType: 'auto' | 'json'`, lifecycle callbacks, `send()`, `sendJson()`, `close(code?, reason?)` (`1000` or `3000-4999`, `<= 123` UTF-8 bytes), `bufferedAmount`, `protocol`, `state`, `url`, `opened`, `closed`. Chat recipes: `examples/websocket-chat/{request.mjs,channels.mjs}`.
 
-## Testing
+## Testing, runtimes, bundlers, and Rust crate
 
-```js
-import { createMockTransport } from 'rust-fetch/testing'; // separate entry, not in production bundles
-const mock = createMockTransport().on('GET', '/users/42', { status: 200, body: { id: 42 } }).onAny({ status: 503 });
-const client = new WasmClient({ baseUrl: 'https://api.test', transport: mock }); // mock.calls, mock.reset()
-```
-
-Real retries, timeouts, cancellation, error mapping and decoding still run; streamed responses, `events()` and `websocket()` are not covered. Guide: https://asemqaffaf.github.io/rust-fetch/guide/testing
-
-## Runtimes, examples and Rust
-
-- Tested: Node.js 20, 22 and 24 (also on Windows 22 and 24 in CI), Chromium, Firefox, WebKit, Bun, Deno and Cloudflare Workers (`workerd`; the `.wasm` is imported as a module and passed to `init({ module_or_path })`). A deployed Worker, Vercel Edge and other edge runtimes are not tested. Bundlers tested: Vite 8, webpack 5, esbuild (esbuild does not emit the `.wasm`; copy it next to the bundle).
-- Runnable examples (CI-tested): Node.js client, LLM streaming (SSE and NDJSON), reconnecting WebSocket with request/response and channel recipes, browser upload with progress and cancel, Cloudflare Worker. https://asemqaffaf.github.io/rust-fetch/guide/examples
-- Rust crate: `RequestBuilder::on_upload_progress(callback)` on native targets (not `wasm32`); interceptors and WebSockets are JavaScript only. https://asemqaffaf.github.io/rust-fetch/rust
-- Not a built-in: Socket.IO (use `socket.io-client`); resumable uploads (tus).
-
-## Security and releases
-
-Claims table with the test behind each, threat model, hostile-response and TLS verification matrices, fuzzing, memory-safety CI, reproducible builds, a Sigstore signature on each release tarball (`cosign verify-blob`), OpenSSF Scorecard: https://asemqaffaf.github.io/rust-fetch/security . Threat model: https://asemqaffaf.github.io/rust-fetch/threat-model . Independent review call: https://asemqaffaf.github.io/rust-fetch/security-review . The documentation avoids unsupported wording ("bank-level", "true SSRF protection"); see "Wording this project does not use" in the security guide.
-
-## Interceptors
-
-```js
-client.addRequestInterceptor((request) => { request.headers.authorization = `Bearer ${token}`; });
-client.addResponseInterceptor((response) => response, (error) => { throw error; });
-// both return an id for client.ejectInterceptor(id); client.clearInterceptors() removes all
-```
-
-## Streaming and progress
-
-```js
-const res = await client.get('/export.csv', { responseType: 'stream' }); // res.body is a ReadableStream<Uint8Array>
-await client.post('/upload', { body: formData, onUploadProgress: ({ loaded, total }) => {} });
-```
-
-Upload progress uses `XMLHttpRequest` in browsers (cross-origin requests are preflighted) and the `node:http` transport in Node.js.
-
-## Server-Sent Events and streaming JSON
-
-```js
-// SSE in browsers and Node.js, any method/headers/body; e.g. an OpenAI-compatible streaming API
-const stream = client.events('/v1/chat/completions', {
-  method: 'POST',
-  body: { model, messages, stream: true },
-  messageType: 'json',        // data parsed as JSON; stops at `data: [DONE]` (option `end`)
-  // reconnect: true          // default for GET: resends Last-Event-ID, honours `retry:`
-});
-for await (const { event, data, id } of stream) console.log(data.choices[0].delta.content);  // a slow loop pauses reading at 64 queued events (backpressure)
-// or callbacks: client.events(url, { onEvent, onError, onOpen, onReconnect, onClose }); stream.close()
-
-// Newline-delimited JSON (e.g. Ollama): one parsed value per line
-const res = await client.post('/api/generate', { body: { model, prompt }, responseType: 'ndjson' });
-for await (const chunk of res.body) console.log(chunk.response);
-```
-
-## WebSockets
-
-```js
-const socket = client.websocket('/live', {          // https base URL → wss://…/live
-  params: { room: 'blue' },
-  messageType: 'json',                              // 'auto' (default) or 'json'
-  reconnect: true,                                  // or a number, or { maxRetries, initialDelayMs, maxDelayMs, multiplier }
-  onMessage: (message) => {},
-  onError: (error) => {},                           // typed errors, as for requests
-});
-await socket.opened;                                // rejects if it never connects
-socket.sendJson({ type: 'subscribe' });             // socket.send(string | ArrayBuffer | typed array | Blob)
-socket.close();                                     // stops reconnecting
-const { code, reason, wasClean } = await socket.closed;
-```
-
-Needs a built-in `WebSocket`: browsers and Node.js 22+ (Node.js 20 with `--experimental-websocket`). Handshake `headers` work in Node.js only.
+- **Mock transport:** `import { createMockTransport } from 'rust-fetch/testing'` gives `mock.on(method, pathOrRegExpOrFn, handler)`, `.onAny(handler)`, `.calls`, `.reset()`.
+- **Verified environments:** Node.js 20/22/24 (Linux, macOS, Windows), Chromium, Firefox (no HTTP/2 duplex streaming upload support), WebKit, Bun, Deno, and Cloudflare Workers (`workerd`; import the `.wasm` as a module and pass it to `await init({ module_or_path })`), plus Vite 8, webpack 5, and esbuild (copy `.wasm` beside bundle). Vercel Edge and deployed Workers are not tested. Runnable examples: `examples/{node-client,llm-streaming,websocket-chat,browser-upload,cloudflare-worker}`.
+- **Rust crate (`rust-fetch`):** Exports `Client`, `ClientBuilder`, `RequestBuilder` (`on_upload_progress` on native targets), `StreamingResponse`, `RetryConfig`, `RetryBudget`, `RateLimit`, `CircuitBreaker`, `CircuitChange`, `CircuitOpenError`, `CircuitState`, `PhaseTimeouts`, `TimeoutDetails`, `TimeoutPhase`, `Progress`, `Multipart`, `Headers`, `Method`, `Redirect`, `Response`, `ResponseBody`, `Error`, `Result`, and `prelude`. Not included in the Rust crate: JS interceptors and WebSockets.
 
 ## Docs
 
-- [Documentation](https://asemqaffaf.github.io/rust-fetch/): full guide, security, performance results and limitations
+- [Documentation](https://asemqaffaf.github.io/rust-fetch/): full guide, security, performance results, and limitations
 - [Release notes](https://asemqaffaf.github.io/rust-fetch/changelog): every release, read from the changelog
 - [CHANGELOG](https://github.com/asemqaffaf/rust-fetch/blob/main/CHANGELOG.md): changes per version
 - [API reference](https://asemqaffaf.github.io/rust-fetch/api/): generated from the public TypeScript types
@@ -177,6 +125,6 @@ Needs a built-in `WebSocket`: browsers and Node.js 22+ (Node.js 20 with `--exper
 
 ## Optional
 
-- [Performance](https://asemqaffaf.github.io/rust-fetch/performance): Node.js benchmarks against `fetch()`, `undici.request()` and axios, including an independent benchmark
-- [Using it from Rust](https://asemqaffaf.github.io/rust-fetch/rust): the same client as a Rust crate (no interceptors, upload progress or WebSockets there)
+- [Performance](https://asemqaffaf.github.io/rust-fetch/performance): Node.js benchmarks against `fetch()`, `undici.request()`, and axios
+- [Using it from Rust](https://asemqaffaf.github.io/rust-fetch/rust): Rust crate guide and API differences
 - [npm package](https://www.npmjs.com/package/rust-fetch)

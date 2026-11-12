@@ -3,7 +3,7 @@
   const Base = WasmClient;
   class BlobClient extends Base {}
   for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
-    const index = name === 'request' ? 4 : name.endsWith('_json') ? 2 : 1;
+    const index = optionsArgIndex(name);
     BlobClient.prototype[name] = function (...args) {
       const options = args[index];
       if (options == null || options.responseType !== 'blob') return Base.prototype[name].apply(this, args);
