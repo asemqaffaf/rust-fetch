@@ -39,15 +39,22 @@ export default defineConfig({
         ],
       },
       {
-        // Not the latest version's number: the same menu is on the archived pages
-        text: 'Version',
-        items: [
-          { text: `${minorVersion} (latest)`, link: '/' },
-          { text: '2.7', link: '/v2.7/' },
-          { text: '2.6', link: '/v2.6/' },
-          { text: '2.5', link: '/v2.5/' },
-          { text: 'Release notes', link: '/changelog' },
-        ],
+        component: 'VersionMenu',
+        props: {
+          latest: minorVersion,
+          items: [
+            {
+              text: `${minorVersion} (latest)`,
+              label: `${minorVersion} (latest)`,
+              link: '/',
+              activeMatch: '^/(?!v\\d+\\.|changelog(?:$|/))',
+            },
+            { text: '2.7', label: '2.7', link: '/v2.7/', activeMatch: '^/v2\\.7/' },
+            { text: '2.6', label: '2.6', link: '/v2.6/', activeMatch: '^/v2\\.6/' },
+            { text: '2.5', label: '2.5', link: '/v2.5/', activeMatch: '^/v2\\.5/' },
+            { text: 'Release notes', link: '/changelog' },
+          ],
+        },
       },
     ],
     sidebar: {
