@@ -10,16 +10,34 @@ const slugify = (text: string) => slug(text);
 const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 const minorVersion = version.split('.').slice(0, 2).join('.');
 
+// The docs are published to GitHub Pages as a project site, so every URL
+// carries this prefix. VitePress writes sitemap entries from page paths alone,
+// so the sitemap transform below re-attaches it.
+const base = '/rust-fetch/';
+
 export default defineConfig({
   title: 'rust-fetch',
   description:
     'A resilient HTTP client for JavaScript and TypeScript: fetch() plus the timeouts, retries, typed errors and security limits production code needs, from one Rust core.',
-  base: '/rust-fetch/',
+  base,
   cleanUrls: true,
   lastUpdated: true,
   srcExclude: ['README.md'],
   markdown: { anchor: { slugify } },
   head: [['meta', { name: 'theme-color', content: '#654ff0' }]],
+  // Absolute canonical URL per page. VitePress emits none, and clean URLs mean
+  // the same page is reachable as /guide/convert and /guide/convert.html.
+  transformHead: ({ pageData }) => {
+    const path = pageData.relativePath.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '');
+    return [['link', { rel: 'canonical', href: `https://asemqaffaf.github.io${base}${path}` }]];
+  },
+  // Emit sitemap.xml so search engines and AI crawlers can enumerate every page.
+  sitemap: {
+    hostname: 'https://asemqaffaf.github.io',
+    // VitePress resolves page paths against the hostname, which would strip the
+    // base; put it back so each entry is a real URL.
+    transformItems: (items) => items.map((item) => ({ ...item, url: `${base}${item.url.replace(/^\//, '')}` })),
+  },
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started', activeMatch: '^/guide/' },

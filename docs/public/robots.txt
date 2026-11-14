@@ -1,0 +1,44 @@
+# rust-fetch — https://asemqaffaf.github.io/rust-fetch/
+
+User-agent: *
+Allow: /
+
+# AI assistants and search crawlers are explicitly welcome: being readable is
+# the point. /llms.txt describes the package for assistants in one file.
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: CCBot
+Allow: /
+
+Sitemap: https://asemqaffaf.github.io/rust-fetch/sitemap.xml
