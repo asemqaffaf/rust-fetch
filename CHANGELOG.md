@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Crawler metadata (`#330`):** publish `robots.txt`, `sitemap.xml` and `llms.txt` with the documentation site, and emit one canonical URL per page, so search engines and AI assistants can index the docs (`docs/public/`, `docs/.vitepress/config.mts`).
+
 ## [2.8.1] - 2026-11-13
 
 Patch release for 2.8.x fixing per-request WebAssembly closure heap retention under `deadlineMs` and `AbortSignal`, declaring `sideEffects` in the npm manifest, and updating backoff/API documentation. Public APIs and defaults are unchanged.
