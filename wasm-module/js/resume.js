@@ -1,17 +1,15 @@
 // The `resume` option (#51): a streamed GET that continues with a Range request when the connection breaks mid-body.
 (() => {
   const Base = WasmClient;
-  const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
-  const entries = (value) => value == null ? [] : typeof value === 'object' && typeof value[Symbol.iterator] === 'function' ? [...value] : Object.entries(value);
   class ResumingClient extends Base {
     get(url, options) {
       const resume = options?.resume;
       if (resume === undefined || resume === false) return super.get(url, options);
       const config = resume === true ? {} : resume;
-      if (config === null || typeof config !== 'object') return Promise.reject(invalid('resume', 'must be true or { maxResumes }'));
+      if (config === null || typeof config !== 'object') return Promise.reject(invalidInput('resume', 'must be true or { maxResumes }'));
       const { maxResumes = 3, ...unknown } = config;
-      if (!Number.isInteger(maxResumes) || maxResumes < 1 || Object.keys(unknown).length) return Promise.reject(invalid('resume', 'maxResumes must be a positive integer'));
-      if (options.responseType !== 'stream') return Promise.reject(invalid('resume', "needs responseType: 'stream'"));
+      if (!Number.isInteger(maxResumes) || maxResumes < 1 || Object.keys(unknown).length) return Promise.reject(invalidInput('resume', 'maxResumes must be a positive integer'));
+      if (options.responseType !== 'stream') return Promise.reject(invalidInput('resume', "needs responseType: 'stream'"));
       const { resume: _, ...rest } = options;
       return super.get(url, rest).then((response) => follow(this, url, rest, response, maxResumes));
     }
@@ -34,7 +32,7 @@
             if ((error?.kind !== 'NetworkError' && error?.kind !== 'TimeoutError') || resumes >= maxResumes) return controller.error(error);
             resumes++;
             try {
-              const asked = { ...rest, headers: { ...Object.fromEntries(entries(rest.headers).map(([name, v]) => [String(name).toLowerCase(), v])), range: `bytes=${received}-`, 'if-range': validator } };
+              const asked = { ...rest, headers: { ...Object.fromEntries(headerEntries(rest.headers).map(([name, v]) => [String(name).toLowerCase(), v])), range: `bytes=${received}-`, 'if-range': validator } };
               const next = await client.get(url, asked);
               // 200 means the file changed (If-Range failed); anything but the bytes from `received` on is no continuation
               if (next.status !== 206 || !new RegExp(`^bytes ${received}-`).test(next.headers['content-range'] ?? '')) {

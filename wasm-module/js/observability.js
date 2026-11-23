@@ -3,11 +3,11 @@ let nodeDiagnostics;
 export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
 (() => {
   const Original = WasmClient, states = new WeakMap(), now = () => performance.now();
-  const own = (o, k) => o != null && Object.hasOwn(Object(o), k) ? o[k] : undefined;
+  const own = ownProp;
   const prop = (o, k) => { try { return o?.[k]; } catch {} };
   const option = (o, k) => o != null && Object.getPrototypeOf(o) !== Object.prototype ? prop(o, k) : own(o, k);
   const copy = (o) => ({ __proto__: Object.getPrototypeOf(o ?? {}), ...o });
-  const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
+  const invalid = invalidInput;
   const call = (fn, value) => { try { fn?.(value)?.catch?.(() => {}); } catch {} };
   const origin = (value) => { try { return new URL(value).origin; } catch { return ''; } };
   const safeUrl = (value, redact) => {
@@ -234,7 +234,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
     }
   }
   Object.defineProperty(ObservableClient, 'name', { value: 'WasmClient' });
-  for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
+  for (const name of REQUEST_METHODS) {
     const raw = Original.prototype[name];
     const index = optionsArgIndex(name);
     ObservableClient.prototype[name] = function (...args) {

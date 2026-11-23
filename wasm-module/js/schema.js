@@ -1,12 +1,11 @@
 // The `schema` request option (#43): validate the response body with any Standard Schema (Zod, Valibot, ArkType…).
 (() => {
   const Base = WasmClient;
-  const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
   const check = (options) => {
     const schema = options == null ? undefined : options.schema;
     if (schema === undefined) return undefined;
-    if (schema === null || (typeof schema !== 'object' && typeof schema !== 'function') || typeof schema['~standard']?.validate !== 'function') throw invalid('schema', 'must be a Standard Schema (a validator with ~standard.validate)');
-    if (options.responseType === 'stream' || options.responseType === 'ndjson') throw invalid('schema', 'cannot validate a streamed responseType');
+    if (schema === null || (typeof schema !== 'object' && typeof schema !== 'function') || typeof schema['~standard']?.validate !== 'function') throw invalidInput('schema', 'must be a Standard Schema (a validator with ~standard.validate)');
+    if (options.responseType === 'stream' || options.responseType === 'ndjson') throw invalidInput('schema', 'cannot validate a streamed responseType');
     return schema['~standard'];
   };
   const validated = async (method, response, standard) => {
@@ -19,7 +18,7 @@
     });
   };
   class SchemaClient extends Base {}
-  for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
+  for (const name of REQUEST_METHODS) {
     const index = optionsArgIndex(name);
     const raw = Base.prototype[name];
     const method = name === 'request' || name === 'fetch' ? undefined : name.replace('_json', '').toUpperCase();

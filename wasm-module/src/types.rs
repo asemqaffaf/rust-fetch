@@ -24,7 +24,7 @@ pub enum Method {
 impl Method {
     /// Convert from string representation
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
+        match s.to_ascii_uppercase().as_str() {
             "GET" => Some(Method::Get),
             "POST" => Some(Method::Post),
             "PUT" => Some(Method::Put),
@@ -35,6 +35,21 @@ impl Method {
             "CONNECT" => Some(Method::Connect),
             "TRACE" => Some(Method::Trace),
             _ => None,
+        }
+    }
+
+    /// Canonical uppercase HTTP method name
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Patch => "PATCH",
+            Method::Head => "HEAD",
+            Method::Options => "OPTIONS",
+            Method::Connect => "CONNECT",
+            Method::Trace => "TRACE",
         }
     }
 
@@ -93,21 +108,21 @@ impl Headers {
 
     /// Add a header value
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        let name = name.into().to_lowercase();
+        let name = name.into().to_ascii_lowercase();
         let value = value.into();
         self.inner.entry(name).or_insert_with(Vec::new).push(value);
     }
 
     /// Set a header value (replaces existing)
     pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        let name = name.into().to_lowercase();
+        let name = name.into().to_ascii_lowercase();
         let value = value.into();
         self.inner.insert(name, vec![value]);
     }
 
     /// Get header values
     pub fn get(&self, name: &str) -> Option<&Vec<String>> {
-        self.inner.get(&name.to_lowercase())
+        self.inner.get(&name.to_ascii_lowercase())
     }
 
     /// Get the first header value
@@ -117,17 +132,135 @@ impl Headers {
 
     /// Remove a header
     pub fn remove(&mut self, name: &str) -> Option<Vec<String>> {
-        self.inner.remove(&name.to_lowercase())
+        self.inner.remove(&name.to_ascii_lowercase())
     }
 
     /// Check if header exists
     pub fn contains(&self, name: &str) -> bool {
-        self.inner.contains_key(&name.to_lowercase())
+        self.inner.contains_key(&name.to_ascii_lowercase())
     }
 
     /// Iterate over all headers
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
         self.inner.iter()
+    }
+}
+
+/// Validate an HTTP header name with the same RFC 9110 `tchar` and length
+/// rules as `http::HeaderName`, without pulling the standard-header table into Wasm.
+pub(crate) fn validate_header_name(name: &str) -> std::result::Result<(), &'static str> {
+    const MAX_HEADER_NAME_LEN: usize = (1 << 16) - 1;
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.len() > MAX_HEADER_NAME_LEN {
+        return Err("invalid HTTP header name");
+    }
+    let valid = bytes.iter().all(|&b| {
+        matches!(
+            b,
+            b'0'..=b'9'
+                | b'a'..=b'z'
+                | b'A'..=b'Z'
+                | b'!'
+                | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err("invalid HTTP header name")
+    }
+}
+
+/// Validate an HTTP header value with the same byte rules as `http::HeaderValue`.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn validate_header_value(value: &str) -> std::result::Result<(), &'static str> {
+    if value.bytes().all(|b| (b >= 32 && b != 127) || b == b'\t') {
+        Ok(())
+    } else {
+        Err("failed to parse header value")
+    }
+}
+
+/// Canonical HTTP status reason phrase matching `http::StatusCode::canonical_reason`.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn status_text(status: u16) -> &'static str {
+    match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        102 => "Processing",
+        103 => "Early Hints",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        203 => "Non Authoritative Information",
+        204 => "No Content",
+        205 => "Reset Content",
+        206 => "Partial Content",
+        207 => "Multi-Status",
+        208 => "Already Reported",
+        226 => "IM Used",
+        300 => "Multiple Choices",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        305 => "Use Proxy",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        402 => "Payment Required",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        407 => "Proxy Authentication Required",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        411 => "Length Required",
+        412 => "Precondition Failed",
+        413 => "Payload Too Large",
+        414 => "URI Too Long",
+        415 => "Unsupported Media Type",
+        416 => "Range Not Satisfiable",
+        417 => "Expectation Failed",
+        418 => "I'm a teapot",
+        421 => "Misdirected Request",
+        422 => "Unprocessable Entity",
+        423 => "Locked",
+        424 => "Failed Dependency",
+        425 => "Too Early",
+        426 => "Upgrade Required",
+        428 => "Precondition Required",
+        429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        451 => "Unavailable For Legal Reasons",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        505 => "HTTP Version Not Supported",
+        506 => "Variant Also Negotiates",
+        507 => "Insufficient Storage",
+        508 => "Loop Detected",
+        510 => "Not Extended",
+        511 => "Network Authentication Required",
+        _ => "",
     }
 }
 
@@ -556,6 +689,7 @@ mod tests {
         for (name, method) in ALL_METHODS {
             assert_eq!(Method::from_str(name), Some(method));
             assert_eq!(Method::from_str(&name.to_lowercase()), Some(method));
+            assert_eq!(method.as_str(), name);
             assert_eq!(method.to_reqwest().as_str(), name);
             assert_eq!(
                 serde_json::to_string(&method).unwrap(),
@@ -564,6 +698,67 @@ mod tests {
         }
         assert_eq!(Method::default(), Method::Get);
         assert_eq!(Method::from_str(""), None);
+    }
+
+    #[test]
+    fn test_header_and_status_parity_with_http_crate() {
+        assert_eq!(
+            validate_header_name(""),
+            Err(reqwest::header::HeaderName::from_bytes(b"")
+                .unwrap_err()
+                .to_string()
+                .as_str())
+        );
+        for byte in 0u8..=255u8 {
+            let bytes = [byte];
+            let s = String::from_utf8_lossy(&bytes);
+            let expected = reqwest::header::HeaderName::from_bytes(&bytes);
+            let actual = validate_header_name(&s);
+            assert_eq!(actual.is_ok(), expected.is_ok(), "header name byte {byte}");
+            if let Err(err) = expected {
+                assert_eq!(actual.unwrap_err(), err.to_string());
+            }
+        }
+        for len in [65_535usize, 65_536] {
+            let long = "a".repeat(len);
+            assert_eq!(
+                validate_header_name(&long).is_ok(),
+                reqwest::header::HeaderName::from_bytes(long.as_bytes()).is_ok(),
+                "len {len}"
+            );
+        }
+        for invalid_name in ["x:y", "x y", "x\r\ny", "x\0y", "é"] {
+            assert_eq!(
+                validate_header_name(invalid_name).is_ok(),
+                reqwest::header::HeaderName::from_bytes(invalid_name.as_bytes()).is_ok()
+            );
+        }
+
+        for byte in 0u8..=127u8 {
+            let bytes = [byte];
+            let s = std::str::from_utf8(&bytes).unwrap();
+            let expected = reqwest::header::HeaderValue::from_str(s);
+            let actual = validate_header_value(s);
+            assert_eq!(actual.is_ok(), expected.is_ok(), "header value byte {byte}");
+            if let Err(err) = expected {
+                assert_eq!(actual.unwrap_err(), err.to_string());
+            }
+        }
+        for sample in ["ok", "a\tb", "héllo", "a\r\nb", "a\0b", "a\x7fb"] {
+            assert_eq!(
+                validate_header_value(sample).is_ok(),
+                reqwest::header::HeaderValue::from_str(sample).is_ok(),
+                "sample {sample:?}"
+            );
+        }
+
+        for code in 0u16..=600 {
+            let expected = reqwest::StatusCode::from_u16(code)
+                .ok()
+                .and_then(|s| s.canonical_reason())
+                .unwrap_or("");
+            assert_eq!(status_text(code), expected, "status {code}");
+        }
     }
 
     #[test]

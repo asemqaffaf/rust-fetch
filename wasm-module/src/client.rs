@@ -1926,11 +1926,7 @@ impl RequestBuilder {
         let length = response.body.content_length();
         Ok(StreamingResponse {
             status: response.status,
-            status_text: reqwest::StatusCode::from_u16(response.status)
-                .ok()
-                .and_then(|s| s.canonical_reason())
-                .unwrap_or("")
-                .to_string(),
+            status_text: crate::types::status_text(response.status).to_string(),
             headers: response.headers,
             url: response.url,
             inner: Some(response.body),

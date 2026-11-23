@@ -76,12 +76,22 @@ impl<T: Fn(CircuitChange)> CircuitCallback for T {}
 
 /// Details available through `Error::circuit_open()` without adding a variant
 /// to the existing exhaustive Rust error enum.
-#[derive(Debug)]
 pub struct CircuitOpenError {
     /// The origin whose circuit is open.
     pub origin: String,
     /// Remaining recovery delay (or probe interval while a probe is active).
     pub retry_after: Duration,
+}
+
+impl fmt::Debug for CircuitOpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CircuitOpenError {{ origin: {}, retry_after_ms: {} }}",
+            self.origin,
+            self.retry_after.as_millis()
+        )
+    }
 }
 
 impl fmt::Display for CircuitOpenError {
@@ -328,6 +338,7 @@ mod tests {
         assert!(!error.is_retryable());
         assert_eq!(error.circuit_open().unwrap().origin, "http://a");
         assert!(error.circuit_open().unwrap().retry_after > Duration::ZERO);
+        assert!(format!("{:?}", error.circuit_open().unwrap()).contains("http://a"));
         assert!(format!("{error}").contains("http://a"));
         assert!(std::error::Error::source(&error).is_some());
         assert!(breaker.enter("http://a/4").is_err());

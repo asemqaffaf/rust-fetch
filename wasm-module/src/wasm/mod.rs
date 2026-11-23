@@ -769,6 +769,60 @@ impl WasmClient {
         interceptors.response.clear();
     }
 
+    /// Single request dispatch entry exported to JS; verb shortcuts live on
+    /// `WasmClient.prototype` in `js/methods.js` to avoid 10 duplicate FFI wrappers.
+    #[wasm_bindgen(js_name = __dispatch, skip_typescript)]
+    pub fn dispatch(
+        &self,
+        mode: u8,
+        method: String,
+        url: String,
+        headers: JsValue,
+        body: JsValue,
+        options: JsValue,
+    ) -> ResponsePromise {
+        match mode {
+            0 => self.request(
+                method,
+                url,
+                (!headers.is_undefined() && !headers.is_null()).then_some(headers.into()),
+                (!body.is_undefined() && !body.is_null()).then_some(body.into()),
+                (!options.is_undefined() && !options.is_null()).then_some(options.into()),
+            ),
+            1 => match parse_method(&method) {
+                Ok(method) => self.perform(
+                    method,
+                    url,
+                    JsValue::UNDEFINED,
+                    BodyMode::Auto(JsValue::UNDEFINED),
+                    options,
+                ),
+                Err(error) => reject_request(error, &method, &url),
+            },
+            2 => match parse_method(&method) {
+                Ok(method) => self.perform_init(method, url, options),
+                Err(error) => reject_request(error, &method, &url),
+            },
+            3 => match parse_method(&method) {
+                Ok(method) => self.perform(
+                    method,
+                    url,
+                    JsValue::UNDEFINED,
+                    BodyMode::Json(body),
+                    options,
+                ),
+                Err(error) => reject_request(error, &method, &url),
+            },
+            4 => self.fetch(
+                url,
+                (!options.is_undefined() && !options.is_null()).then_some(options.into()),
+            ),
+            _ => reject_request(invalid("mode", "unknown dispatch mode"), &method, &url),
+        }
+    }
+}
+
+impl WasmClient {
     /// Make a GET request
     pub fn get(&self, url: String, options: Option<RequestOptions>) -> ResponsePromise {
         self.perform_empty(Method::Get, url, options)
@@ -871,9 +925,7 @@ impl WasmClient {
             ),
         }
     }
-}
 
-impl WasmClient {
     fn perform_empty(
         &self,
         method: Method,
@@ -920,10 +972,10 @@ impl WasmClient {
     ) -> ResponsePromise {
         let client = self.inner.clone();
         let context_url = url.clone();
-        let context_method = method.to_reqwest();
+        let context_method = method.as_str();
         let deadline = match request_deadline(&options, client.config.phases.deadline) {
             Ok(deadline) => deadline.map(Box::new),
-            Err(error) => return reject_request(error, context_method.as_str(), &context_url),
+            Err(error) => return reject_request(error, context_method, &context_url),
         };
         // Snapshot, so interceptors added while a request is in flight don't affect it
         let (request_interceptors, response_interceptors) = {
@@ -968,7 +1020,7 @@ impl WasmClient {
                     (unhandled, _, _) => unhandled,
                 };
             }
-            result.map_err(|error| error_context(error, context_method.as_str(), &context_url, 0))
+            result.map_err(|error| error_context(error, context_method, &context_url, 0))
         })
         .unchecked_into()
     }
@@ -1023,7 +1075,7 @@ impl JsRequest {
     async fn intercept(self, interceptor: &js_sys::Function) -> std::result::Result<Self, JsValue> {
         let info = js_sys::Object::new();
         let headers = headers_to_js(&self.headers)?;
-        set(&info, "method", &self.method.to_reqwest().as_str().into())?;
+        set(&info, "method", &self.method.as_str().into())?;
         set(&info, "url", &self.url.as_str().into())?;
         set(&info, "headers", &headers)?;
         let (body, force_json) = match self.body {
@@ -1124,6 +1176,7 @@ impl<'a> Options<'a> {
         Self { value, names }
     }
 
+    #[inline(never)]
     fn has(&self, name: &str) -> bool {
         self.names
             .as_ref()
@@ -1138,6 +1191,7 @@ impl<'a> Options<'a> {
     }
 
     /// The option, unless it's unset, `null` or `undefined`
+    #[inline(never)]
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
             read(self.value, name)
@@ -1148,6 +1202,7 @@ impl<'a> Options<'a> {
 
     /// The option if the object itself has it: nothing inherited counts. For
     /// options that can redirect requests, which `Object.prototype` must not supply.
+    #[inline(never)]
     fn own(&self, name: &str) -> Option<JsValue> {
         (self.value.is_object()
             && js_sys::Object::has_own(self.value.unchecked_ref::<js_sys::Object>(), &name.into()))
@@ -1156,6 +1211,7 @@ impl<'a> Options<'a> {
     }
 
     /// The option as it is, `null` included (`undefined` when unset)
+    #[inline(never)]
     fn raw(&self, name: &str) -> JsValue {
         if self.has(name) {
             js_sys::Reflect::get(self.value, &name.into()).unwrap_or(JsValue::UNDEFINED)
@@ -1165,6 +1221,7 @@ impl<'a> Options<'a> {
     }
 
     /// An optional callback, which must be a function when set
+    #[inline(never)]
     fn callback(&self, name: &str) -> Result<Option<js_sys::Function>> {
         self.get(name)
             .map(|callback| {
@@ -1223,16 +1280,16 @@ impl Drop for DestinationGuard<'_> {
     }
 }
 
+#[inline(never)]
 fn error_context(error: JsValue, method: &str, url: &str, attempts: u32) -> JsValue {
     if error.is_object() {
-        for (name, value) in [
-            ("method", method.into()),
-            ("url", url.into()),
-            ("attempts", attempts.into()),
-        ] {
+        for (name, value) in [("method", method), ("url", url)] {
             if !js_sys::Object::has_own(error.unchecked_ref::<js_sys::Object>(), &name.into()) {
-                let _ = js_sys::Reflect::set(&error, &name.into(), &value);
+                put_str(&error, name, value);
             }
+        }
+        if !js_sys::Object::has_own(error.unchecked_ref::<js_sys::Object>(), &"attempts".into()) {
+            put_f64(&error, "attempts", f64::from(attempts));
         }
     }
     error
@@ -1249,7 +1306,7 @@ pub(crate) fn send<'a>(
 ) -> impl std::future::Future<Output = std::result::Result<JsValue, JsValue>> + 'a {
     use futures_util::TryFutureExt;
     let refused = std::sync::Arc::new(RequestState::default());
-    let method = request.method.to_reqwest();
+    let method = request.method.as_str();
     send_request(client, request, options, &refused, apply_deadline).map_err(move |error| {
         let error = refused.with_cause(JsValue::from(error));
         let error = with_abort_reason(
@@ -1264,7 +1321,7 @@ pub(crate) fn send<'a>(
         let resolved = refused.url.borrow();
         error_context(
             error,
-            method.as_str(),
+            method,
             resolved.as_deref().unwrap_or(original_url),
             refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
         )
@@ -1336,7 +1393,7 @@ async fn send_prepared(
     crate::client::observe_text(
         builder.observer.as_ref(),
         "method",
-        builder.config.method.to_reqwest().as_str(),
+        builder.config.method.as_str(),
     );
     if let BodyType::Stream | BodyType::Ndjson = body_type {
         #[cfg(target_arch = "wasm32")]
@@ -1919,10 +1976,10 @@ fn response_head_to_js(
     response_headers: &Headers,
 ) -> Result<js_sys::Object> {
     let obj = js_sys::Object::new();
-    set(&obj, "status", &f64::from(status).into())?;
-    set(&obj, "statusText", &status_text.into())?;
-    set(&obj, "ok", &(200..300).contains(&status).into())?;
-    set(&obj, "url", &url.into())?;
+    set_f64(&obj, "status", f64::from(status))?;
+    set_str(&obj, "statusText", status_text)?;
+    set_bool(&obj, "ok", (200..300).contains(&status))?;
+    set_str(&obj, "url", url)?;
 
     let headers = headers_to_js(response_headers)?;
     set(&obj, "headers", &headers)?;
@@ -1959,6 +2016,16 @@ fn response_to_js(response: crate::types::Response, body_type: BodyType) -> Resu
     Ok(obj.into())
 }
 
+/// Type-erase cold streaming pipelines so `streaming_response_to_js` and
+/// `ndjson_response_to_js` share one `ReadableStream::from_stream` instantiation.
+fn into_js_stream(
+    stream: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = std::result::Result<JsValue, JsValue>>>,
+    >,
+) -> web_sys::ReadableStream {
+    wasm_streams::ReadableStream::from_stream(stream).into_raw()
+}
+
 /// Convert a streaming response; its body becomes a `ReadableStream<Uint8Array>`
 fn streaming_response_to_js(
     response: StreamingResponse,
@@ -1993,7 +2060,7 @@ fn streaming_response_to_js(
             let abort = signal.clone();
             let chunks = AbortableStream::new(chunks, signal)
                 .map(move |chunk| chunk.map_err(|error| cancelled_by(error, abort.as_ref())));
-            let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
+            let stream = into_js_stream(Box::pin(chunks));
             set(&obj, "body", &stream)?;
             return Ok(obj.into());
         }
@@ -2005,7 +2072,7 @@ fn streaming_response_to_js(
             .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()).into())
             .map_err(|error| cancelled_by(error, abort.as_ref()))
     });
-    let stream = wasm_streams::ReadableStream::from_stream(chunks).into_raw();
+    let stream = into_js_stream(Box::pin(chunks));
     set(&obj, "body", &stream)?;
     Ok(obj.into())
 }
@@ -2058,7 +2125,7 @@ fn ndjson_response_to_js(
             parse_json_line(&line).map_err(JsValue::from)
         }))
     });
-    let stream = wasm_streams::ReadableStream::from_stream(parsed).into_raw();
+    let stream = into_js_stream(Box::pin(parsed));
     set(&obj, "body", &stream)?;
     Ok(obj.into())
 }
@@ -2135,7 +2202,10 @@ pub(crate) fn parse_method(method: &str) -> Result<Method> {
         // The Fetch standard forbids these, so browsers and Node.js reject them
         Some(Method::Connect | Method::Trace) => Err(invalid(
             "method",
-            &format!("{} is not supported by fetch()", method.to_uppercase()),
+            &format!(
+                "{} is not supported by fetch()",
+                method.to_ascii_uppercase()
+            ),
         )),
         Some(method) => Ok(method),
         None => Err(invalid("method", &format!("Invalid HTTP method: {method}"))),
@@ -2349,7 +2419,7 @@ fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
         .iter()
         .map(|name| {
             name.as_string()
-                .filter(|name| reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_ok())
+                .filter(|name| crate::types::validate_header_name(name).is_ok())
                 .ok_or_else(invalid_names)
         })
         .collect()
@@ -2425,8 +2495,7 @@ fn scalar_to_string(value: &JsValue) -> Option<String> {
 fn js_number_to_string(n: f64) -> String {
     js_sys::Number::from(n)
         .to_string_with_radix(10)
-        .map(String::from)
-        .unwrap_or_else(|_| n.to_string())
+        .map_or_else(|_| String::new(), String::from)
 }
 
 /// Whether `value` is an object whose only prototype is `Object.prototype` (or
@@ -2447,6 +2516,7 @@ fn read(target: &JsValue, name: &str) -> Option<JsValue> {
 
 /// Read an option from an options object, treating `undefined` and `null` as
 /// absent. On a plain object only its own properties count.
+#[inline(never)]
 fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     if !target.is_object() {
         return None;
@@ -2465,6 +2535,7 @@ pub(crate) fn raw_prop(target: &JsValue, name: &str) -> JsValue {
 }
 
 /// `raw_prop`, passing on an exception thrown by a getter
+#[inline(never)]
 fn try_raw_prop(target: &JsValue, name: &str) -> std::result::Result<JsValue, JsValue> {
     if !target.is_object()
         || (is_plain_object(target)
@@ -2485,12 +2556,40 @@ fn headers_to_js(headers: &Headers) -> Result<js_sys::Object> {
     Ok(js_sys::Object::from_entries(&entries)?)
 }
 
+#[inline(never)]
 fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {
     js_sys::Reflect::set(target, &name.into(), value)?;
     Ok(())
 }
 
+#[inline(never)]
+pub(crate) fn set_str(target: &js_sys::Object, name: &str, value: &str) -> Result<()> {
+    set(target, name, &JsValue::from_str(value))
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[inline(never)]
+pub(crate) fn set_bool(target: &js_sys::Object, name: &str, value: bool) -> Result<()> {
+    set(target, name, &JsValue::from_bool(value))
+}
+
+#[inline(never)]
+pub(crate) fn set_f64(target: &js_sys::Object, name: &str, value: f64) -> Result<()> {
+    set(target, name, &JsValue::from_f64(value))
+}
+
+#[inline(never)]
+fn put_str(target: &JsValue, name: &str, value: &str) {
+    let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_str(value));
+}
+
+#[inline(never)]
+fn put_f64(target: &JsValue, name: &str, value: f64) {
+    let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_f64(value));
+}
+
 /// `value instanceof globalThis[name]`, false if that global doesn't exist
+#[inline(never)]
 fn is_instance_of_global(value: &JsValue, name: &str) -> bool {
     if !value.is_object() {
         return false;
@@ -2507,6 +2606,7 @@ fn is_instance_of_global(value: &JsValue, name: &str) -> bool {
         })
 }
 
+#[inline(never)]
 fn js_error_message(error: &JsValue) -> String {
     js_sys::Reflect::get(error, &"message".into())
         .ok()
@@ -2519,6 +2619,7 @@ fn into_js<T: Into<JsValue>>(value: Option<T>) -> JsValue {
     value.map_or(JsValue::UNDEFINED, Into::into)
 }
 
+#[inline(never)]
 fn invalid(parameter: &str, reason: &str) -> Error {
     Error::InvalidInput {
         parameter: parameter.to_string(),
@@ -2578,15 +2679,11 @@ impl Headers {
             if value.is_null() || value.is_undefined() {
                 continue;
             }
-            let value = value
-                .as_string()
-                .or_else(|| value.as_f64().map(|n| n.to_string()))
-                .or_else(|| value.as_bool().map(|b| b.to_string()))
-                .ok_or_else(|| {
-                    JsValue::from_str(&format!(
-                        "header '{name}' must be a string, number or boolean"
-                    ))
-                })?;
+            let value = scalar_to_string(&value).ok_or_else(|| {
+                JsValue::from_str(&format!(
+                    "header '{name}' must be a string, number or boolean"
+                ))
+            })?;
             headers.insert(name, value);
         }
 
@@ -2622,28 +2719,25 @@ fn cancelled_by(error: Error, signal: Option<&web_sys::AbortSignal>) -> JsValue 
 
 /// Convert Error to JsValue for WASM boundary
 impl From<Error> for JsValue {
+    #[inline(never)]
     fn from(error: Error) -> Self {
         // A real `Error` (with a stack trace) carrying structured details;
         // `name` and `kind` both hold the error kind, e.g. "HttpError".
         let obj = js_sys::Error::new(&error.to_string());
         obj.set_name(error.kind());
-        let _ = js_sys::Reflect::set(&obj, &"kind".into(), &error.kind().into());
+        put_str(&obj, "kind", error.kind());
 
         if let Some(timeout) = error.timeout_details() {
-            let _ = js_sys::Reflect::set(&obj, &"phase".into(), &timeout.phase.as_str().into());
+            put_str(&obj, "phase", timeout.phase.as_str());
             #[allow(clippy::cast_precision_loss)]
-            let _ = js_sys::Reflect::set(
-                &obj,
-                &"timeoutMs".into(),
-                &(timeout.duration_ms as f64).into(),
-            );
+            put_f64(&obj, "timeoutMs", timeout.duration_ms as f64);
         }
         if let Some(circuit) = error.circuit_open() {
-            let _ = js_sys::Reflect::set(&obj, &"origin".into(), &circuit.origin.as_str().into());
-            let _ = js_sys::Reflect::set(
+            put_str(&obj, "origin", &circuit.origin);
+            put_f64(
                 &obj,
-                &"retryAfterMs".into(),
-                &(circuit.retry_after.as_secs_f64() * 1000.0).into(),
+                "retryAfterMs",
+                circuit.retry_after.as_secs_f64() * 1000.0,
             );
         }
         // Add additional context based on error type
@@ -2653,41 +2747,40 @@ impl From<Error> for JsValue {
                 status_text,
                 body,
             } => {
-                let _ = js_sys::Reflect::set(&obj, &"status".into(), &(*status as f64).into());
-                let _ = js_sys::Reflect::set(&obj, &"statusText".into(), &status_text.into());
+                put_f64(&obj, "status", f64::from(*status));
+                put_str(&obj, "statusText", status_text);
                 if let Some(body) = body {
-                    let _ = js_sys::Reflect::set(&obj, &"body".into(), &body.into());
+                    put_str(&obj, "body", body);
                 }
             }
             Error::Timeout { duration_ms } => {
-                let _ =
-                    js_sys::Reflect::set(&obj, &"timeoutMs".into(), &(*duration_ms as f64).into());
+                #[allow(clippy::cast_precision_loss)]
+                put_f64(&obj, "timeoutMs", *duration_ms as f64);
             }
             Error::InvalidInput { parameter, .. } => {
-                let _ = js_sys::Reflect::set(&obj, &"parameter".into(), &parameter.into());
+                put_str(&obj, "parameter", parameter);
             }
             _ => {}
         }
         if let Some(limit) = error.response_too_large() {
             #[allow(clippy::cast_precision_loss)]
-            let _ = js_sys::Reflect::set(&obj, &"maxResponseBytes".into(), &(limit as f64).into());
+            put_f64(&obj, "maxResponseBytes", limit as f64);
         }
         if let Some((option, limit)) = error.full_queue() {
             #[allow(clippy::cast_precision_loss)]
-            let _ = js_sys::Reflect::set(&obj, &option.into(), &(limit as f64).into());
+            put_f64(&obj, option, limit as f64);
         }
         if let Some(limit) = error.event_too_large_limit() {
             #[allow(clippy::cast_precision_loss)]
-            let _ = js_sys::Reflect::set(&obj, &"maxEventBytes".into(), &(limit as f64).into());
+            put_f64(&obj, "maxEventBytes", limit as f64);
         }
         if let Some(limit) = error.line_too_long() {
             #[allow(clippy::cast_precision_loss)]
-            let _ = js_sys::Reflect::set(&obj, &"maxLineBytes".into(), &(limit as f64).into());
+            put_f64(&obj, "maxLineBytes", limit as f64);
         }
         if let Some(limit) = error.too_many_pending_requests() {
             #[allow(clippy::cast_precision_loss)]
-            let _ =
-                js_sys::Reflect::set(&obj, &"maxPendingRequests".into(), &(limit as f64).into());
+            put_f64(&obj, "maxPendingRequests", limit as f64);
         }
 
         obj.into()

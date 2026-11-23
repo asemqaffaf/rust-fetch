@@ -1,6 +1,7 @@
 // Turns wasm-pack's output in wasm-module/pkg into the published npm package:
 // adds the Node.js entry point, conditional exports and package metadata.
 import { copyFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { transformSync } from 'esbuild';
 
 const root = new URL('../', import.meta.url);
 const pkgDir = new URL('wasm-module/pkg/', root);
@@ -24,6 +25,118 @@ const disposable = '/// <reference lib="esnext.disposable" />\n';
 if (types.includes('Symbol.dispose') && !types.startsWith(disposable)) {
   types = disposable + types;
 }
+
+// Client verb shortcuts and standalone functions live in js/methods.js; restore
+// their exact TypeScript declarations on WasmClient and at module top level.
+types = types.replace(
+  '    clearInterceptors(): void;\n',
+  `    clearInterceptors(): void;
+    /**
+     * Make a DELETE request
+     */
+    delete(url: string, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
+);
+types = types.replace(
+  '    events(url: string, options?: EventStreamOptions | null): EventStream;\n',
+  `    events(url: string, options?: EventStreamOptions | null): EventStream;
+    /**
+     * Make a request described by a \`fetch\`-style init object
+     */
+    fetch(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    /**
+     * Make a GET request
+     */
+    get(url: string, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Make a HEAD request
+     */
+    head(url: string, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
+);
+types = types.replace(
+  '    constructor(options?: ClientOptions | null);\n',
+  `    constructor(options?: ClientOptions | null);
+    /**
+     * Make a PATCH request; the body is taken from \`init.body\`
+     */
+    patch(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    /**
+     * Make a PATCH request with a JSON body
+     */
+    patch_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Make a POST request; the body is taken from \`init.body\`
+     */
+    post(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    /**
+     * Make a POST request with a JSON body
+     */
+    post_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Make a PUT request; the body is taken from \`init.body\`
+     */
+    put(url: string, init?: FetchInit | null): Promise<HttpResponse>;
+    /**
+     * Make a PUT request with a JSON body
+     */
+    put_json(url: string, body: any, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Make a request with any method, headers and body
+     */
+    request(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
+);
+types = types.replace(
+  '\nexport type InitInput =',
+  `
+/**
+ * Create a configured HTTP client (exported for advanced use)
+ */
+export function create_client(): WasmClient;
+
+/**
+ * Fetch a URL and parse the body as JSON (whatever its Content-Type).
+ * An empty body resolves to \`null\`.
+ */
+export function fetch_json(url: string): Promise<any>;
+
+/**
+ * Fetch JSON data and return as a Promise
+ */
+export function fetch_json_promise(url: string): Promise<any>;
+
+/**
+ * Fetch a URL and return the body as text
+ */
+export function fetch_text(url: string): Promise<string>;
+
+/**
+ * Fetch API data (deprecated, use fetch_json instead)
+ */
+export function fetch_wasm_api(url: string): Promise<any>;
+
+/**
+ * Fetch HTML data (deprecated, use fetch_text instead)
+ */
+export function fetch_wasm_html(url: string): Promise<string>;
+
+/**
+ * Fetch JSON data (deprecated, use fetch_json instead)
+ */
+export function fetch_wasm_json(url: string): Promise<any>;
+
+/**
+ * Fetch data and return as map (deprecated, use fetch_json instead)
+ */
+export function fetch_wasm_map(url: string): Promise<any>;
+
+/**
+ * Fetch with a method, headers and an optional string body.
+ *
+ * Resolves to \`{ status, statusText, ok, url, headers, body }\`.
+ */
+export function fetch_with_options(url: string, method: string, headers: any, body?: string | null): Promise<any>;
+
+export type InitInput =`,
+);
 
 // wasm-bindgen can't declare generic methods, so its request methods resolve to
 // `HttpResponse` (with `body: any`). Make them generic, `get<User>(…)` style;
@@ -80,6 +193,7 @@ function streamStrategy(strategy) {
 );
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
+const methods = readFileSync(new URL('wasm-module/js/methods.js', root), 'utf8');
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
@@ -93,7 +207,8 @@ const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8
 const resume = readFileSync(new URL('wasm-module/js/resume.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
-writeFileSync(glueUrl, `${readFileSync(glueUrl, 'utf8')}
+const combinedGlue = `${readFileSync(glueUrl, 'utf8')}
+${methods.trimEnd()}
 ${upload.trimEnd()}
 ${clientHelpers.trimEnd()}
 ${observability.trimEnd()}
@@ -107,7 +222,16 @@ ${resume.trimEnd()}
 ${extend.trimEnd()}
 ${paginate.trimEnd()}
 ${guards.trimEnd()}
-`);
+`;
+const minifiedGlue = transformSync(combinedGlue, {
+  minify: true,
+  loader: 'js',
+  format: 'esm',
+  target: 'es2022',
+  legalComments: 'none',
+  banner: '/* @ts-self-types="./rust_fetch.d.ts" */',
+}).code;
+writeFileSync(glueUrl, minifiedGlue);
 types = types.replace(
   /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
   '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',

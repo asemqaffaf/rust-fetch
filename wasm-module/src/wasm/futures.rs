@@ -37,6 +37,7 @@ impl WakeState {
         })
     }
 
+    #[inline(never)]
     fn callback(state: &Rc<Self>) -> Closure<dyn FnMut()> {
         let state = Rc::clone(state);
         Closure::<dyn FnMut()>::new(move || {
@@ -64,6 +65,7 @@ pub(crate) struct Delay {
 }
 
 impl Delay {
+    #[inline(never)]
     pub(crate) fn new(duration: Duration) -> Self {
         Self {
             remaining: duration,
@@ -73,6 +75,7 @@ impl Delay {
         }
     }
 
+    #[inline(never)]
     fn arm(&mut self) {
         // Browser/Node timers clamp at i32::MAX ms. Chain long waits and
         // round sub-millisecond durations up rather than shortening them.
@@ -97,6 +100,7 @@ impl Delay {
 impl Future for Delay {
     type Output = ();
 
+    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         loop {
             if self.callback.is_none() {
@@ -114,6 +118,7 @@ impl Future for Delay {
 }
 
 impl Drop for Delay {
+    #[inline(never)]
     fn drop(&mut self) {
         clear_timeout(&self.handle);
     }
@@ -128,6 +133,7 @@ pub(crate) struct Aborted {
 }
 
 impl Aborted {
+    #[inline(never)]
     pub(crate) fn new(signal: web_sys::AbortSignal) -> Self {
         Self {
             signal,
@@ -136,6 +142,7 @@ impl Aborted {
         }
     }
 
+    #[inline(never)]
     fn detach(&mut self) {
         if let Some(listener) = self.listener.take() {
             let _ = self
@@ -148,6 +155,7 @@ impl Aborted {
 impl Future for Aborted {
     type Output = ();
 
+    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         if self.listener.is_none() && !self.signal.aborted() {
             let listener = WakeState::callback(&self.state);
@@ -165,6 +173,7 @@ impl Future for Aborted {
 }
 
 impl Drop for Aborted {
+    #[inline(never)]
     fn drop(&mut self) {
         self.detach();
     }

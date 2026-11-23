@@ -14,11 +14,9 @@ pub(crate) fn validate_key(key: &str) -> Result<()> {
 }
 
 pub(crate) fn validate_header(name: &str) -> Result<()> {
-    reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-        Error::InvalidInput {
-            parameter: "idempotencyHeader".to_string(),
-            reason: error.to_string(),
-        }
+    crate::types::validate_header_name(name).map_err(|reason| Error::InvalidInput {
+        parameter: "idempotencyHeader".to_string(),
+        reason: reason.to_string(),
     })?;
     Ok(())
 }

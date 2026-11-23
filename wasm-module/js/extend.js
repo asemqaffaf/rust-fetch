@@ -1,11 +1,9 @@
 // client.extend(overrides) (#69): a new client with the parent's options and interceptors, and the overrides on top.
 (() => {
   const Base = WasmClient, saved = new WeakMap();
-  const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
-  const entries = (value) => value == null ? [] : typeof value === 'object' && typeof value[Symbol.iterator] === 'function' ? [...value] : Object.entries(value);
   const merge = (parent, child) => {
     const headers = new Map();
-    for (const [name, value] of [...entries(parent), ...entries(child)]) headers.set(String(name).toLowerCase(), [name, value]);
+    for (const [name, value] of [...headerEntries(parent), ...headerEntries(child)]) headers.set(String(name).toLowerCase(), [name, value]);
     return Object.fromEntries(headers.values());
   };
   class ExtendableClient extends Base {
@@ -34,12 +32,12 @@
       return super.clearInterceptors();
     }
     extend(overrides) {
-      if (overrides != null && typeof overrides !== 'object') throw invalid('options', 'must be an object');
+      if (overrides != null && typeof overrides !== 'object') throw invalidInput('options', 'must be an object');
       const state = saved.get(this) ?? { options: { __proto__: null }, request: [], response: [] };
       const options = Object.assign({ __proto__: null }, state.options);
       for (const [name, value] of Object.entries(overrides ?? {})) {
         if (value === undefined) continue;
-        if (name === 'headers' && value !== null && typeof value !== 'object') throw invalid('headers', 'must be an object, Headers, Map or array of pairs');
+        if (name === 'headers' && value !== null && typeof value !== 'object') throw invalidInput('headers', 'must be an object, Headers, Map or array of pairs');
         options[name] = name === 'headers' ? merge(options.headers, value) : value;
       }
       const child = new ExtendableClient(options);
