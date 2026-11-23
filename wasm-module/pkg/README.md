@@ -92,7 +92,7 @@ More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
 | Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 171 KB: the WebAssembly module (148 KB) and its JS glue (23 KB, before your bundler minifies it) |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 137 KB: the WebAssembly module (120 KB) and its minified JS glue (17.5 KB) |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors or WebSockets (it has upload progress on native targets) ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
 

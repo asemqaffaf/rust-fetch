@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Browser Wasm and JS glue bundle-size reduction (`#337`):** Reduced the combined browser payload (`rust_fetch_bg.wasm` + `rust_fetch.js`) from `172.5 kB` to `137.2 kB` brotli (`-35.3 kB` / `-20.5%`) and `210.9 kB` to `165.1 kB` gzip (`-45.8 kB` / `-21.7%`): `rust_fetch_bg.wasm` drops from `455.0 / 183.1 / 148.6 kB` to `358.5 / 145.4 / 119.7 kB` (raw / gzip / brotli) and `rust_fetch.js` from `135.2 / 27.9 / 24.0 kB` to `61.7 / 19.7 / 17.5 kB`, with public JS/TS/Rust APIs unchanged and all security checks remaining in Rust.
+  - Dropped the unused `wasm-bindgen/serde-serialize` feature and tuned `wasm-opt` (`-Os --one-caller-inline-max-function-size=500 --low-memory-unused --converge --strip-producers`) while keeping `opt-level = "s"` and stable Rust `1.99.1` (`wasm-module/Cargo.toml`, `wasm-module/Cargo.lock`, `wasm-module/fuzz/Cargo.lock`).
+  - Replaced heavy Wasm header/status formatting and JSON serialization paths with ASCII helpers (`Method::as_str()`, `validate_header_name`, `validate_header_value`, `status_text`), `prepare_body()`, manual `fmt::Debug` on `CircuitOpenError`, type-erased streaming (`into_js_stream`), `#[inline(never)]` FFI/future helpers, and typed property setters (`wasm-module/src/types.rs`, `src/circuit.rs`, `src/client.rs`, `src/idempotency.rs`, `src/wasm/`).
+  - Consolidated `WasmClient` verb exports into a single `__dispatch` FFI entrypoint and moved standalone HTTP helpers to thin JS wrappers while keeping all `pub` Rust functions intact (`wasm-module/src/http.rs`, `wasm-module/js/methods.js`), deduplicated shared JS helpers (`wasm-module/js/client-helpers.js`), and minified `rust_fetch.js` with `esbuild` (`scripts/postbuild.mjs`).
+  - Tightened CI size budgets in `scripts/check-size.mjs` to `360.0 / 147.0 / 121.5 kB` (Wasm) and `63.5 / 21.0 / 18.6 kB` (JS glue).
+
 ### Documentation
 - **Crawler metadata (`#330`):** publish `robots.txt`, `sitemap.xml` and `llms.txt` with the documentation site, and emit one canonical URL per page, so search engines and AI assistants can index the docs (`docs/public/`, `docs/.vitepress/config.mts`).
+- **Bundle-size figures (`#337`):** updated browser bundle-size numbers (`137 KB` brotli total: `120 KB` `.wasm` + `17.5 KB` minified JS glue) across `README.md`, `llms.txt`, `docs/public/llms.txt`, and the VitePress guides (`docs/guide/introduction.md`, `docs/compatibility.md`, `docs/faq.md`).
 
 ## [2.8.1] - 2026-11-13
 
