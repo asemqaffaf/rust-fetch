@@ -18,8 +18,8 @@ Dates aren't promised; the order is.
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
 | [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
-| [2.8.0](#280-security-verification) | Security verification: threat model, claims audit, fuzzing, sanitizers, supply chain | Merged, not released; ships together with the data and developer experience work below as one 2.8.0. Two items need people (an independent reviewer, a second releaser) |
-| [2.9.0](#290-data-and-developer-experience) | Data and developer experience | Merged, and ships in 2.8.0 (decided 2026-11-08, to avoid two minors in eight days). The 2.9.0 milestone now holds the open items |
+| [2.8.0](#280-security-verification-data-and-developer-experience) | Security verification, data and developer experience (plus 2.8.1, 2.8.2 patches) | Released (`2.8.0` on 2026-11-08; `2.8.1` on 2026-11-13; `2.8.2` on 2026-11-24) |
+| [2.9.0](#290-next-minor-release-new-features) | Reserved for new features | Planned — tracks open feature and roadmap items in the [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8) |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |
 
@@ -159,16 +159,18 @@ Released 2026-11-02. All 13 features are implemented, but the original "no measu
 | Security requirements audited and enforced on every adapter | [#119](https://github.com/asemqaffaf/rust-fetch/issues/119) | [Security](docs/security.md), [six-adapter conformance matrix](CONFORMANCE.md); repository secret scanning and Dependabot security updates enabled |
 | Reliability: fault injection, comparison and gap decisions | [#157](https://github.com/asemqaffaf/rust-fetch/issues/157) | [Reproducible comparison and gap decisions](docs/reliability.md), [raw results](benchmarks/reliability/results.json) |
 
-The conformance suite checks 69 behaviors across six adapters (414 observations). Dedicated tests cover phase timeouts, cancellation, overload, SSE/WebSocket stalls and reconnect storms. CI also checks Rust and Node transport coverage, API compatibility, dependencies and package size. Performance results include the measured observability startup and bundle costs; they do not establish zero overhead. See [development and verification](docs/development.md) and the [changelog](CHANGELOG.md#unreleased).
+The conformance suite checks 81 behaviors across six adapters (486 observations). Dedicated tests cover phase timeouts, cancellation, overload, SSE/WebSocket stalls and reconnect storms. CI also checks Rust and Node transport coverage, API compatibility, dependencies and package size. Performance results include the measured observability startup and bundle costs; they do not establish zero overhead. See [development and verification](docs/development.md) and the [changelog](CHANGELOG.md#unreleased).
 
-## 2.8.0: security verification
+## 2.8.0: security verification, data and developer experience
 
-*Goal: every security claim has a test, and the project says plainly what has not been reviewed by anyone else.* Tracking issue: [#235](https://github.com/asemqaffaf/rust-fetch/issues/235). This release was the first half of the former 2.8.0; the data and developer experience work moved to [2.9.0](#290-data-and-developer-experience) and, being merged first, is released together with it as 2.8.0.
+*Released 2026-11-08* ([release notes](https://github.com/asemqaffaf/rust-fetch/releases/tag/v2.8.0)). Combines the security verification work ([#235](https://github.com/asemqaffaf/rust-fetch/issues/235)) with the data and developer experience features originally scoped under 2.9.0. Followed by patch releases **2.8.1** (2026-11-13: synchronous `deadlineMs`/`AbortSignal` closure cleanup `#327`, npm `sideEffects`) and **2.8.2** (2026-11-24: `url 2.5.9` for `RUSTSEC-2026-0592` `#336`, 20% smaller browser Wasm/JS bundle `#337`, docs crawler metadata `#330`).
+
+### Security verification
 
 | Item | Issue | Status |
 | --- | --- | --- |
 | Threat model: assets, trust boundaries and attackers per adapter | [#222](https://github.com/asemqaffaf/rust-fetch/issues/222) | Done: [threat model](docs/threat-model.md) |
-| Independent security review: open call, scope and results | [#223](https://github.com/asemqaffaf/rust-fetch/issues/223) | Open: the call is published in [security review](docs/security-review.md); no reviewer yet |
+| Independent security review: open call, scope and results | [#223](https://github.com/asemqaffaf/rust-fetch/issues/223) | Open (carried in 2.9.0): call published in [security review](docs/security-review.md); no reviewer yet |
 | Every security claim audited against a test or softened | [#224](https://github.com/asemqaffaf/rust-fetch/issues/224) | Done: [claims table](docs/security.md) |
 | SSRF guard: every IANA special-purpose range, DNS rebinding, mixed A/AAAA | [#225](https://github.com/asemqaffaf/rust-fetch/issues/225) | Done |
 | Redirects: differential test of origin matching and credential stripping | [#226](https://github.com/asemqaffaf/rust-fetch/issues/226) | Done |
@@ -179,19 +181,15 @@ The conformance suite checks 69 behaviors across six adapters (414 observations)
 | Continuous fuzzing: ClusterFuzzLite, persistent corpus, Node transport targets | [#231](https://github.com/asemqaffaf/rust-fetch/issues/231) | Done (OSS-Fuzz files prepared, not submitted) |
 | Release and supply chain: reproducible Wasm, provenance, Scorecard, branch rules | [#232](https://github.com/asemqaffaf/rust-fetch/issues/232) | Done |
 | Browser build: strict CSP and Trusted Types, tested | [#233](https://github.com/asemqaffaf/rust-fetch/issues/233) | Done |
-| Vulnerability response drill: reporting path, advisory, backports and CVE | [#234](https://github.com/asemqaffaf/rust-fetch/issues/234) | Open: dry run done; a second person has not been named |
+| Vulnerability response drill: reporting path, advisory, backports and CVE | [#234](https://github.com/asemqaffaf/rust-fetch/issues/234) | Open (carried in 2.9.0): dry run done; a second person has not been named |
 | Error objects no longer expose the URL password and fragment by default | [#238](https://github.com/asemqaffaf/rust-fetch/issues/238) | Fixed |
 | `redactUrl` applied to `error.cause.url` | [#239](https://github.com/asemqaffaf/rust-fetch/issues/239) | Fixed |
 | Native transport no longer reuses a connection after both `Content-Length` and `Transfer-Encoding` | [#243](https://github.com/asemqaffaf/rust-fetch/issues/243) | Fixed |
 | `node:http` refuses a certificate without `subjectAltName` and a weak RSA key, like the native addon | [#244](https://github.com/asemqaffaf/rust-fetch/issues/244) | Fixed |
 
-Behavior changes to know about: a certificate that names the host only in its subject is now refused on the `node:http` transport (#244), and a `baseUrl` with a query or fragment is refused with an `InvalidInputError`. Both are listed in the [changelog](CHANGELOG.md).
+Behavior changes in 2.8.0: a certificate that names the host only in its subject is refused on the `node:http` transport (#244), and a `baseUrl` with a query or fragment is refused with an `InvalidInputError`. Both are listed in the [changelog](CHANGELOG.md).
 
-## 2.9.0: data and developer experience
-
-*Goal: less code around each request, and easier testing.* All of these are on `main` and in the 2.8.0 section of the [changelog](CHANGELOG.md), which was never published: 2.8.0 carries both this work and the security verification above.
-
-**Also in the 2.9.0 milestone (added 2026-11-08):** the issues of the former *Native transport delivery*, *WebRTC signaling* and *Exploring* milestones are now in the [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8), so it shows everything open. That is a place to track them, not a promise to ship them in 2.9.0. Some wait on decisions outside the code (npm package names and permissions for prebuilt binaries, [#14](https://github.com/asemqaffaf/rust-fetch/issues/14)), some need benchmark runs on a quiet machine ([#114](https://github.com/asemqaffaf/rust-fetch/issues/114), [#156](https://github.com/asemqaffaf/rust-fetch/issues/156)), and [#36](https://github.com/asemqaffaf/rust-fetch/issues/36) carries a recommendation of "not planned". The items under *Exploring* below keep their own sections.
+### Data and developer experience (shipped in 2.8.0)
 
 | | | Status |
 | --- | --- | --- |
@@ -200,35 +198,45 @@ Behavior changes to know about: a certificate that names the host only in its su
 | HTTP caching with conditional requests | [#45](https://github.com/asemqaffaf/rust-fetch/issues/45) | Done (`httpCache`, not `cache`, which is the browser's fetch cache mode) |
 | Deduplicate identical in-flight GET requests | [#46](https://github.com/asemqaffaf/rust-fetch/issues/46) | Done (`dedupe`) |
 | Mock transport for unit tests | [#47](https://github.com/asemqaffaf/rust-fetch/issues/47) | Done (`transport`, `rust-fetch/testing`) |
-| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) | Bun, Deno and `workerd` (the Workers runtime) tested in CI; a deployed Worker and Vercel Edge not tested |
+| Deno, Bun and Cloudflare Workers | [#48](https://github.com/asemqaffaf/rust-fetch/issues/48) | Done in CI (Bun, Deno, `workerd`); deployed Worker and Vercel Edge not claimed |
+| Resumable downloads (`resume: true \| { maxResumes }`) | [#51](https://github.com/asemqaffaf/rust-fetch/issues/51) | Done (`Range`/`If-Range` continuation; resumable uploads not included) |
 | Type guards for typed errors (`isHttpError(error)`) | [#68](https://github.com/asemqaffaf/rust-fetch/issues/68) | Done |
 | `client.extend()` for derived clients | [#69](https://github.com/asemqaffaf/rust-fetch/issues/69) | Done |
 | Authentication helpers: bearer tokens with single-flight refresh | [#70](https://github.com/asemqaffaf/rust-fetch/issues/70) | Done (`auth`, scoped to the client's origins) |
-| Bundler and framework compatibility tests (Vite, webpack, Next.js) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Vite, webpack and esbuild tested; Next.js, plain Rollup and SSR not |
 | Documentation site with API reference | [#72](https://github.com/asemqaffaf/rust-fetch/issues/72) | Done (TypeDoc reference generated from the public types) |
-| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Node.js, LLM streaming, WebSocket, Cloudflare Worker and browser (Vite) examples, all tested in CI |
-| Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) | Blocked: needs a JSR scope and account |
+| Runnable, tested examples | [#73](https://github.com/asemqaffaf/rust-fetch/issues/73) | Done (Node.js, LLM streaming, WebSocket, Cloudflare Worker, Vite browser upload) |
 | The abort reason (`signal.reason`) on `CancelledError` | [#80](https://github.com/asemqaffaf/rust-fetch/issues/80) | Done |
 | `responseType: 'blob'` in browsers | [#81](https://github.com/asemqaffaf/rust-fetch/issues/81) | Done |
 | When to use `websocket()` and when to use Socket.IO | [#152](https://github.com/asemqaffaf/rust-fetch/issues/152) | Done |
 
+## 2.9.0: next minor release (new features)
+
+*Reserved for new features.* The [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8) tracks the open feature, performance, distribution, and remaining security-process items now that the earlier data and developer experience work shipped in 2.8.0 (and bundle-size / security dependency updates land in 2.8.2). Being listed in the milestone is a tracking queue, not a commitment to ship every item in 2.9.0: several items wait on account/process decisions outside the code ([#14](https://github.com/asemqaffaf/rust-fetch/issues/14), [#74](https://github.com/asemqaffaf/rust-fetch/issues/74), [#223](https://github.com/asemqaffaf/rust-fetch/issues/223), [#234](https://github.com/asemqaffaf/rust-fetch/issues/234)) or dedicated quiet-machine benchmarks ([#114](https://github.com/asemqaffaf/rust-fetch/issues/114), [#156](https://github.com/asemqaffaf/rust-fetch/issues/156)).
+
+| Item | Issue | Status |
+| --- | --- | --- |
+| Ship the native transport in the npm package with prebuilt binaries | [#14](https://github.com/asemqaffaf/rust-fetch/issues/14) | Blocked on npm package scope & trusted-publishing setup |
+| Rust crate: WebSockets and interceptors (`on_upload_progress` landed in 2.8.0) | [#24](https://github.com/asemqaffaf/rust-fetch/issues/24) | Open |
+| WebRTC signaling: WHIP/WHEP clients, trickle ICE, test server | [#30](https://github.com/asemqaffaf/rust-fetch/issues/30) ([#31](https://github.com/asemqaffaf/rust-fetch/issues/31)–[#35](https://github.com/asemqaffaf/rust-fetch/issues/35), [#52](https://github.com/asemqaffaf/rust-fetch/issues/52)) | Open (proposal) |
+| Node.js optional cookie jar | [#50](https://github.com/asemqaffaf/rust-fetch/issues/50) | Open |
+| Bundler and framework compatibility tests (Next.js, Rollup, SSR; Vite/webpack/esbuild done) | [#71](https://github.com/asemqaffaf/rust-fetch/issues/71) | Open (partial) |
+| Publishing to JSR | [#74](https://github.com/asemqaffaf/rust-fetch/issues/74) | Blocked: needs a JSR scope and account |
+| Evaluate HTTP/2 for the Node.js transports | [#114](https://github.com/asemqaffaf/rust-fetch/issues/114) | Open (investigation) |
+| WebSocket performance: benchmark `websocket()`, then speed up connect, reconnect and messages | [#156](https://github.com/asemqaffaf/rust-fetch/issues/156) | Open (investigation) |
+| Distribution: benchmark comparisons, npm manifest metadata, and the Rust install path | [#332](https://github.com/asemqaffaf/rust-fetch/issues/332) | Open |
+| Independent security review & second releaser | [#223](https://github.com/asemqaffaf/rust-fetch/issues/223), [#234](https://github.com/asemqaffaf/rust-fetch/issues/234), [#235](https://github.com/asemqaffaf/rust-fetch/issues/235) | Open (needs external participants) |
+
 ## Exploring
 
-Ideas we're evaluating; each issue ends with a recommendation before any code.
+Open proposals and investigations that need a recommendation or benchmark before implementation:
 
 | | |
 | --- | --- |
 | mediasoup SFU integration: a WHIP/WHEP adapter, then a rooms SDK | [#52](https://github.com/asemqaffaf/rust-fetch/issues/52) |
 | WebRTC signaling helper over `client.websocket()` | [#35](https://github.com/asemqaffaf/rust-fetch/issues/35) |
 | WebRTC peer connections in Node.js (recommended: not planned) | [#36](https://github.com/asemqaffaf/rust-fetch/issues/36) |
-| Upload progress, WebSockets and interceptors in the Rust crate | [#24](https://github.com/asemqaffaf/rust-fetch/issues/24) |
-| HTTP/2 in the Node.js transports | [#25](https://github.com/asemqaffaf/rust-fetch/issues/25) |
-| Node.js cookie jar | [#50](https://github.com/asemqaffaf/rust-fetch/issues/50) |
-| Resumable downloads and uploads | [#51](https://github.com/asemqaffaf/rust-fetch/issues/51) |
-| WebSocket performance: benchmark `websocket()`, then speed up connect, reconnect and messages | [#156](https://github.com/asemqaffaf/rust-fetch/issues/156) |
-| WebSocket acknowledgements: request/response over `websocket()` | [#153](https://github.com/asemqaffaf/rust-fetch/issues/153) |
-| WebSocket channels: client-side rooms with re-subscribe on reconnect | [#154](https://github.com/asemqaffaf/rust-fetch/issues/154) |
-| A Socket.IO-compatible client and a long-polling fallback | [#155](https://github.com/asemqaffaf/rust-fetch/issues/155) |
+| Evaluate HTTP/2 for the Node.js transports | [#114](https://github.com/asemqaffaf/rust-fetch/issues/114) |
+| WebSocket performance benchmarks and optimization | [#156](https://github.com/asemqaffaf/rust-fetch/issues/156) |
 
 ## Suggesting changes
 

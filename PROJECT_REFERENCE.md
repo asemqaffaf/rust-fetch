@@ -1,6 +1,6 @@
 # rust-fetch: project reference (state of 2026-11-09)
 
-> **Project status: on hold (from 2026-11-09), by the maintainer's decision, for a long time.** 2.8.0 is the current release and `latest` on npm; no work is in flight and no pull request is open. To resume: read section 15 (open work), section 16 (documentation drift that was found and not fixed) and section 17 (working agreements), then re-run the checks in section 0 before trusting any figure here. The first useful step is a docs-only PR fixing the drift table in section 16.
+> **Project status (updated 2026-11-24):** `2.8.2` released on 2026-11-24 (following `2.8.0` on 2026-11-08 and `2.8.1` on 2026-11-13); `2.9.0` is reserved for new features and tracks open feature/roadmap items in milestone #8. See sections 10.3, 15, and 16 for current size budgets, open issues, and resolved documentation drift.
 
 A single source of truth for the whole repository: what it is, how it is built, what it guarantees, how it is tested and released, what is done, what is open, and where the existing documentation disagrees with the code.
 
@@ -30,17 +30,17 @@ A single source of truth for the whole repository: what it is, how it is built, 
 | Licence | `MIT OR Apache-2.0` |
 | Repository | `github.com/asemqaffaf/rust-fetch`, default branch `main`; a `v1.x` maintenance branch is described in CONTRIBUTING.md (security and critical fixes only) |
 | Docs site | `https://asemqaffaf.github.io/rust-fetch/` (VitePress, GitHub Pages) |
-| Current release | **2.8.0**, published 2026-11-08T12:29Z, npm `latest`, tag `v2.8.0`, GitHub release "rust-fetch 2.8.0" |
+| Current release | **2.8.2**, released 2026-11-24, npm `latest` (following **2.8.1** on 2026-11-13 and **2.8.0** on 2026-11-08) |
 | Rust | edition 2021, `rust-version`: not set in `wasm-module/Cargo.toml` (the pasted reference claimed 1.88; the manifest has no `rust-version`). CI and releases pin **Rust 1.99.1**, wasm-pack **0.15.0** |
 | Node | `engines.node >= 20`; CI on 20, 22, 24 |
-| Size | 351 tracked files, 253 commits. Rust core (`wasm-module/src`) 15,032 lines; native addon 1,735; JS modules (`wasm-module/js/*.js`) 2,387; Rust tests (`wasm-module/tests`) 2,092; JS tests and helpers (`wasm-module/js/test`) 33,779. (`docs/security-review.md` still quotes older figures from commit `33efb92`.) |
-| Open work | 2.9.0 milestone: 18 open, 1 closed issues (section 15). No open pull requests. |
+| Size | 351 tracked files, 253 commits at the 2026-11-09 baseline. Rust core (`wasm-module/src`) 15,032 lines; native addon 1,735; JS modules (`wasm-module/js/*.js`) 2,387; Rust tests (`wasm-module/tests`) 2,092; JS tests and helpers (`wasm-module/js/test`) 33,779. (`docs/security-review.md` still quotes older figures from commit `33efb92`.) |
+| Open work | 2.9.0 milestone (reserved for new features): 18 open, 1 closed issues, plus #332 and roadmap #26 outside the milestone (section 15). |
 
 ### 1.1 Published versions and dist-tags
 
-`npm view rust-fetch dist-tags` on 2026-11-09: `latest` 2.8.0, `release-2.6` 2.6.2, `release-2.5` 2.5.3, `release-2.4` 2.4.2, `release-2.3` 2.3.1, `release-2.2` 2.2.1, `release-2.1` 2.1.2. There is **no `release-2.7` tag**: 2.7.2 is installed with `rust-fetch@2.7` (SECURITY.md says so).
+`npm view rust-fetch dist-tags` (updated 2026-11-24): `latest` 2.8.2, `release-2.6` 2.6.2, `release-2.5` 2.5.3, `release-2.4` 2.4.2, `release-2.3` 2.3.1, `release-2.2` 2.2.1, `release-2.1` 2.1.2. There is **no `release-2.7` tag**: 2.7.2 is installed with `rust-fetch@2.7` (SECURITY.md says so).
 
-Tag `v2.8.0` points at `37b2e74`. Release history from CHANGELOG.md: 0.1.0 (2025-02-23), 0.7.2, 1.0.2, 1.0.4, 1.1.0 (2025-07-27), 2.0.0 (2026-10-22), 2.1.0, 2.1.1, 2.2.0, 2.3.0 (2026-10-23), 2.4.0, 2.4.1 (2026-10-23), 2.5.0, 2.5.1, 2.5.2 (2026-10-24), 2.6.0 (2026-10-25), 2.6.1 (2026-10-29), 2.7.0 (2026-11-02), 2.7.1 (2026-11-03), 2.7.2 (2026-11-06), **2.8.0 (2026-11-08)**. GitHub releases also exist for 2.1.2, 2.2.1, 2.3.1, 2.4.2, 2.5.3, 2.6.2 (security backports, published 2026-11-02).
+Tag `v2.8.0` points at `37b2e74`, `v2.8.1` points at `24749fc` (2026-11-13), and `2.8.2` (2026-11-24) adds `url 2.5.9` (`RUSTSEC-2026-0592`), the 20% browser bundle reduction (`#337`), and documentation/roadmap updates. Release history from CHANGELOG.md: 0.1.0 (2025-02-23), 0.7.2, 1.0.2, 1.0.4, 1.1.0 (2025-07-27), 2.0.0 (2026-10-22), 2.1.0, 2.1.1, 2.2.0, 2.3.0 (2026-10-23), 2.4.0, 2.4.1 (2026-10-23), 2.5.0, 2.5.1, 2.5.2 (2026-10-24), 2.6.0 (2026-10-25), 2.6.1 (2026-10-29), 2.7.0 (2026-11-02), 2.7.1 (2026-11-03), 2.7.2 (2026-11-06), 2.8.0 (2026-11-08), 2.8.1 (2026-11-13), **2.8.2 (2026-11-24)**. GitHub releases also exist for 2.1.2, 2.2.1, 2.3.1, 2.4.2, 2.5.3, 2.6.2 (security backports, published 2026-11-02).
 
 ### 1.2 Support policy (SECURITY.md)
 
@@ -56,7 +56,7 @@ Tag `v2.8.0` points at `37b2e74`. Release history from CHANGELOG.md: 0.1.0 (2025
 ## 2. Repository map
 
 ```
-.                          private npm workspace "rust-fetch-workspace" 2.8.0
+.                          private npm workspace "rust-fetch-workspace" 2.8.2
 ├─ api/rust-fetch.d.ts     committed snapshot of the public TypeScript API (1,035 lines), checked by `npm run api:check`
 ├─ benchmarks/             fetch-comparison, compare, cold-start, startup-breakdown, security-compare,
 │                          reliability/{run.mjs,results.json}, performance-2.7/ (method + raw samples)
@@ -76,7 +76,7 @@ Tag `v2.8.0` points at `37b2e74`. Release history from CHANGELOG.md: 0.1.0 (2025
 ├─ .clusterfuzzlite/       Dockerfile, build.sh, project.yaml
 ├─ .github/                12 workflows, dependabot.yml, issue forms, PR template
 ├─ CHANGELOG.md  CONFORMANCE.md  CONTRIBUTING.md  CODE_OF_CONDUCT.md  README.md  ROADMAP.md  SECURITY.md  llms.txt
-├─ SECURITY_PROGRESS.md    untracked local resume notes (STALE, see section 16)
+├─ SECURITY_PROGRESS.md    tracked resume notes (updated 2026-11-24)
 └─ codecov.yml  lcov-js.info (generated)
 ```
 
@@ -194,7 +194,7 @@ Compiles the `.wasm` synchronously at import (so `init()` is optional on Node) a
 
 ## 7. Native addon (`native/`)
 
-Crate `rust-fetch-native` 2.8.0, `cdylib`, Node-API (`napi 3`, feature `napi9`, `tokio_rt`), deps: `brotli 9`, `flate2`, `zstd 0.14`, `hyper 1` (client, http1), `hyper-util`, `http-body-util`, `rustls 0.23` (ring, tls12), `tokio-rustls`, `webpki-roots`, `x509-parser`, `url`, `tokio`; release `opt-level 3`, LTO, strip. Exports `configure`, `send`, `sendSimple`, `cancel`, `stats`, `TRANSPORT_VERSION`. `pool.rs`: ≤256 connections per origin, LIFO, 4 s idle, `MAX_CACHED_ORIGINS = 256`, TLS config with a `NodeVerifier` (honours `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`). `pending.rs`: request-id registry scoped to one JS environment. `timeouts.rs`: phase timeout encoding (`RUST_FETCH_PHASE_TIMEOUT:` prefix). `upload.rs`: pulls one bounded chunk from JS only when hyper can write a frame. Redirect ≤20, 64 KiB redirect drain, 1 MiB compressed slack. 0 hand-written `unsafe` (napi macros expand to unsafe, so the crate uses `deny` not `forbid`). Known: with both `Content-Length` and `Transfer-Encoding` it reads chunked and closes the connection afterwards (#243). Status: tested on Linux (Node 20/22/24) and Windows MSVC (22/24) in CI, run on macOS arm64; **not published**; prebuilt binaries wait on #14.
+Crate `rust-fetch-native` 2.8.2, `cdylib`, Node-API (`napi 3`, feature `napi9`, `tokio_rt`), deps: `brotli 9`, `flate2`, `zstd 0.14`, `hyper 1` (client, http1), `hyper-util`, `http-body-util`, `rustls 0.23` (ring, tls12), `tokio-rustls`, `webpki-roots`, `x509-parser`, `url`, `tokio`; release `opt-level 3`, LTO, strip. Exports `configure`, `send`, `sendSimple`, `cancel`, `stats`, `TRANSPORT_VERSION`. `pool.rs`: ≤256 connections per origin, LIFO, 4 s idle, `MAX_CACHED_ORIGINS = 256`, TLS config with a `NodeVerifier` (honours `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`). `pending.rs`: request-id registry scoped to one JS environment. `timeouts.rs`: phase timeout encoding (`RUST_FETCH_PHASE_TIMEOUT:` prefix). `upload.rs`: pulls one bounded chunk from JS only when hyper can write a frame. Redirect ≤20, 64 KiB redirect drain, 1 MiB compressed slack. 0 hand-written `unsafe` (napi macros expand to unsafe, so the crate uses `deny` not `forbid`). Known: with both `Content-Length` and `Transfer-Encoding` it reads chunked and closes the connection afterwards (#243). Status: tested on Linux (Node 20/22/24) and Windows MSVC (22/24) in CI, run on macOS arm64; **not published**; prebuilt binaries wait on #14.
 
 ## 8. Public API surface (source of truth: `api/rust-fetch.d.ts`)
 
@@ -282,8 +282,8 @@ Six cargo-fuzz targets in `wasm-module/fuzz/fuzz_targets`: `sse`, `lines`, `retr
 ## 13. Documentation inventory
 
 - **Site** (`docs/`, VitePress 2.0.0-alpha.21, TypeDoc 0.28.20 + markdown plugin for `docs/api/`; `npm run build` also runs `scripts/check-links.mjs`): Guide pages: introduction, getting-started, index, configuration, requests, errors, timeouts-and-retries, load-limits, circuit-breakers, observability, interceptors, streaming, uploads, websockets, typescript, testing, examples, validation. Reference/other: architecture, rust, compatibility, stability, development, faq, security, threat-model, security-review, security-release-checklist, unsafe, performance, reliability, conformance, changelog (reads `CHANGELOG.md` at build), index. Nav "More" menu and a version menu (latest, 2.7, 2.6, 2.5). 2.8-only pages are intentionally not backfilled into the 2.7 archive; 2.6.x and earlier docs unchanged.
-- **Repo docs:** README (additive-only rule, section 17), CONFORMANCE.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, CODE_OF_CONDUCT.md, `llms.txt` (182 lines, 18 KB; copied into the npm package by postbuild; updated for 2.8 in #324).
-- **Live check on 2026-11-09:** `/rust-fetch/guide/validation` 200, `/rust-fetch/changelog` 200 (shows 2.8.0). **`llms.txt` is not served by the site** (`/rust-fetch/llms.txt` and `/llms.txt` → 404; it exists only at the repo root, in the npm package, and on `raw.githubusercontent.com`). Nothing in `docs/public` or the docs config publishes it. Decision pending (section 15).
+- **Repo docs:** README (additive-only rule, section 17), CONFORMANCE.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, CODE_OF_CONDUCT.md, `llms.txt` (130 lines, ~21 KB; copied into the npm package by postbuild and mirrored to `docs/public/llms.txt`).
+- **Docs site crawler metadata (`#329`, `#330`):** VitePress publishes `docs/public/llms.txt` at `/rust-fetch/llms.txt`, `docs/public/robots.txt`, `sitemap.xml`, per-page canonical URLs, and an active version menu (`2.8 (latest)`).
 - **Verified by scripts per the last report** (not re-run): every property/method in `api/rust-fetch.d.ts` appears in the docs; identifiers named in the 2.7/2.8 changelog entries appear in the docs except internal ones. That checks presence, not quality.
 
 ## 14. Examples (`examples/`)
@@ -292,12 +292,13 @@ Six cargo-fuzz targets in `wasm-module/fuzz/fuzz_targets`: `sse`, `lines`, `retr
 
 ## 15. Roadmap and open work
 
-**Done and released:** 2.2.0 (upload progress, WebSockets, generics), 2.3.0 (SSE, NDJSON, real-browser CI), 2.4.0 (performance, proxies, redirect options, bundle size), 2.5.0 (SSRF, size limits, base-URL safety), 2.6.0 (conformance, credential-safe redirects, load shedding, bounded queues, hardened configs), 2.7.0–2.7.2 (idempotency, limits, circuit breaker, observability, fuzzing, phase timeouts, streaming uploads, metrics, then performance and security patches), **2.8.0** (security verification + data/DX features: `schema`/`ValidationError`, `paginate`, `httpCache`, `dedupe`, `testing` mock transport, `extend`, `auth`, `resume`, `blob`, error guards, abort `reason`, docs site + TypeDoc, examples, bundler/runtime tests, Windows CI, threat model, claims audit, Miri/ASan, reproducible Wasm, Scorecard, CSP tests, Rust `on_upload_progress`; fixes: URL password/fragment no longer on errors (#238/#239), `redactUrl` covers `cause`, native `Content-Length`+`Transfer-Encoding` handling (#243), node:http TLS parity (#244), `baseUrl` query/fragment refused, new IPv6 special ranges blocked).
+**Done and released:** 2.2.0 (upload progress, WebSockets, generics), 2.3.0 (SSE, NDJSON, real-browser CI), 2.4.0 (performance, proxies, redirect options, bundle size), 2.5.0 (SSRF, size limits, base-URL safety), 2.6.0 (conformance, credential-safe redirects, load shedding, bounded queues, hardened configs), 2.7.0–2.7.2 (idempotency, limits, circuit breaker, observability, fuzzing, phase timeouts, streaming uploads, metrics, then performance and security patches), **2.8.0** (security verification + data/DX features: `schema`/`ValidationError`, `paginate`, `httpCache`, `dedupe`, `testing` mock transport, `extend`, `auth`, `resume`, `blob`, error guards, abort `reason`, docs site + TypeDoc, examples, bundler/runtime tests, Windows CI, threat model, claims audit, Miri/ASan, reproducible Wasm, Scorecard, CSP tests, Rust `on_upload_progress`; fixes: URL password/fragment no longer on errors (#238/#239), `redactUrl` covers `cause`, native `Content-Length`+`Transfer-Encoding` handling (#243), node:http TLS parity (#244), `baseUrl` query/fragment refused, new IPv6 special ranges blocked), **2.8.1** (synchronous `deadlineMs`/`AbortSignal` closure cleanup `#327`, npm `sideEffects`), and **2.8.2** (`url 2.5.9` for `RUSTSEC-2026-0592` `#336`, 20% smaller browser Wasm/JS bundle `#337`, docs crawler metadata `#330`).
 
-**Open GitHub issues (2.9.0 milestone, 18 open, as listed 2026-11-09):**
+**Open GitHub issues (2.9.0 milestone — reserved for new features — 18 open, plus #332 and #26 outside the milestone, verified 2026-11-24):**
 
 | # | Topic | State / blocker |
 | --- | --- | --- |
+| 332 | Distribution: benchmark comparisons, npm manifest metadata, and the Rust install path (no milestone) | open |
 | 235 | Tracking: security verification | umbrella |
 | 234 | Vulnerability response drill | needs a second releaser (person) |
 | 223 | Commission an independent security review | needs a reviewer |
@@ -309,7 +310,7 @@ Six cargo-fuzz targets in `wasm-module/fuzz/fuzz_targets`: `sse`, `lines`, `retr
 | 50 | Node.js cookie jar | needs a public-suffix list |
 | 24 | Rust crate: interceptors and WebSockets (upload progress done) | open |
 | 14 | Prebuilt native binaries as optional npm packages | needs npm package names/permissions (one-time setup) |
-| 26 | Roadmap tracking issue (no milestone) | its text says 2.8.0/2.9.0 "merged, release pending": stale |
+| 26 | Roadmap tracking issue (no milestone) | updated 2026-11-24 to match `ROADMAP.md` (2.8.x released; 2.9.0 reserved for new features) |
 
 Other milestones "Native transport delivery" and "WebRTC signaling" exist with 0 issues (issues were moved to 2.9.0). Closed in 2.8: #243, #244, #239, #238, #233 …
 
@@ -321,18 +322,18 @@ Other milestones "Native transport delivery" and "WebRTC signaling" exist with 0
 
 | Where | Says | Reality |
 | --- | --- | --- |
-| `ROADMAP.md` row for 2.8.0 and issue #26 text | "Merged, not released" | 2.8.0 was published 2026-11-08 |
-| `SECURITY_PROGRESS.md` (untracked) | "Nothing tagged or published; npm latest is 2.7.2"; tag push denied | `v2.8.0` is tagged and published; the notes are obsolete |
-| `docs/index.md:36`, `docs/development.md:32`, `ROADMAP.md:162` | "69 behaviours" (414 observations) | `CONFORMANCE.md` has 81 rows (69 + 12 hostile-response) |
-| `docs/threat-model.md` (TM07 "full range test pending (#237)", TM11 "`unsafe` inventory pending (#246)", TM14 "Not yet merged: the matrix test (#245)") | pending | the changelog says the IANA range test, unsafe inventory + Miri/ASan and the TLS matrix all landed in 2.8.0 |
-| `docs/unsafe.md` heading "Not covered yet" | lists Miri/ASan as running, then dependencies as not covered | only the dependency item is still open; the heading is misleading |
+| `ROADMAP.md` row for 2.8.0 and issue #26 text | "Merged, not released" | Resolved in 2.8.2: `ROADMAP.md`, milestone #8 (`2.9.0`), and issue #26 updated for 2.8.0–2.8.2 released and 2.9.0 reserved for new features |
+| `SECURITY_PROGRESS.md` | "Nothing tagged or published; npm latest is 2.7.2" / stale 2026-11-09 hold notes | Resolved in 2.8.2: updated for 2.8.0–2.8.2 and 2.9.0 roadmap |
+| `docs/index.md:36`, `docs/development.md:32`, `docs/architecture.md:13`, `ROADMAP.md:162` | "69 behaviours" (414 observations) | Resolved in 2.8.2: updated to 81 behaviours (486 observations) matching `CONFORMANCE.md` |
+| `docs/threat-model.md` (TM07, TM11, TM14) | listed #237, #244/#245, #246 as pending | Resolved in 2.8.2: updated to reflect completed 2.8.0 tests and inventory |
+| `docs/unsafe.md` heading "Not covered yet" | lists Miri/ASan as running, then dependencies as not covered | Resolved in 2.8.2: renamed heading to `Verification and gaps` |
 | `docs/security.md` | "29 claims" in the changelog | table has C01–C30 (30) |
-| `docs/security-review.md` Size table | counts at commit `33efb92` (2026-11-07) | now core 15,032 lines vs 14,783 etc. |
+| `docs/security-review.md` Size table | counts at commit `33efb92` (2026-11-07) | dated snapshot explicitly labelled as commit `33efb92` |
 | `docs/security-release-checklist.md` state table | "as checked on 2026-11-07" | stated as dated; re-check before relying |
 | Pasted "zero-omission reference" | many wrong names/versions | see section 0 |
-| `CONTRIBUTING.md` | "Rust (stable)" | CI/release pin 1.99.1; the manifest has no `rust-version` |
+| `CONTRIBUTING.md` | "Rust (stable)" | Resolved in 2.8.2: notes CI/release pin `1.99.1` |
 
-These are findings, not fixes: none has been changed. Per the maintainer's rules, doc fixes need a PR and README content is never removed without asking.
+Items marked *Resolved in 2.8.2* above were updated in the `2.8.2` release PR; dated historical snapshots remain labelled with their dates/commits.
 
 ## 17. Maintainer working agreements (from the saved session notes)
 

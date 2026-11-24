@@ -7,20 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-11-24
+
+Patch release for 2.8.x updating `url` to `2.5.9` for `RUSTSEC-2026-0592`, reducing the combined browser WebAssembly and JavaScript glue bundle by 20% while keeping public signatures and exported names intact, and updating crawler metadata and the 2.9.0 roadmap.
+
+### Security
+- **Bump `url` `2.5.8` → `2.5.9` (`#336`):** Updates `url` (and transitive `form_urlencoded` `1.2.2` → `1.2.3`) across `wasm-module/Cargo.lock`, `native/Cargo.lock`, and `wasm-module/fuzz/Cargo.lock` to resolve `RUSTSEC-2026-0592` (stack overflow in `Url::origin()` on nested `blob:` URLs).
+
 ### Changed
-- **Browser Wasm and JS glue bundle-size reduction (`#337`):** Reduced the combined browser payload (`rust_fetch_bg.wasm` + `rust_fetch.js`) from `172.5 kB` to `137.8 kB` brotli (`-34.7 kB` / `-20.1%`) and `210.9 kB` to `166.4 kB` gzip (`-44.5 kB` / `-21.1%`): `rust_fetch_bg.wasm` drops from `455.0 / 183.1 / 148.6 kB` to `361.8 / 146.8 / 120.5 kB` (raw / gzip / brotli) and `rust_fetch.js` from `135.2 / 27.9 / 24.0 kB` to `60.9 / 19.6 / 17.4 kB`, while keeping public TypeScript/JavaScript/Rust signatures intact and keeping all security validation in Rust.
+- **Browser Wasm and JS glue bundle-size reduction (`#337`):** Reduced the combined browser payload (`rust_fetch_bg.wasm` + `rust_fetch.js`) from `172.5 kB` to `138.1 kB` brotli (`-34.4 kB` / `-20.0%`) and `210.9 kB` to `166.5 kB` gzip (`-44.4 kB` / `-21.1%`): `rust_fetch_bg.wasm` drops from `455.0 / 183.1 / 148.6 kB` to `361.8 / 146.8 / 120.6 kB` (raw / gzip / brotli) and `rust_fetch.js` from `135.2 / 27.9 / 24.0 kB` to `61.3 / 19.7 / 17.5 kB`, while keeping public TypeScript/JavaScript/Rust signatures intact and keeping all security validation in Rust.
   - Dropped the unused `wasm-bindgen/serde-serialize` feature and tuned `wasm-opt` (`-Os --one-caller-inline-max-function-size=500 --converge --strip-producers`, omitting `--low-memory-unused`) while keeping `opt-level = "s"` and stable Rust `1.99.1` (`wasm-module/Cargo.toml`, `wasm-module/Cargo.lock`, `wasm-module/fuzz/Cargo.lock`).
   - Replaced heavy Wasm header/status formatting and body serialization paths with ASCII helpers (`Method::from_str` via `eq_ignore_ascii_case`, `Method::as_str()`, `validate_header_name`, `validate_header_value`, `status_text` — verified for parity in both unit tests and `fuzz_headers`), direct `wasm32` encoding in `RequestBuilder::json()` / `.form()` so `send_streaming()` keeps supporting JSON and form bodies without pulling `serde_json::to_vec`/`zmij`/`serde_urlencoded` into `WasmClient`, manual `fmt::Debug` on `CircuitOpenError`, type-erased streaming (`into_js_stream`), and compact JS property setters (`wasm-module/src/types.rs`, `src/circuit.rs`, `src/client.rs`, `src/idempotency.rs`, `src/fuzzing.rs`, `src/wasm/`).
-  - Consolidated `WasmClient` verb exports into a single `u8`-opcoded `#[doc(hidden)]` `__dispatch` FFI entrypoint (avoiding per-request method-string FFI allocations), installed non-enumerable named methods via pollution-safe `Object.defineProperty(..., { __proto__: null, ... })`, preserved all 6 exported class names (`WasmClient`, `EventStream`, `WebSocketConnection`, `IntoUnderlying*`) without `esbuild`'s `keepNames` helper, deduplicated shared JS helpers (`wasm-module/js/client-helpers.js`, `wasm-module/js/methods.js`), and minified `rust_fetch.js` with `esbuild` (`scripts/postbuild.mjs`).
+  - Consolidated `WasmClient` verb exports into a single `u8`-opcoded `#[doc(hidden)]` `__dispatch` FFI entrypoint (avoiding per-request method-string FFI allocations), installed non-enumerable named methods via pollution-safe `Object.defineProperty(..., { __proto__: null, ... })`, preserved all 6 exported class names (`WasmClient`, `EventStream`, `WebSocketConnection`, `IntoUnderlying*`) and all exported function names (`is*Error`, `fetch_*`, `create_client`, `initSync`, `__wbg_init`) without `esbuild`'s `keepNames` helper, deduplicated shared JS helpers (`wasm-module/js/client-helpers.js`, `wasm-module/js/methods.js`), and minified `rust_fetch.js` with `esbuild` (`scripts/postbuild.mjs`).
   - Tightened CI size budgets in `scripts/check-size.mjs` to `364.0 / 148.5 / 122.0 kB` (Wasm) and `62.5 / 20.5 / 18.2 kB` (JS glue).
   - **Subtle behaviour notes:**
     - `Method::from_str` and `Headers` now use ASCII-only case folding (Unicode lookalikes such as `"po\u{17f}t"` and `"opt\u{131}ons"` no longer parse as HTTP methods).
     - `CircuitOpenError`'s `Debug` formatting now prints escaped `origin` and `retry_after_ms` (whole milliseconds) via `debug_struct` rather than `Duration`'s decimal `Debug`.
     - Numeric JS header and query parameter values format via JavaScript `String(n)` (e.g. `1e21` → `"1e+21"`, `Infinity` → `"Infinity"`, `-0` → `"0"`), falling back to safe `i64` formatting or rejecting with `InvalidInputError` if `Number.prototype.toString` throws.
+- **Dependencies & CI (`#333`, `#334`, `#335`, `#336`):** Updated native dependencies (`napi` `3.16.2`, `napi-derive` `3.7.1`, `webpki-roots` `1.0.12`), dev/CI tools (`playwright` `1.65.0` and matching container image `v1.65.0-noble`, `axios`, `undici`, `vite`, `workerd`, `taiki-e/install-action`).
 
 ### Documentation
-- **Crawler metadata (`#330`):** publish `robots.txt`, `sitemap.xml` and `llms.txt` with the documentation site, and emit one canonical URL per page, so search engines and AI assistants can index the docs (`docs/public/`, `docs/.vitepress/config.mts`).
-- **Bundle-size figures (`#337`):** updated browser bundle-size numbers (`~138 KB` brotli total: `120 KB` `.wasm` + `17.4 KB` minified JS glue) across `README.md`, `llms.txt`, `docs/public/llms.txt`, `PROJECT_REFERENCE.md`, and the VitePress guides (`docs/guide/introduction.md`, `docs/compatibility.md`, `docs/faq.md`).
+- **Crawler metadata & version menu (`#329`, `#330`):** Show active version in the docs menu and archive banner, publish `robots.txt`, `sitemap.xml` and `llms.txt` with the documentation site, and emit one canonical URL per page (`docs/public/`, `docs/.vitepress/`).
+- **Bundle-size figures, 2.9.0 roadmap & documentation audit (`#337`):** Updated browser bundle-size numbers (`~138 KB` brotli total: `120 KB` `.wasm` + `17.5 KB` minified JS glue) and subtle 2.8.2 notes across `README.md`, `llms.txt`, `docs/public/llms.txt`, `PROJECT_REFERENCE.md`, and the VitePress guides (`docs/guide/{getting-started,introduction,index,errors}.md`, `docs/compatibility.md`, `docs/faq.md`); resolved documentation drift across `docs/{index,development,architecture,threat-model,unsafe}.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `SECURITY_PROGRESS.md` (81 conformance behaviours / 486 observations, completed 2.8.0 security verification items, Rust `1.99.1` CI pin, Rust crate native `on_upload_progress`, `blob`/`ValidationError`/`CircuitOpenError` guide tables); and updated `ROADMAP.md` (along with GitHub milestone `2.9.0` and issue `#26`) to reflect `2.8.0`–`2.8.2` released and `2.9.0` reserved for new features.
 
 ## [2.8.1] - 2026-11-13
 
@@ -464,7 +472,8 @@ See "Upgrading to 2.0" in the README for migration steps.
 - WASM compilation support
 - Simple fetch APIs
 
-[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/asemqaffaf/rust-fetch/compare/v2.8.0...v2.8.1
 [2.8.0]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.2...v2.8.0
 [2.7.2]: https://github.com/asemqaffaf/rust-fetch/compare/v2.7.1...v2.7.2

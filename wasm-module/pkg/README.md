@@ -73,7 +73,7 @@ try {
 More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-started), and configurations to copy for credentialed APIs, user-supplied URLs and streaming APIs in [Hardened configurations](https://asemqaffaf.github.io/rust-fetch/security#hardened-configurations).
 
 > **Release status**
-> - **On npm (2.8.1):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
+> - **On npm (2.8.2):** everything in the documentation, except what's listed below. Node.js requests use a `node:http` transport with a bounded connection pool; browsers use `fetch()`.
 > - **In the repository, not yet in the npm package:** the [native Node.js transport](https://asemqaffaf.github.io/rust-fetch/performance#the-native-transport-not-in-the-npm-package-yet) behind the largest performance gains. The package doesn't include its prebuilt binaries yet; build it with `npm run build:native`.
 
 ## Compared with `fetch()` and axios
@@ -92,7 +92,7 @@ More in [Getting started](https://asemqaffaf.github.io/rust-fetch/guide/getting-
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
 | Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 138 KB: the WebAssembly module (120 KB) and its minified JS glue (17.4 KB) |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 138 KB: the WebAssembly module (120 KB) and its minified JS glue (17.5 KB) |
 
 The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors or WebSockets (it has upload progress on native targets) ([Rust usage](https://asemqaffaf.github.io/rust-fetch/rust)). When something else is the better choice is in [Why rust-fetch?](https://asemqaffaf.github.io/rust-fetch/guide/introduction#when-to-choose-something-else)
 
