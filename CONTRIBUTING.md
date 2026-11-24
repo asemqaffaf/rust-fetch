@@ -13,7 +13,7 @@ Use the [issue forms](https://github.com/asemqaffaf/rust-fetch/issues/new/choose
 ## Setup
 
 You need:
-- Rust (stable) with the `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
+- Rust (stable; CI and releases pin `1.99.1`) with the `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
 - [wasm-pack](https://rustwasm.github.io/wasm-pack/)
 - Node.js 20+
 - Optional, for coverage: [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)

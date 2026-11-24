@@ -20,9 +20,9 @@
 | Limits response size, including decompression | No | `maxContentLength` | `maxResponseBytes` |
 | Refuses requests beyond a pending limit (load shedding) | No | No | `maxPendingRequests` |
 | Header values with CR/LF | Rejected | Stripped silently | Rejected |
-| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 138 KB: the WebAssembly module (120 KB) and its minified JS glue (17.4 KB) |
+| Added to a browser bundle (brotli) | Nothing, it's built in | About 21 KB | About 138 KB: the WebAssembly module (120 KB) and its minified JS glue (17.5 KB) |
 
-The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors, upload progress or WebSockets ([Rust usage](/rust#using-it-from-rust)).
+The rust-fetch column describes the JavaScript API; the Rust crate has no interceptors or WebSockets (it has upload progress on native targets) ([Rust usage](/rust#using-it-from-rust)).
 
 ### One client for HTTP and WebSockets
 
@@ -54,7 +54,7 @@ Unless noted, each of these works the same in browsers, Web Workers and Node.js 
 
 **Requests and responses**
 - **Request bodies** from strings, bytes, `Blob`/`File`, `FormData` (multipart with files), `URLSearchParams` or JSON, with the matching `Content-Type` set for you. [Request bodies](/guide/requests#request-bodies)
-- **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary` or `stream`. [Responses](/guide/requests#responses)
+- **Response decoding** by `Content-Type` (including `application/*+json`), or forced to `json`, `text`, `binary`, `blob`, `stream` or `ndjson`. [Responses](/guide/requests#responses)
 - **Streaming** responses as a `ReadableStream`, and **download progress** callbacks, for large downloads. [Streaming](/guide/streaming#streaming)
 - **Server-Sent Events** with `client.events()`: in browsers and Node.js, with any method, headers and body (as streaming LLM APIs need), JSON data, reconnection with `Last-Event-ID`, and `for await`. **Newline-delimited JSON** with `responseType: 'ndjson'`. [Server-Sent Events](/guide/streaming#server-sent-events)
 - **Upload progress** callbacks, for progress bars on large uploads, which `fetch()` can't report. [Upload progress](/guide/uploads#upload-progress)

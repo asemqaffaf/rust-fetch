@@ -61,11 +61,11 @@ Passed to each call; most override the client option of the same name. The full 
 | `params` | Appended to the query string; arrays repeat the key |
 | `timeoutMs` | Overrides the client timeout |
 | `signal` | An `AbortSignal` that cancels the request, its retries and its body |
-| `responseType` | `'auto'` (by `Content-Type`), `'json'`, `'text'`, `'binary'`, `'stream'` or `'ndjson'` |
+| `responseType` | `'auto'` (by `Content-Type`), `'json'`, `'text'`, `'binary'`, `'blob'`, `'stream'` or `'ndjson'` |
 | `onDownloadProgress`, `onUploadProgress` | `({ loaded, total }) => void` |
 | `schema` | Any [Standard Schema](https://standardschema.dev) validator (Zod, Valibot, ArkType…): the body becomes its typed output; see [Validating with Zod](/guide/validation) |
 | `dedupe` | `true` shares identical in-flight `get` and `head` requests; see [Sharing identical requests](/guide/requests#sharing-identical-requests) |
 
 ## What a request resolves to
 
-A 2xx response (or a redirect, with `redirect: 'manual'`) resolves to `{ status, statusText, ok, url, headers, body }`, with lower-cased header names and `body` decoded by `Content-Type` ([Responses](/guide/requests#responses)). Anything else rejects with an `Error` whose `kind` is `HttpError`, `TimeoutError`, `NetworkError`, `CancelledError`, `InvalidInputError`, `ParseError` or `JsInteropError` ([Errors](/guide/errors#errors)).
+A 2xx response (or a redirect, with `redirect: 'manual'`) resolves to `{ status, statusText, ok, url, headers, body }`, with lower-cased header names and `body` decoded by `Content-Type` ([Responses](/guide/requests#responses)). Anything else rejects with an `Error` whose `kind` is `HttpError`, `TimeoutError`, `CircuitOpenError`, `NetworkError`, `CancelledError`, `InvalidInputError`, `ValidationError`, `ParseError` or `JsInteropError` ([Errors](/guide/errors#errors)).
