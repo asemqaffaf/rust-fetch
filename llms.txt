@@ -4,7 +4,7 @@
 
 Documentation: https://asemqaffaf.github.io/rust-fetch/ (guide, security, threat model, performance, transport conformance, API reference).
 
-Use `rust-fetch` when you want `fetch()` plus consistent production policy (phase timeouts, logical deadlines, jittered retries, interceptors, streaming, typed errors, SSRF protection) in one client. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (`rust_fetch_bg.wasm` is ~120 KB brotli; the browser entry `.wasm` + minified JS glue is ~137 KB brotli).
+Use `rust-fetch` when you want `fetch()` plus consistent production policy (phase timeouts, logical deadlines, jittered retries, interceptors, streaming, typed errors, SSRF protection) in one client. Prefer `undici.request()` for maximum raw throughput in Node.js only, and native `fetch()` when bundle size matters most (`rust_fetch_bg.wasm` is ~120 KB brotli; the browser entry `.wasm` + minified JS glue is ~138 KB brotli).
 
 ## Install and setup
 

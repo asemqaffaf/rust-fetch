@@ -1037,7 +1037,7 @@ export interface InitOutput {
     readonly intounderlyingsink_write: (a: number, b: any) => any;
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: any) => any;
-    readonly wasmclient___dispatch: (a: number, b: number, c: number, d: number, e: number, f: number, g: any, h: any, i: any) => any;
+    readonly wasmclient___dispatch: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number) => any;
     readonly wasmclient_addRequestInterceptor: (a: number, b: any) => number;
     readonly wasmclient_addResponseInterceptor: (a: number, b: number, c: number) => number;
     readonly wasmclient_clearInterceptors: (a: number) => void;

@@ -137,6 +137,32 @@ export function fetch_with_options(url: string, method: string, headers: any, bo
 
 export type InitInput =`,
 );
+for (const expected of [
+  'delete(url: string',
+  'fetch(url: string',
+  'get(url: string',
+  'head(url: string',
+  'patch(url: string',
+  'patch_json(url: string',
+  'post(url: string',
+  'post_json(url: string',
+  'put(url: string',
+  'put_json(url: string',
+  'request(method: string',
+  'export function create_client(',
+  'export function fetch_json(',
+  'export function fetch_json_promise(',
+  'export function fetch_text(',
+  'export function fetch_wasm_api(',
+  'export function fetch_wasm_html(',
+  'export function fetch_wasm_json(',
+  'export function fetch_wasm_map(',
+  'export function fetch_with_options(',
+]) {
+  if (!types.includes(expected)) {
+    throw new Error(`postbuild: missing injected declaration '${expected}' in rust_fetch.d.ts`);
+  }
+}
 
 // wasm-bindgen can't declare generic methods, so its request methods resolve to
 // `HttpResponse` (with `body: any`). Make them generic, `get<User>(…)` style;
@@ -208,9 +234,9 @@ const resume = readFileSync(new URL('wasm-module/js/resume.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 const combinedGlue = `${readFileSync(glueUrl, 'utf8')}
+${clientHelpers.trimEnd()}
 ${methods.trimEnd()}
 ${upload.trimEnd()}
-${clientHelpers.trimEnd()}
 ${observability.trimEnd()}
 ${blob.trimEnd()}
 ${transport.trimEnd()}

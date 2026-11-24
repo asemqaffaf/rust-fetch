@@ -1707,9 +1707,24 @@ impl RequestBuilder {
 
     /// Set request body as JSON
     pub fn json<T: serde::Serialize>(mut self, json: &T) -> Result<Self> {
-        let value = serde_json::to_value(json)?;
-        self.config.body = Some(Body::Json(value));
-        Ok(self)
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Encode directly to bytes so wasm32 `send_streaming()` handles JSON
+            // bodies via `Body::Binary` without forcing `Body::to_bytes()` (and
+            // `serde_json::to_value` + float formatting) into `WasmClient`.
+            let bytes = serde_json::to_vec(json)?;
+            if !self.config.headers.contains("content-type") {
+                self.config.headers.set("content-type", "application/json");
+            }
+            self.config.body = Some(Body::Binary(bytes));
+            Ok(self)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let value = serde_json::to_value(json)?;
+            self.config.body = Some(Body::Json(value));
+            Ok(self)
+        }
     }
 
     /// Set request body as text
@@ -1726,8 +1741,22 @@ impl RequestBuilder {
 
     /// Set request body as form data
     pub fn form(mut self, data: std::collections::HashMap<String, String>) -> Self {
-        self.config.body = Some(Body::Form(data));
-        self
+        #[cfg(target_arch = "wasm32")]
+        {
+            let encoded = serde_urlencoded::to_string(&data).unwrap_or_default();
+            if !self.config.headers.contains("content-type") {
+                self.config
+                    .headers
+                    .set("content-type", "application/x-www-form-urlencoded");
+            }
+            self.config.body = Some(Body::Text(encoded));
+            self
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.config.body = Some(Body::Form(data));
+            self
+        }
     }
 
     /// Set request body as `multipart/form-data` (replaces any Content-Type header)
@@ -1832,7 +1861,7 @@ impl RequestBuilder {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn transport_options(&self) -> crate::wasm::transport::TransportOptions<'_> {
+    pub(crate) fn transport_options(&self) -> crate::wasm::transport::TransportOptions<'_> {
         crate::wasm::transport::TransportOptions {
             fetch_options: self.fetch_options.as_ref(),
             proxy: self.client.config.proxy.as_deref(),

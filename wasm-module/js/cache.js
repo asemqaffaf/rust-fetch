@@ -62,7 +62,7 @@
   const GET_LIKE = new Set(['get', 'fetch', 'request']);
   for (const name of REQUEST_METHODS) {
     const index = optionsArgIndex(name);
-    CachingClient.prototype[name] = function (...args) {
+    defineMethod(CachingClient.prototype, name, function (...args) {
       const state = caches.get(this), raw = Base.prototype[name];
       if (!state) return raw.apply(this, args);
       const options = args[index];
@@ -105,13 +105,13 @@
         }
         throw error;
       });
-    };
+    });
   }
   function bypassArgs(args, index) {
     const next = [...args];
     next[index] = bypass(args[index]);
     return next;
   }
-  Object.defineProperty(CachingClient, 'name', { value: 'WasmClient' });
+  setFnName(CachingClient, 'WasmClient');
   WasmClient = CachingClient;
 })();

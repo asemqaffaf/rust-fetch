@@ -48,8 +48,8 @@
       },
       cancel: (reason) => reader.cancel(reason),
     });
-    return Object.defineProperty({ ...response, body }, 'resumes', { get: () => resumes, enumerable: true });
+    return Object.defineProperty({ ...response, body }, 'resumes', { __proto__: null, get: () => resumes, enumerable: true });
   }
-  Object.defineProperty(ResumingClient, 'name', { value: 'WasmClient' });
+  setFnName(ResumingClient, 'WasmClient');
   WasmClient = ResumingClient;
 })();

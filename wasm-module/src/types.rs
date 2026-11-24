@@ -24,17 +24,26 @@ pub enum Method {
 impl Method {
     /// Convert from string representation
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_ascii_uppercase().as_str() {
-            "GET" => Some(Method::Get),
-            "POST" => Some(Method::Post),
-            "PUT" => Some(Method::Put),
-            "DELETE" => Some(Method::Delete),
-            "PATCH" => Some(Method::Patch),
-            "HEAD" => Some(Method::Head),
-            "OPTIONS" => Some(Method::Options),
-            "CONNECT" => Some(Method::Connect),
-            "TRACE" => Some(Method::Trace),
-            _ => None,
+        if s.eq_ignore_ascii_case("GET") {
+            Some(Method::Get)
+        } else if s.eq_ignore_ascii_case("POST") {
+            Some(Method::Post)
+        } else if s.eq_ignore_ascii_case("PUT") {
+            Some(Method::Put)
+        } else if s.eq_ignore_ascii_case("DELETE") {
+            Some(Method::Delete)
+        } else if s.eq_ignore_ascii_case("PATCH") {
+            Some(Method::Patch)
+        } else if s.eq_ignore_ascii_case("HEAD") {
+            Some(Method::Head)
+        } else if s.eq_ignore_ascii_case("OPTIONS") {
+            Some(Method::Options)
+        } else if s.eq_ignore_ascii_case("CONNECT") {
+            Some(Method::Connect)
+        } else if s.eq_ignore_ascii_case("TRACE") {
+            Some(Method::Trace)
+        } else {
+            None
         }
     }
 
@@ -854,6 +863,13 @@ mod tests {
         assert_eq!(headers.remove("X-Token"), Some(vec!["a".to_string()]));
         assert_eq!(headers.get_first("x-token"), None);
         assert_eq!(headers.remove("x-token"), None);
+
+        // ASCII-only case folding: Unicode lookalikes must not fold into ASCII methods/headers.
+        assert_eq!(Method::from_str("post"), Some(Method::Post));
+        assert_eq!(Method::from_str("po\u{17f}t"), None);
+        assert_eq!(Method::from_str("opt\u{131}ons"), None);
+        headers.insert("X-Key", "v");
+        assert!(!headers.contains("x-\u{212a}ey"));
     }
 
     #[test]

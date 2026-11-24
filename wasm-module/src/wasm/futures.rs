@@ -100,7 +100,6 @@ impl Delay {
 impl Future for Delay {
     type Output = ();
 
-    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         loop {
             if self.callback.is_none() {
@@ -155,7 +154,6 @@ impl Aborted {
 impl Future for Aborted {
     type Output = ();
 
-    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         if self.listener.is_none() && !self.signal.aborted() {
             let listener = WakeState::callback(&self.state);

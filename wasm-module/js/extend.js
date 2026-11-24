@@ -46,6 +46,6 @@
       return child;
     }
   }
-  Object.defineProperty(ExtendableClient, 'name', { value: 'WasmClient' });
+  setFnName(ExtendableClient, 'WasmClient');
   WasmClient = ExtendableClient;
 })();

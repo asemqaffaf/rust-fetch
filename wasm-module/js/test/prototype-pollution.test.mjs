@@ -141,5 +141,26 @@ for (const [label, env] of (hasNative ? [['default transport', {}], ['node:http'
       const { stdout } = await promisify(execFile)(process.execPath, [crashChild], { env: { ...process.env, ...env, POLLUTION_PKG: pkg }, timeout: 280_000 });
       assert.ok(JSON.parse(stdout.trim().split('\n').at(-1)).requests > 0);
     });
+
+    it('imports and installs client verbs cleanly when Object.prototype has read-only or setter verb names', { timeout: 60_000 }, async () => {
+      const script = `
+        import assert from 'node:assert/strict';
+        // Warm Node's lazy undici globals before polluting Object.prototype.get (undici's esbuild __name helper omits __proto__: null).
+        void globalThis.Headers;
+        void globalThis.WebSocket;
+        Object.defineProperty(Object.prototype, 'head', { __proto__: null, value: 1, writable: false, configurable: true });
+        Object.defineProperty(Object.prototype, 'post', { __proto__: null, set() { throw new Error('post setter hit'); }, configurable: true });
+        Object.defineProperty(Object.prototype, 'get', { __proto__: null, set() { throw new Error('get setter hit'); }, configurable: true });
+        const { default: init, WasmClient } = await import(${JSON.stringify(pkg)});
+        await init();
+        const client = new WasmClient();
+        for (const name of ['head', 'post', 'get']) {
+          assert.equal(typeof client[name], 'function');
+          assert.equal(client[name].name, name);
+          assert.equal(Object.prototype.propertyIsEnumerable.call(WasmClient.prototype, name), false);
+        }
+      `;
+      await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, ...env }, timeout: 30_000 });
+    });
   });
 }

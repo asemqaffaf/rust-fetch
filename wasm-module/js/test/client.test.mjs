@@ -5,6 +5,11 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import init, {
   WasmClient,
+  EventStream,
+  WebSocketConnection,
+  IntoUnderlyingByteSource,
+  IntoUnderlyingSink,
+  IntoUnderlyingSource,
   create_client,
   fetch_json,
   fetch_json_promise,
@@ -1741,5 +1746,49 @@ describe('interceptors', () => {
     c.addResponseInterceptor(() => 'intercepted');
     assert.equal((await pending).body.slow, true);
     assert.equal(await c.get(server.url('/json')), 'intercepted');
+  });
+
+  it('preserves exported class/method names, dispatches all modes, and survives Number.prototype.toString override', async () => {
+    assert.equal(WasmClient.name, 'WasmClient');
+    assert.equal(EventStream.name, 'EventStream');
+    assert.equal(WebSocketConnection.name, 'WebSocketConnection');
+    assert.equal(IntoUnderlyingByteSource.name, 'IntoUnderlyingByteSource');
+    assert.equal(IntoUnderlyingSink.name, 'IntoUnderlyingSink');
+    assert.equal(IntoUnderlyingSource.name, 'IntoUnderlyingSource');
+    for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
+      assert.equal(WasmClient.prototype[name].name, name);
+      assert.equal(Object.prototype.propertyIsEnumerable.call(WasmClient.prototype, name), false);
+    }
+    assert.equal(WasmClient.prototype.__dispatch, undefined);
+
+    const c = client();
+    assert.equal((await c.head(server.url('/empty'))).status, 204);
+    assert.equal((await c.delete(server.url('/echo'))).body.method, 'DELETE');
+    assert.equal((await c.post(server.url('/echo'), { body: 'p' })).body.method, 'POST');
+    assert.equal((await c.put_json(server.url('/echo'), { ok: true })).body.method, 'PUT');
+    assert.equal((await c.patch_json(server.url('/echo'), { ok: 2 })).body.method, 'PATCH');
+    assert.equal((await c.fetch(server.url('/echo'), { method: 'POST', body: 'f' })).body.body, 'f');
+
+    const originalToString = Number.prototype.toString;
+    let seen;
+    const mockClient = new WasmClient({
+      transport: (req) => {
+        seen = req;
+        return Promise.resolve({ status: 200, statusText: 'OK', url: req.url, headers: {}, body: new Uint8Array() });
+      },
+    });
+    Number.prototype.toString = () => {
+      throw new Error('broken toString');
+    };
+    try {
+      const res = await mockClient.get('https://example.test/echo', { params: { p: 2 }, headers: { 'x-n': 7 } });
+      assert.equal(res.status, 200);
+      assert.equal(seen.url, 'https://example.test/echo?p=2');
+      assert.equal(seen.headers['x-n'], '7');
+      const err = await rejection(mockClient.get('https://example.test/echo', { params: { bad: 1.5 } }));
+      assert.equal(err.kind, 'InvalidInputError');
+    } finally {
+      Number.prototype.toString = originalToString;
+    }
   });
 });

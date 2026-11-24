@@ -11,7 +11,7 @@
   }
   for (const name of REQUEST_METHODS) {
     const index = optionsArgIndex(name);
-    TransportClient.prototype[name] = function (...args) {
+    defineMethod(TransportClient.prototype, name, function (...args) {
       const transport = custom.get(this);
       if (transport) {
         const given = args[index];
@@ -19,8 +19,8 @@
         args[index] = Object.assign({ __proto__: given == null ? Object.prototype : Object.getPrototypeOf(given) }, given, { __transport: transport });
       }
       return Base.prototype[name].apply(this, args);
-    };
+    });
   }
-  Object.defineProperty(TransportClient, 'name', { value: 'WasmClient' });
+  setFnName(TransportClient, 'WasmClient');
   WasmClient = TransportClient;
 })();

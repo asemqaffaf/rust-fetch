@@ -1,80 +1,64 @@
-// Client verb shortcuts and standalone fetch helpers routed through WasmClient.__dispatch.
-let __standaloneDispatch;
+// Client verb shortcuts routed through WasmClient.__dispatch (observability.js wires standalone exports).
 (() => {
+  const OP_GET = 0;
+  const OP_HEAD = 1;
+  const OP_DELETE = 2;
+  const OP_POST = 3;
+  const OP_PUT = 4;
+  const OP_PATCH = 5;
+  const OP_POST_JSON = 6;
+  const OP_PUT_JSON = 7;
+  const OP_PATCH_JSON = 8;
+  const OP_FETCH = 9;
+  const OP_REQUEST = 10;
   const proto = WasmClient.prototype;
   const dispatch = proto.__dispatch;
-  __standaloneDispatch = dispatch;
   delete proto.__dispatch;
-  for (const [name, method] of [['get', 'GET'], ['head', 'HEAD'], ['delete', 'DELETE']]) {
-    proto[name] = function (url, options) {
-      return dispatch.call(this, 1, method, url, undefined, undefined, options);
-    };
+  for (const [name, op] of [
+    ['get', OP_GET],
+    ['head', OP_HEAD],
+    ['delete', OP_DELETE],
+    ['post', OP_POST],
+    ['put', OP_PUT],
+    ['patch', OP_PATCH],
+    ['fetch', OP_FETCH],
+  ]) {
+    defineMethod(proto, name, function (url, arg) {
+      return dispatch.call(this, op, url, arg);
+    });
   }
-  for (const [name, method] of [['post', 'POST'], ['put', 'PUT'], ['patch', 'PATCH']]) {
-    proto[name] = function (url, init) {
-      return dispatch.call(this, 2, method, url, undefined, undefined, init);
-    };
+  for (const [name, op] of [
+    ['post_json', OP_POST_JSON],
+    ['put_json', OP_PUT_JSON],
+    ['patch_json', OP_PATCH_JSON],
+  ]) {
+    defineMethod(proto, name, function (url, body, options) {
+      return dispatch.call(this, op, url, body, options);
+    });
   }
-  for (const [name, method] of [['post_json', 'POST'], ['put_json', 'PUT'], ['patch_json', 'PATCH']]) {
-    proto[name] = function (url, body, options) {
-      return dispatch.call(this, 3, method, url, undefined, body, options);
-    };
-  }
-  proto.request = function (method, url, headers, body, options) {
-    return dispatch.call(this, 0, method, url, headers, body, options);
-  };
-  proto.fetch = function (url, init) {
-    return dispatch.call(this, 4, '', url, undefined, undefined, init);
-  };
+  defineMethod(proto, 'request', function (method, url, headers, body, options) {
+    return dispatch.call(this, OP_REQUEST, url, typeof method === 'string' ? method : String(method), headers, body, options);
+  });
+  // Preserve exported class names after esbuild minification without keepNames' unsafe __name helper.
+  for (const [ctor, name] of [
+    [EventStream, 'EventStream'],
+    [WebSocketConnection, 'WebSocketConnection'],
+    [IntoUnderlyingByteSource, 'IntoUnderlyingByteSource'],
+    [IntoUnderlyingSink, 'IntoUnderlyingSink'],
+    [IntoUnderlyingSource, 'IntoUnderlyingSource'],
+  ]) setFnName(ctor, name);
 })();
-
-const __BaseClient = WasmClient;
-function __standalone(mode, method, url, headers, body, options) {
-  const client = new __BaseClient();
-  try {
-    return __standaloneDispatch.call(client, mode, method, url, headers, body, options);
-  } finally {
-    client.free();
-  }
-}
 
 export function create_client() {
   return new WasmClient();
 }
 
-export function fetch_json(url) {
-  return __standalone(1, 'GET', url, undefined, undefined, { __proto__: null, responseType: 'json' }).then((response) => response.body);
-}
-
-export function fetch_json_promise(url) {
-  return fetch_json(url);
-}
-
-export function fetch_text(url) {
-  return __standalone(1, 'GET', url, undefined, undefined, { __proto__: null, responseType: 'text' }).then((response) =>
-    typeof response.body === 'string' ? response.body : '',
-  );
-}
-
-export function fetch_with_options(url, method, headers, body) {
-  if (body != null && typeof body !== 'string') {
-    return Promise.reject(new TypeError('body must be a string'));
-  }
-  return __standalone(0, method, url, headers, body);
-}
-
-export function fetch_wasm_json(url) {
-  return fetch_json(url);
-}
-
-export function fetch_wasm_html(url) {
-  return fetch_text(url);
-}
-
-export function fetch_wasm_map(url) {
-  return fetch_json(url);
-}
-
-export function fetch_wasm_api(url) {
-  return fetch_json(url);
-}
+// Initialized at module load by observability.js on the contextual-error path.
+export let fetch_json,
+  fetch_json_promise,
+  fetch_text,
+  fetch_with_options,
+  fetch_wasm_json,
+  fetch_wasm_html,
+  fetch_wasm_map,
+  fetch_wasm_api;

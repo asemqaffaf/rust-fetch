@@ -52,7 +52,7 @@
   }
   for (const name of REQUEST_METHODS) {
     const raw = Base.prototype[name];
-    AuthClient.prototype[name] = function (...args) {
+    defineMethod(AuthClient.prototype, name, function (...args) {
       const state = states.get(this);
       if (!state?.auth.refresh) return raw.apply(this, args);
       const epoch = state.epoch;
@@ -69,8 +69,8 @@
         }
         return raw.apply(this, args);
       });
-    };
+    });
   }
-  Object.defineProperty(AuthClient, 'name', { value: 'WasmClient' });
+  setFnName(AuthClient, 'WasmClient');
   WasmClient = AuthClient;
 })();

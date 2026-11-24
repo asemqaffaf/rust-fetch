@@ -52,13 +52,13 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 
-# wasm-opt's default -O inlines every single-caller function, merging the
-# request futures into a few very large functions. V8 compiles each function
-# in full on its first call, so the first request compiled code for options it
-# never used. Capping that inlining keeps first-request compilation smaller
-# (and the module slightly smaller) without measurable per-request cost (#180).
+# Optimize Wasm binary size with `-Os` while capping single-caller inlining at
+# 500 ops so large async request futures aren't fused into one cold function (#180).
+# `--converge` runs passes to a fixed point and `--strip-producers` drops the
+# producer custom section. `--low-memory-unused` is omitted because Rust's
+# stack-first wasm32 layout grows the stack downward toward address 0.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Os", "--one-caller-inline-max-function-size=500", "--low-memory-unused", "--converge", "--strip-producers"]
+wasm-opt = ["-Os", "--one-caller-inline-max-function-size=500", "--converge", "--strip-producers"]
 
 [profile.dev]
 opt-level = 0

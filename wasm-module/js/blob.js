@@ -4,7 +4,7 @@
   class BlobClient extends Base {}
   for (const name of REQUEST_METHODS) {
     const index = optionsArgIndex(name);
-    BlobClient.prototype[name] = function (...args) {
+    defineMethod(BlobClient.prototype, name, function (...args) {
       const options = args[index];
       if (options == null || options.responseType !== 'blob') return Base.prototype[name].apply(this, args);
       if (typeof Blob === 'undefined') return Promise.reject(invalidInput('responseType', "responseType 'blob' needs a runtime with Blob"));
@@ -13,8 +13,8 @@
         ...response,
         body: new Blob(response.body ? [response.body] : [], { type: String(response.headers['content-type'] ?? '').toLowerCase() }),
       }));
-    };
+    });
   }
-  Object.defineProperty(BlobClient, 'name', { value: 'WasmClient' });
+  setFnName(BlobClient, 'WasmClient');
   WasmClient = BlobClient;
 })();

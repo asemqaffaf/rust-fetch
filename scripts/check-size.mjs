@@ -9,8 +9,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 360_000, gzip: 147_000, brotli: 121_500 }, // lowered after removing serde-serialize, Unicode casing, http header/status tables, flt2dec/zmij/serde_urlencoded, Duration Debug formatting, duplicate verb/http.rs exports (via __dispatch), streaming monomorphizations, inline FFI bloat, plus wasm-opt -Os --low-memory-unused --converge --strip-producers
-  'rust_fetch.js': { raw: 63_500, gzip: 21_000, brotli: 18_600 }, // includes js/methods.js, shared client-helpers.js, timings, tracing, redaction, metrics, prototype-pollution guards, auth, dedupe, httpCache, schema, resume, extend, paginate; lowered after collapsing __dispatch wrappers, deduplicating JS helpers, and minifying with esbuild
+  'rust_fetch_bg.wasm': { raw: 364_000, gzip: 148_500, brotli: 122_000 }, // lowered after removing serde-serialize, Unicode casing, http header/status tables, flt2dec/zmij/serde_urlencoded, Duration Debug formatting, duplicate verb/http.rs exports (via u8 __dispatch), streaming monomorphizations, plus wasm-opt -Os --one-caller-inline-max-function-size=500 --converge --strip-producers
+  'rust_fetch.js': { raw: 62_500, gzip: 20_500, brotli: 18_200 }, // includes shared client-helpers.js, js/methods.js, timings, tracing, redaction, metrics, prototype-pollution guards, auth, dedupe, httpCache, schema, resume, extend, paginate; lowered after collapsing __dispatch wrappers, deduplicating JS helpers, and minifying with esbuild (while preserving exported class and method names)
   'node.js': { raw: 60_500, gzip: 19_400, brotli: 16_950 }, // Node transports, prototype-pollution hardening (#191), the compact native entry with a full-policy fallback (#181), and the certificate policy (#244); not loaded by browsers.
 };
 

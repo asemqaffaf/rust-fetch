@@ -22,13 +22,13 @@
     const index = optionsArgIndex(name);
     const raw = Base.prototype[name];
     const method = name === 'request' || name === 'fetch' ? undefined : name.replace('_json', '').toUpperCase();
-    SchemaClient.prototype[name] = function (...args) {
+    defineMethod(SchemaClient.prototype, name, function (...args) {
       let standard;
       try { standard = check(args[index]); } catch (error) { return Promise.reject(error); }
       const pending = raw.apply(this, args);
       return standard ? pending.then((response) => validated(method ?? (name === 'request' ? String(args[0]).toUpperCase() : String(args[1]?.method ?? 'GET').toUpperCase()), response, standard)) : pending;
-    };
+    });
   }
-  Object.defineProperty(SchemaClient, 'name', { value: 'WasmClient' });
+  setFnName(SchemaClient, 'WasmClient');
   WasmClient = SchemaClient;
 })();

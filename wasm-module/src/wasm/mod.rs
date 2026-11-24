@@ -771,53 +771,91 @@ impl WasmClient {
 
     /// Single request dispatch entry exported to JS; verb shortcuts live on
     /// `WasmClient.prototype` in `js/methods.js` to avoid 10 duplicate FFI wrappers.
+    /// Encoding the verb as a `u8` avoids passing and parsing a `method: String`
+    /// across the Wasm boundary on hot verb calls (`get`, `post`, etc.).
+    /// `wasm-bindgen` requires `pub` on exported methods; `#[doc(hidden)]` and
+    /// `skip_typescript` keep it internal (`methods.js` deletes `__dispatch`).
+    #[doc(hidden)]
     #[wasm_bindgen(js_name = __dispatch, skip_typescript)]
     pub fn dispatch(
         &self,
-        mode: u8,
-        method: String,
+        op: u8,
         url: String,
-        headers: JsValue,
-        body: JsValue,
-        options: JsValue,
+        a: JsValue,
+        b: Option<JsValue>,
+        c: Option<JsValue>,
+        d: Option<JsValue>,
     ) -> ResponsePromise {
-        match mode {
-            0 => self.request(
-                method,
+        const OP_GET: u8 = 0;
+        const OP_HEAD: u8 = 1;
+        const OP_DELETE: u8 = 2;
+        const OP_POST: u8 = 3;
+        const OP_PUT: u8 = 4;
+        const OP_PATCH: u8 = 5;
+        const OP_POST_JSON: u8 = 6;
+        const OP_PUT_JSON: u8 = 7;
+        const OP_PATCH_JSON: u8 = 8;
+        const OP_FETCH: u8 = 9;
+        const OP_REQUEST: u8 = 10;
+
+        match op {
+            OP_GET => self.perform(
+                Method::Get,
                 url,
-                (!headers.is_undefined() && !headers.is_null()).then_some(headers.into()),
-                (!body.is_undefined() && !body.is_null()).then_some(body.into()),
-                (!options.is_undefined() && !options.is_null()).then_some(options.into()),
+                JsValue::UNDEFINED,
+                BodyMode::Auto(JsValue::UNDEFINED),
+                a,
             ),
-            1 => match parse_method(&method) {
-                Ok(method) => self.perform(
+            OP_HEAD => self.perform(
+                Method::Head,
+                url,
+                JsValue::UNDEFINED,
+                BodyMode::Auto(JsValue::UNDEFINED),
+                a,
+            ),
+            OP_DELETE => self.perform(
+                Method::Delete,
+                url,
+                JsValue::UNDEFINED,
+                BodyMode::Auto(JsValue::UNDEFINED),
+                a,
+            ),
+            OP_POST => self.perform_init(Method::Post, url, a),
+            OP_PUT => self.perform_init(Method::Put, url, a),
+            OP_PATCH => self.perform_init(Method::Patch, url, a),
+            OP_POST_JSON => self.perform(
+                Method::Post,
+                url,
+                JsValue::UNDEFINED,
+                BodyMode::Json(a),
+                b.unwrap_or(JsValue::UNDEFINED),
+            ),
+            OP_PUT_JSON => self.perform(
+                Method::Put,
+                url,
+                JsValue::UNDEFINED,
+                BodyMode::Json(a),
+                b.unwrap_or(JsValue::UNDEFINED),
+            ),
+            OP_PATCH_JSON => self.perform(
+                Method::Patch,
+                url,
+                JsValue::UNDEFINED,
+                BodyMode::Json(a),
+                b.unwrap_or(JsValue::UNDEFINED),
+            ),
+            OP_FETCH => self.fetch(url, (!a.is_undefined() && !a.is_null()).then_some(a.into())),
+            OP_REQUEST => {
+                let method = a.as_string().unwrap_or_default();
+                self.request(
                     method,
                     url,
-                    JsValue::UNDEFINED,
-                    BodyMode::Auto(JsValue::UNDEFINED),
-                    options,
-                ),
-                Err(error) => reject_request(error, &method, &url),
-            },
-            2 => match parse_method(&method) {
-                Ok(method) => self.perform_init(method, url, options),
-                Err(error) => reject_request(error, &method, &url),
-            },
-            3 => match parse_method(&method) {
-                Ok(method) => self.perform(
-                    method,
-                    url,
-                    JsValue::UNDEFINED,
-                    BodyMode::Json(body),
-                    options,
-                ),
-                Err(error) => reject_request(error, &method, &url),
-            },
-            4 => self.fetch(
-                url,
-                (!options.is_undefined() && !options.is_null()).then_some(options.into()),
-            ),
-            _ => reject_request(invalid("mode", "unknown dispatch mode"), &method, &url),
+                    b.map(Into::into),
+                    c.map(Into::into),
+                    d.map(Into::into),
+                )
+            }
+            _ => reject_request(invalid("op", "unknown dispatch op"), "", &url),
         }
     }
 }
@@ -1176,7 +1214,6 @@ impl<'a> Options<'a> {
         Self { value, names }
     }
 
-    #[inline(never)]
     fn has(&self, name: &str) -> bool {
         self.names
             .as_ref()
@@ -1191,7 +1228,6 @@ impl<'a> Options<'a> {
     }
 
     /// The option, unless it's unset, `null` or `undefined`
-    #[inline(never)]
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
             read(self.value, name)
@@ -1211,7 +1247,6 @@ impl<'a> Options<'a> {
     }
 
     /// The option as it is, `null` included (`undefined` when unset)
-    #[inline(never)]
     fn raw(&self, name: &str) -> JsValue {
         if self.has(name) {
             js_sys::Reflect::get(self.value, &name.into()).unwrap_or(JsValue::UNDEFINED)
@@ -2487,15 +2522,25 @@ fn parse_bool(value: &JsValue, parameter: &str) -> Result<bool> {
 fn scalar_to_string(value: &JsValue) -> Option<String> {
     value
         .as_string()
-        .or_else(|| value.as_f64().map(js_number_to_string))
+        .or_else(|| value.as_f64().and_then(js_number_to_string))
         .or_else(|| value.as_bool().map(|b| b.to_string()))
 }
 
-/// Format a number the way JavaScript's `String(n)` does
-fn js_number_to_string(n: f64) -> String {
-    js_sys::Number::from(n)
-        .to_string_with_radix(10)
-        .map_or_else(|_| String::new(), String::from)
+/// Format a number the way JavaScript's `String(n)` does. If
+/// `Number.prototype.toString` throws, fall back to integer formatting for
+/// safe whole numbers instead of returning an empty string.
+fn js_number_to_string(n: f64) -> Option<String> {
+    if let Ok(s) = js_sys::Number::from(n).to_string_with_radix(10) {
+        return Some(String::from(s));
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "n is checked to be a finite integer within Number.MAX_SAFE_INTEGER (i64 range)"
+    )]
+    (n.is_finite()
+        && n.fract() == 0.0
+        && (-9_007_199_254_740_991.0..=9_007_199_254_740_991.0).contains(&n))
+    .then(|| (n as i64).to_string())
 }
 
 /// Whether `value` is an object whose only prototype is `Object.prototype` (or
@@ -2516,7 +2561,6 @@ fn read(target: &JsValue, name: &str) -> Option<JsValue> {
 
 /// Read an option from an options object, treating `undefined` and `null` as
 /// absent. On a plain object only its own properties count.
-#[inline(never)]
 fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     if !target.is_object() {
         return None;
@@ -2535,7 +2579,6 @@ pub(crate) fn raw_prop(target: &JsValue, name: &str) -> JsValue {
 }
 
 /// `raw_prop`, passing on an exception thrown by a getter
-#[inline(never)]
 fn try_raw_prop(target: &JsValue, name: &str) -> std::result::Result<JsValue, JsValue> {
     if !target.is_object()
         || (is_plain_object(target)
@@ -2556,34 +2599,28 @@ fn headers_to_js(headers: &Headers) -> Result<js_sys::Object> {
     Ok(js_sys::Object::from_entries(&entries)?)
 }
 
-#[inline(never)]
 fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {
     js_sys::Reflect::set(target, &name.into(), value)?;
     Ok(())
 }
 
-#[inline(never)]
 pub(crate) fn set_str(target: &js_sys::Object, name: &str, value: &str) -> Result<()> {
     set(target, name, &JsValue::from_str(value))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-#[inline(never)]
 pub(crate) fn set_bool(target: &js_sys::Object, name: &str, value: bool) -> Result<()> {
     set(target, name, &JsValue::from_bool(value))
 }
 
-#[inline(never)]
 pub(crate) fn set_f64(target: &js_sys::Object, name: &str, value: f64) -> Result<()> {
     set(target, name, &JsValue::from_f64(value))
 }
 
-#[inline(never)]
 fn put_str(target: &JsValue, name: &str, value: &str) {
     let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_str(value));
 }
 
-#[inline(never)]
 fn put_f64(target: &JsValue, name: &str, value: f64) {
     let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_f64(value));
 }

@@ -69,6 +69,6 @@
     get(url, options) { return this.#share('get', url, options); }
     head(url, options) { return this.#share('head', url, options); }
   }
-  Object.defineProperty(DedupingClient, 'name', { value: 'WasmClient' });
+  setFnName(DedupingClient, 'WasmClient');
   WasmClient = DedupingClient;
 })();
