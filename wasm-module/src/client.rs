@@ -1743,6 +1743,7 @@ impl RequestBuilder {
     pub fn form(mut self, data: std::collections::HashMap<String, String>) -> Self {
         #[cfg(target_arch = "wasm32")]
         {
+            // Encoding a `HashMap<String, String>` cannot fail: every key and value is a string.
             let encoded = serde_urlencoded::to_string(&data).unwrap_or_default();
             if !self.config.headers.contains("content-type") {
                 self.config

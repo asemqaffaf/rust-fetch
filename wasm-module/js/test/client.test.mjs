@@ -1755,6 +1755,17 @@ describe('interceptors', () => {
     assert.equal(IntoUnderlyingByteSource.name, 'IntoUnderlyingByteSource');
     assert.equal(IntoUnderlyingSink.name, 'IntoUnderlyingSink');
     assert.equal(IntoUnderlyingSource.name, 'IntoUnderlyingSource');
+    // Exported functions keep the names 2.8.x reported (the minifier would rename them).
+    const pkg = await import('../../pkg/node.js');
+    for (const name of [
+      'create_client', 'initSync', 'fetch_json', 'fetch_text', 'fetch_with_options',
+      'isRustFetchError', 'isHttpError', 'isTimeoutError', 'isNetworkError', 'isParseError', 'isInvalidInputError', 'isCancelledError', 'isCircuitOpenError', 'isJsInteropError', 'isValidationError',
+    ]) {
+      assert.equal(pkg[name].name, name);
+    }
+    assert.equal(pkg.default.name, '__wbg_init');
+    for (const alias of ['fetch_json_promise', 'fetch_wasm_json', 'fetch_wasm_map', 'fetch_wasm_api']) assert.equal(pkg[alias].name, 'fetch_json');
+    assert.equal(pkg.fetch_wasm_html.name, 'fetch_text');
     for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
       assert.equal(WasmClient.prototype[name].name, name);
       assert.equal(Object.prototype.propertyIsEnumerable.call(WasmClient.prototype, name), false);

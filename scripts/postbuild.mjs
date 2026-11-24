@@ -233,6 +233,16 @@ const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8
 const resume = readFileSync(new URL('wasm-module/js/resume.js', root), 'utf8');
 const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
+// Minifying renames the exported functions (`isHttpError.name` would be `"Et"`). Put
+// back the names 2.8.x reported, with the pollution-safe `setFnName`. The aliases
+// (`fetch_json_promise`, `fetch_wasm_*`) are the same function as `fetch_json` and
+// `fetch_text`, as before.
+const exportedFunctionNames = [
+  '__bindNodeTransport', '__setNodeDiagnostics', 'create_client', 'initSync',
+  'fetch_json', 'fetch_text', 'fetch_with_options',
+  'isRustFetchError', 'isHttpError', 'isTimeoutError', 'isNetworkError', 'isParseError', 'isInvalidInputError', 'isCancelledError', 'isCircuitOpenError', 'isJsInteropError', 'isValidationError',
+];
+const restoreFunctionNames = `setFnName(__wbg_init, '__wbg_init');\n${exportedFunctionNames.map((name) => `setFnName(${name}, '${name}');`).join('')}`;
 const combinedGlue = `${readFileSync(glueUrl, 'utf8')}
 ${clientHelpers.trimEnd()}
 ${methods.trimEnd()}
@@ -248,6 +258,7 @@ ${resume.trimEnd()}
 ${extend.trimEnd()}
 ${paginate.trimEnd()}
 ${guards.trimEnd()}
+${restoreFunctionNames}
 `;
 const minifiedGlue = transformSync(combinedGlue, {
   minify: true,
