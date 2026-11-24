@@ -18,7 +18,7 @@ Dates aren't promised; the order is.
 | [2.5.0](#250-security) | Security: SSRF protection, response size limits, base URL safety | Released |
 | [2.6.0](#260-security-and-resource-safety-on-every-transport) | Security and resource safety on every transport, and the open performance work | Released |
 | [2.7.0](#270-resilience-security-and-observability) | Resilience, security and observability | Released |
-| [2.8.0](#280-security-verification-data-and-developer-experience) | Security verification, data and developer experience (plus 2.8.1, 2.8.2 patches) | Released (`2.8.0` on 2026-11-08; `2.8.1` on 2026-11-13; `2.8.2` preparing) |
+| [2.8.0](#280-security-verification-data-and-developer-experience) | Security verification, data and developer experience (plus 2.8.1, 2.8.2 patches) | Released (`2.8.0` on 2026-11-08; `2.8.1` on 2026-11-13; `2.8.2` on 2026-11-24) |
 | [2.9.0](#290-next-minor-release-new-features) | Reserved for new features | Planned — tracks open feature and roadmap items in the [2.9.0 milestone](https://github.com/asemqaffaf/rust-fetch/milestone/8) |
 | [WebRTC signaling](#webrtc-signaling) | WHIP/WHEP signaling clients | Not yet scheduled |
 | [Native transport on npm](#the-native-transport-on-npm) | Prebuilt native binaries in the npm package (needs a one-time npm setup) | Not yet scheduled |

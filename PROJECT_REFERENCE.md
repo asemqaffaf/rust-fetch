@@ -1,6 +1,6 @@
 # rust-fetch: project reference (state of 2026-11-09)
 
-> **Project status (updated 2026-11-24):** `2.8.2` release prepared (following `2.8.0` on 2026-11-08 and `2.8.1` on 2026-11-13); `2.9.0` is reserved for new features and tracks open feature/roadmap items in milestone #8. See sections 10.3, 15, and 16 for current size budgets, open issues, and resolved documentation drift.
+> **Project status (updated 2026-11-24):** `2.8.2` released on 2026-11-24 (following `2.8.0` on 2026-11-08 and `2.8.1` on 2026-11-13); `2.9.0` is reserved for new features and tracks open feature/roadmap items in milestone #8. See sections 10.3, 15, and 16 for current size budgets, open issues, and resolved documentation drift.
 
 A single source of truth for the whole repository: what it is, how it is built, what it guarantees, how it is tested and released, what is done, what is open, and where the existing documentation disagrees with the code.
 
@@ -30,7 +30,7 @@ A single source of truth for the whole repository: what it is, how it is built, 
 | Licence | `MIT OR Apache-2.0` |
 | Repository | `github.com/asemqaffaf/rust-fetch`, default branch `main`; a `v1.x` maintenance branch is described in CONTRIBUTING.md (security and critical fixes only) |
 | Docs site | `https://asemqaffaf.github.io/rust-fetch/` (VitePress, GitHub Pages) |
-| Current release | **2.8.2** (preparing 2026-11-24; latest published on npm: **2.8.1** on 2026-11-13, following **2.8.0** on 2026-11-08) |
+| Current release | **2.8.2**, released 2026-11-24, npm `latest` (following **2.8.1** on 2026-11-13 and **2.8.0** on 2026-11-08) |
 | Rust | edition 2021, `rust-version`: not set in `wasm-module/Cargo.toml` (the pasted reference claimed 1.88; the manifest has no `rust-version`). CI and releases pin **Rust 1.99.1**, wasm-pack **0.15.0** |
 | Node | `engines.node >= 20`; CI on 20, 22, 24 |
 | Size | 351 tracked files, 253 commits at the 2026-11-09 baseline. Rust core (`wasm-module/src`) 15,032 lines; native addon 1,735; JS modules (`wasm-module/js/*.js`) 2,387; Rust tests (`wasm-module/tests`) 2,092; JS tests and helpers (`wasm-module/js/test`) 33,779. (`docs/security-review.md` still quotes older figures from commit `33efb92`.) |
@@ -38,7 +38,7 @@ A single source of truth for the whole repository: what it is, how it is built, 
 
 ### 1.1 Published versions and dist-tags
 
-`npm view rust-fetch dist-tags` (updated 2026-11-24): `latest` 2.8.1 (becoming `2.8.2` on release), `release-2.6` 2.6.2, `release-2.5` 2.5.3, `release-2.4` 2.4.2, `release-2.3` 2.3.1, `release-2.2` 2.2.1, `release-2.1` 2.1.2. There is **no `release-2.7` tag**: 2.7.2 is installed with `rust-fetch@2.7` (SECURITY.md says so).
+`npm view rust-fetch dist-tags` (updated 2026-11-24): `latest` 2.8.2, `release-2.6` 2.6.2, `release-2.5` 2.5.3, `release-2.4` 2.4.2, `release-2.3` 2.3.1, `release-2.2` 2.2.1, `release-2.1` 2.1.2. There is **no `release-2.7` tag**: 2.7.2 is installed with `rust-fetch@2.7` (SECURITY.md says so).
 
 Tag `v2.8.0` points at `37b2e74`, `v2.8.1` points at `24749fc` (2026-11-13), and `2.8.2` (2026-11-24) adds `url 2.5.9` (`RUSTSEC-2026-0592`), the 20% browser bundle reduction (`#337`), and documentation/roadmap updates. Release history from CHANGELOG.md: 0.1.0 (2025-02-23), 0.7.2, 1.0.2, 1.0.4, 1.1.0 (2025-07-27), 2.0.0 (2026-10-22), 2.1.0, 2.1.1, 2.2.0, 2.3.0 (2026-10-23), 2.4.0, 2.4.1 (2026-10-23), 2.5.0, 2.5.1, 2.5.2 (2026-10-24), 2.6.0 (2026-10-25), 2.6.1 (2026-10-29), 2.7.0 (2026-11-02), 2.7.1 (2026-11-03), 2.7.2 (2026-11-06), 2.8.0 (2026-11-08), 2.8.1 (2026-11-13), **2.8.2 (2026-11-24)**. GitHub releases also exist for 2.1.2, 2.2.1, 2.3.1, 2.4.2, 2.5.3, 2.6.2 (security backports, published 2026-11-02).
 
