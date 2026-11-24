@@ -3,11 +3,11 @@ let nodeDiagnostics;
 export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
 (() => {
   const Original = WasmClient, states = new WeakMap(), now = () => performance.now();
-  const own = (o, k) => o != null && Object.hasOwn(Object(o), k) ? o[k] : undefined;
+  const own = ownProp;
   const prop = (o, k) => { try { return o?.[k]; } catch {} };
   const option = (o, k) => o != null && Object.getPrototypeOf(o) !== Object.prototype ? prop(o, k) : own(o, k);
   const copy = (o) => ({ __proto__: Object.getPrototypeOf(o ?? {}), ...o });
-  const invalid = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
+  const invalid = invalidInput;
   const call = (fn, value) => { try { fn?.(value)?.catch?.(() => {}); } catch {} };
   const origin = (value) => { try { return new URL(value).origin; } catch { return ''; } };
   const safeUrl = (value, redact) => {
@@ -233,11 +233,11 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       };
     }
   }
-  Object.defineProperty(ObservableClient, 'name', { value: 'WasmClient' });
-  for (const name of ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_json', 'put_json', 'patch_json', 'request', 'fetch']) {
+  setFnName(ObservableClient, 'WasmClient');
+  for (const name of REQUEST_METHODS) {
     const raw = Original.prototype[name];
     const index = optionsArgIndex(name);
-    ObservableClient.prototype[name] = function (...args) {
+    defineMethod(ObservableClient.prototype, name, function (...args) {
       let state = states.get(this);
       if (!state) { state = stateFor(); states.set(this, state); }
       // Ordinary buffered requests, including explicit request options, do
@@ -247,11 +247,11 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
         if (type !== 'stream' && type !== 'ndjson') return raw.apply(this, args);
       }
       return request(state, name, raw, this, args);
-    };
+    });
   }
   for (const name of ['events', 'websocket']) {
     const raw = Original.prototype[name];
-    ObservableClient.prototype[name] = function (url, options) {
+    defineMethod(ObservableClient.prototype, name, function (url, options) {
       const state = states.get(this) ?? stateFor(), c = state.config;
       let target = resolve(state.options, url, own(options, 'params'));
       if (name === 'websocket') target = target.replace(/^http(s?):/, 'ws$1:');
@@ -262,7 +262,7 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
       for (const hook of ['onOpen', 'onError', 'onClose', 'onReconnect']) {
         const app = prop(init, hook);
         if (app != null && typeof app !== 'function') continue;
-        Object.defineProperty(init, hook, { value: (event) => {
+        Object.defineProperty(init, hook, { __proto__: null, value: (event) => {
           if (hook === 'onReconnect') attempts++;
           if (hook === 'onError') context(event, method, target, Math.max(1, attempts), c.redactUrl);
           log(c, { type: name + ':' + hook.slice(2).toLowerCase(), method, url: safeUrl(target, c.redactUrl), error: hook === 'onError' ? { kind: event?.kind } : undefined });
@@ -284,11 +284,11 @@ export function __setNodeDiagnostics(snapshot) { nodeDiagnostics = snapshot; }
         attempts = 1;
         const opened = connection.opened.catch((e) => { throw context(e, method, target, Math.max(1, attempts), c.redactUrl); });
         opened.catch(() => {});
-        Object.defineProperty(connection, 'opened', { value: opened, configurable: true });
+        Object.defineProperty(connection, 'opened', { __proto__: null, value: opened, configurable: true });
         if (name === 'events') { const next = connection.next.bind(connection); connection.next = (...args) => next(...args).catch((e) => { throw context(e, method, target, Math.max(1, attempts), c.redactUrl); }); }
         return connection;
       } catch (e) { throw context(e, method, target, attempts, c.redactUrl); }
-    };
+    });
   }
   WasmClient = ObservableClient;
   // Keep the convenience exports on the same contextual-error path as clients.

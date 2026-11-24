@@ -76,12 +76,20 @@ impl<T: Fn(CircuitChange)> CircuitCallback for T {}
 
 /// Details available through `Error::circuit_open()` without adding a variant
 /// to the existing exhaustive Rust error enum.
-#[derive(Debug)]
 pub struct CircuitOpenError {
     /// The origin whose circuit is open.
     pub origin: String,
     /// Remaining recovery delay (or probe interval while a probe is active).
     pub retry_after: Duration,
+}
+
+impl fmt::Debug for CircuitOpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CircuitOpenError")
+            .field("origin", &self.origin)
+            .field("retry_after_ms", &self.retry_after.as_millis())
+            .finish()
+    }
 }
 
 impl fmt::Display for CircuitOpenError {
@@ -328,6 +336,17 @@ mod tests {
         assert!(!error.is_retryable());
         assert_eq!(error.circuit_open().unwrap().origin, "http://a");
         assert!(error.circuit_open().unwrap().retry_after > Duration::ZERO);
+        let debug_text = format!("{:?}", error.circuit_open().unwrap());
+        assert!(debug_text.contains("\"http://a\"") && debug_text.contains("retry_after_ms"));
+        let escaped = format!(
+            "{:?}",
+            CircuitOpenError {
+                origin: "http://a\" } \n".to_string(),
+                retry_after: Duration::from_millis(12),
+            }
+        );
+        assert!(escaped.contains("origin: \"http://a\\\" } \\n\""));
+        assert!(escaped.contains("retry_after_ms: 12"));
         assert!(format!("{error}").contains("http://a"));
         assert!(std::error::Error::source(&error).is_some());
         assert!(breaker.enter("http://a/4").is_err());

@@ -574,7 +574,7 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         if merged.iter().next().is_some() {
             let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
             for (name, values) in merged.iter() {
-                set(&js_headers, name, &values.join(", ").into())?;
+                super::set_str(&js_headers, name, &values.join(", "))?;
             }
             set(&init, "headers", &js_headers)?;
         }
@@ -917,9 +917,9 @@ fn failed(shared: &Rc<Shared>, error: Error, code: u16, reason: String) {
     };
     if let Some(callback) = &shared.settings.on_reconnect {
         let info = js_sys::Object::new();
-        let _ = set(&info, "attempt", &attempt.into());
+        let _ = super::set_f64(&info, "attempt", f64::from(attempt));
         #[allow(clippy::cast_precision_loss)]
-        let _ = set(&info, "delayMs", &(delay.as_millis() as f64).into());
+        let _ = super::set_f64(&info, "delayMs", delay.as_millis() as f64);
         let _ = set(&info, "error", &error);
         call(Some(callback), Some(&info));
     }
@@ -1027,9 +1027,9 @@ fn finish_with(
         let _ = reject.call1(&JsValue::UNDEFINED, &error);
     }
     let info = js_sys::Object::new();
-    let _ = set(&info, "code", &code.into());
-    let _ = set(&info, "reason", &reason.into());
-    let _ = set(&info, "wasClean", &was_clean.into());
+    let _ = super::set_f64(&info, "code", f64::from(code));
+    let _ = super::set_str(&info, "reason", &reason);
+    let _ = super::set_bool(&info, "wasClean", was_clean);
     if let Some(resolve) = resolve_closed {
         let _ = resolve.call1(&JsValue::UNDEFINED, &info);
     }

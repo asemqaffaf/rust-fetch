@@ -13,12 +13,12 @@
 //!   requests with an `onUploadProgress` callback, since `fetch()` can't
 //!   report upload progress.
 
-use super::{invalid, js_error_message, set, BodyType};
+use super::{invalid, js_error_message, set, set_bool, set_f64, set_str, BodyType};
 use crate::{
     client::{parse_retry_after, Attempt},
     error::{Error, Result},
     types::{
-        is_json_content_type, is_redirect_status, is_text_content_type, Headers, Redirect,
+        is_json_content_type, is_redirect_status, is_text_content_type, Body, Headers, Redirect,
         RequestConfig, DEFAULT_MAX_REDIRECTS,
     },
 };
@@ -196,6 +196,27 @@ pub(crate) enum PreparedRequest {
     },
 }
 
+/// Encode `RequestConfig::body` for JS transports without pulling `Body::to_bytes`
+/// (`serde_json::Value::serialize`, `zmij`, `serde_urlencoded`) into Wasm.
+fn prepare_body(
+    config: &RequestConfig,
+) -> Result<(Option<&'static str>, Option<js_sys::Uint8Array>)> {
+    let Some(body) = &config.body else {
+        return Ok((None, None));
+    };
+    let (content_type, bytes): (&'static str, &[u8]) = match body {
+        Body::Text(s) => ("text/plain", s.as_bytes()),
+        Body::Binary(b) => ("application/octet-stream", b.as_slice()),
+        Body::Json(_) | Body::Form(_) => {
+            return Err(invalid("body", "unsupported body type"));
+        }
+    };
+    // A Content-Type the caller chose wins over the body's default
+    let default_content_type = (!config.headers.contains("content-type")).then_some(content_type);
+    let view = (!bytes.is_empty()).then(|| js_sys::Uint8Array::from(bytes));
+    Ok((default_content_type, view))
+}
+
 impl PreparedRequest {
     pub(crate) fn new(
         url: &str,
@@ -210,26 +231,14 @@ impl PreparedRequest {
             ..
         } = *options;
         let headers = validated_headers(config)?;
-        let body = match &config.body {
-            Some(body) => Some((body.content_type(), body.to_bytes()?)),
-            None => None,
-        };
-        // A Content-Type the caller chose wins over the body's default
-        let default_content_type = body
-            .as_ref()
-            .filter(|_| !config.headers.contains("content-type"))
-            .map(|(content_type, _)| *content_type);
-        let body = body
-            .map(|(_, bytes)| bytes)
-            .filter(|bytes| !bytes.is_empty())
-            .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
-        let method = config.method.to_reqwest();
+        let (default_content_type, body) = prepare_body(config)?;
+        let method = config.method.as_str();
         let redirect = redirect_mode(config);
 
         if let Some(transport) = options.transport.cloned().or_else(node_transport) {
             let request = node_request(
                 url,
-                method.as_str(),
+                method,
                 &headers,
                 default_content_type,
                 body.as_ref(),
@@ -241,9 +250,9 @@ impl PreparedRequest {
                 .map_or(0, |t| u64::try_from(t.as_millis()).unwrap_or(u64::MAX));
             if timeout_ms > 0 {
                 #[allow(clippy::cast_precision_loss)]
-                set(&request, "timeout", &JsValue::from_f64(timeout_ms as f64))?;
+                set_f64(&request, "timeout", timeout_ms as f64)?;
             }
-            set(&request, "bodyType", &JsValue::from(body_type as u8))?;
+            set_f64(&request, "bodyType", f64::from(body_type as u8))?;
             if let Some(callback) = &progress.upload {
                 set(&request, "onUploadProgress", callback)?;
             }
@@ -278,7 +287,7 @@ impl PreparedRequest {
                     headers.push(("content-type".to_string(), content_type.to_string()));
                 }
                 return Ok(Self::Xhr {
-                    method: method.as_str().to_string(),
+                    method: method.to_string(),
                     url: url.to_string(),
                     headers,
                     body,
@@ -297,7 +306,7 @@ impl PreparedRequest {
         }
         let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
         let init = fetch_init(
-            method.as_str(),
+            method,
             &headers,
             default_content_type,
             body.as_ref(),
@@ -444,31 +453,20 @@ impl StreamingRequest {
             ..
         } = *options;
         let headers = validated_headers(config)?;
-        let body = match &config.body {
-            Some(body) => Some((body.content_type(), body.to_bytes()?)),
-            None => None,
-        };
-        let default_content_type = body
-            .as_ref()
-            .filter(|_| !config.headers.contains("content-type"))
-            .map(|(content_type, _)| *content_type);
-        let body = body
-            .map(|(_, bytes)| bytes)
-            .filter(|bytes| !bytes.is_empty())
-            .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()));
+        let (default_content_type, body) = prepare_body(config)?;
         let redirect = redirect_mode(config);
-        let method = config.method.to_reqwest();
+        let method = config.method.as_str();
         if let Some(transport) = options.transport.cloned().or_else(node_transport) {
             let request = node_request(
                 url,
-                method.as_str(),
+                method,
                 &headers,
                 default_content_type,
                 body.as_ref(),
                 config,
                 options,
             )?;
-            set(&request, "stream", &JsValue::TRUE)?;
+            set_bool(&request, "stream", true)?;
             return Ok(Self::Node {
                 transport,
                 request_state: options.request_state.cloned(),
@@ -477,7 +475,7 @@ impl StreamingRequest {
             });
         }
         let init = fetch_init(
-            method.as_str(),
+            method,
             &headers,
             default_content_type,
             body.as_ref(),
@@ -727,12 +725,12 @@ fn node_request(
         set(&js_headers, name, &value)?;
     }
     if let Some(content_type) = default_content_type {
-        set(&js_headers, "content-type", &content_type.into())?;
+        set_str(&js_headers, "content-type", content_type)?;
     }
     // No prototype: Object.prototype must not supply fields the transport reads
     let request = js_sys::Object::create(JsValue::NULL.unchecked_ref());
-    set(&request, "method", &method.into())?;
-    set(&request, "url", &url.into())?;
+    set_str(&request, "method", method)?;
+    set_str(&request, "url", url)?;
     set(&request, "headers", &js_headers)?;
     if let Some(body) = body {
         set(&request, "body", body)?;
@@ -743,20 +741,20 @@ fn node_request(
         ("idleTimeout", options.phases.idle),
     ] {
         if let Some(duration) = duration {
-            set(&request, name, &(duration.as_secs_f64() * 1000.0).into())?;
+            set_f64(&request, name, duration.as_secs_f64() * 1000.0)?;
         }
     }
     if !config.follow_redirects {
-        set(&request, "redirect", &"manual".into())?;
+        set_str(&request, "redirect", "manual")?;
     }
     if config.max_redirects != DEFAULT_MAX_REDIRECTS {
-        set(&request, "maxRedirects", &config.max_redirects.into())?;
+        set_f64(&request, "maxRedirects", f64::from(config.max_redirects))?;
     }
     if let Some(proxy) = options.proxy {
-        set(&request, "proxy", &proxy.into())?;
+        set_str(&request, "proxy", proxy)?;
     }
     if options.block_private_network {
-        set(&request, "blockPrivateNetwork", &JsValue::TRUE)?;
+        set_bool(&request, "blockPrivateNetwork", true)?;
     }
     if !options.sensitive_headers.is_empty() {
         let names: js_sys::Array = options
@@ -767,11 +765,11 @@ fn node_request(
         set(&request, "sensitiveHeaders", &names)?;
     }
     if !options.allow_insecure_redirects {
-        set(&request, "allowInsecureRedirects", &JsValue::FALSE)?;
+        set_bool(&request, "allowInsecureRedirects", false)?;
     }
     if let Some(limit) = options.limit {
         #[allow(clippy::cast_precision_loss)]
-        set(&request, "maxResponseBytes", &(limit as f64).into())?;
+        set_f64(&request, "maxResponseBytes", limit as f64)?;
     }
     if let Some(upload) = options.upload {
         set(&request, "upload", upload.value())?;
@@ -1114,11 +1112,9 @@ async fn read_chunks(
 fn validated_headers(config: &RequestConfig) -> Result<Vec<(&str, &str)>> {
     let mut pairs = Vec::new();
     for (name, values) in config.headers.iter() {
-        reqwest::header::HeaderName::from_bytes(name.as_bytes())
-            .map_err(|e| invalid("request", &e.to_string()))?;
+        crate::types::validate_header_name(name).map_err(|e| invalid("request", e))?;
         for value in values {
-            reqwest::header::HeaderValue::from_str(value)
-                .map_err(|e| invalid("request", &e.to_string()))?;
+            crate::types::validate_header_value(value).map_err(|e| invalid("request", e))?;
             pairs.push((name.as_str(), value.as_str()));
         }
     }
@@ -1255,10 +1251,10 @@ fn success_response(
     body: &JsValue,
 ) -> Result<Attempt<JsValue>> {
     let result = js_sys::Object::new();
-    set(&result, "status", &f64::from(status).into())?;
-    set(&result, "statusText", &status_text(status).into())?;
-    set(&result, "ok", &(200..300).contains(&status).into())?;
-    set(&result, "url", &url.into())?;
+    set_f64(&result, "status", f64::from(status))?;
+    set_str(&result, "statusText", status_text(status))?;
+    set_bool(&result, "ok", (200..300).contains(&status))?;
+    set_str(&result, "url", url)?;
     set(&result, "headers", headers)?;
     set(&result, "body", body)?;
     Ok(Attempt::Success(result.into()))
@@ -1533,10 +1529,7 @@ fn http_error<T>(status: u16, body: Option<String>, retry_after: Option<&str>) -
 }
 
 fn status_text(status: u16) -> &'static str {
-    reqwest::StatusCode::from_u16(status)
-        .ok()
-        .and_then(|status| status.canonical_reason())
-        .unwrap_or("")
+    crate::types::status_text(status)
 }
 
 /// Cancels an in-flight attempt if it's dropped before completing (timeout or

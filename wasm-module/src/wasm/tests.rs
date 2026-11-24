@@ -1090,3 +1090,50 @@ async fn streaming_bodies_stay_lazy_and_expose_replay_policy() {
         "body"
     );
 }
+
+#[wasm_bindgen_test]
+fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
+    let client = Client::new().unwrap();
+    let json_req = client
+        .post("https://example.com/json")
+        .json(&serde_json::json!({ "ok": true }))
+        .unwrap();
+    assert_eq!(
+        json_req.config.headers.get_first("content-type"),
+        Some("application/json")
+    );
+    assert!(matches!(json_req.config.body, Some(Body::Binary(_))));
+    assert!(super::transport::StreamingRequest::new(
+        "https://example.com/json",
+        &json_req.config,
+        &json_req.transport_options(),
+    )
+    .is_ok());
+
+    let custom_json = client
+        .post("https://example.com/problem")
+        .header("Content-Type", "application/problem+json")
+        .json(&serde_json::json!({ "err": 1 }))
+        .unwrap();
+    assert_eq!(
+        custom_json.config.headers.get_first("content-type"),
+        Some("application/problem+json")
+    );
+
+    let form = std::collections::HashMap::from([("k".to_string(), "a b".to_string())]);
+    let form_req = client.post("https://example.com/form").form(form);
+    assert_eq!(
+        form_req.config.headers.get_first("content-type"),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert!(matches!(
+        form_req.config.body.as_ref(),
+        Some(Body::Text(s)) if s == "k=a+b"
+    ));
+    assert!(super::transport::StreamingRequest::new(
+        "https://example.com/form",
+        &form_req.config,
+        &form_req.transport_options(),
+    )
+    .is_ok());
+}

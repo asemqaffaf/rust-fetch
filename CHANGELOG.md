@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Browser Wasm and JS glue bundle-size reduction (`#337`):** Reduced the combined browser payload (`rust_fetch_bg.wasm` + `rust_fetch.js`) from `172.5 kB` to `137.8 kB` brotli (`-34.7 kB` / `-20.1%`) and `210.9 kB` to `166.4 kB` gzip (`-44.5 kB` / `-21.1%`): `rust_fetch_bg.wasm` drops from `455.0 / 183.1 / 148.6 kB` to `361.8 / 146.8 / 120.5 kB` (raw / gzip / brotli) and `rust_fetch.js` from `135.2 / 27.9 / 24.0 kB` to `60.9 / 19.6 / 17.4 kB`, while keeping public TypeScript/JavaScript/Rust signatures intact and keeping all security validation in Rust.
+  - Dropped the unused `wasm-bindgen/serde-serialize` feature and tuned `wasm-opt` (`-Os --one-caller-inline-max-function-size=500 --converge --strip-producers`, omitting `--low-memory-unused`) while keeping `opt-level = "s"` and stable Rust `1.99.1` (`wasm-module/Cargo.toml`, `wasm-module/Cargo.lock`, `wasm-module/fuzz/Cargo.lock`).
+  - Replaced heavy Wasm header/status formatting and body serialization paths with ASCII helpers (`Method::from_str` via `eq_ignore_ascii_case`, `Method::as_str()`, `validate_header_name`, `validate_header_value`, `status_text` — verified for parity in both unit tests and `fuzz_headers`), direct `wasm32` encoding in `RequestBuilder::json()` / `.form()` so `send_streaming()` keeps supporting JSON and form bodies without pulling `serde_json::to_vec`/`zmij`/`serde_urlencoded` into `WasmClient`, manual `fmt::Debug` on `CircuitOpenError`, type-erased streaming (`into_js_stream`), and compact JS property setters (`wasm-module/src/types.rs`, `src/circuit.rs`, `src/client.rs`, `src/idempotency.rs`, `src/fuzzing.rs`, `src/wasm/`).
+  - Consolidated `WasmClient` verb exports into a single `u8`-opcoded `#[doc(hidden)]` `__dispatch` FFI entrypoint (avoiding per-request method-string FFI allocations), installed non-enumerable named methods via pollution-safe `Object.defineProperty(..., { __proto__: null, ... })`, preserved all 6 exported class names (`WasmClient`, `EventStream`, `WebSocketConnection`, `IntoUnderlying*`) without `esbuild`'s `keepNames` helper, deduplicated shared JS helpers (`wasm-module/js/client-helpers.js`, `wasm-module/js/methods.js`), and minified `rust_fetch.js` with `esbuild` (`scripts/postbuild.mjs`).
+  - Tightened CI size budgets in `scripts/check-size.mjs` to `364.0 / 148.5 / 122.0 kB` (Wasm) and `62.5 / 20.5 / 18.2 kB` (JS glue).
+  - **Subtle behaviour notes:**
+    - `Method::from_str` and `Headers` now use ASCII-only case folding (Unicode lookalikes such as `"po\u{17f}t"` and `"opt\u{131}ons"` no longer parse as HTTP methods).
+    - `CircuitOpenError`'s `Debug` formatting now prints escaped `origin` and `retry_after_ms` (whole milliseconds) via `debug_struct` rather than `Duration`'s decimal `Debug`.
+    - Numeric JS header and query parameter values format via JavaScript `String(n)` (e.g. `1e21` → `"1e+21"`, `Infinity` → `"Infinity"`, `-0` → `"0"`), falling back to safe `i64` formatting or rejecting with `InvalidInputError` if `Number.prototype.toString` throws.
+
 ### Documentation
 - **Crawler metadata (`#330`):** publish `robots.txt`, `sitemap.xml` and `llms.txt` with the documentation site, and emit one canonical URL per page, so search engines and AI assistants can index the docs (`docs/public/`, `docs/.vitepress/config.mts`).
+- **Bundle-size figures (`#337`):** updated browser bundle-size numbers (`~138 KB` brotli total: `120 KB` `.wasm` + `17.4 KB` minified JS glue) across `README.md`, `llms.txt`, `docs/public/llms.txt`, `PROJECT_REFERENCE.md`, and the VitePress guides (`docs/guide/introduction.md`, `docs/compatibility.md`, `docs/faq.md`).
 
 ## [2.8.1] - 2026-11-13
 

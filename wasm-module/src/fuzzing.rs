@@ -90,16 +90,35 @@ pub fn fuzz_urls(bytes: &[u8]) {
 /// Header parsers used by both Rust and Wasm must reject line injection.
 pub fn fuzz_headers(bytes: &[u8]) {
     let split = bytes.len() / 2;
-    let name = reqwest::header::HeaderName::from_bytes(&bytes[..split]);
-    let value = reqwest::header::HeaderValue::from_bytes(&bytes[split..]);
-    if let Ok(name) = name {
+    let raw_name = &bytes[..split];
+    let raw_value = &bytes[split..];
+    let reqwest_name = reqwest::header::HeaderName::from_bytes(raw_name);
+    let reqwest_value = reqwest::header::HeaderValue::from_bytes(raw_value);
+    if let Ok(name) = &reqwest_name {
         assert!(!name.as_str().contains(['\r', '\n', ':', ' ']));
     }
-    if let Ok(value) = value {
+    if let Ok(value) = &reqwest_value {
         assert!(!value
             .as_bytes()
             .iter()
             .any(|b| matches!(*b, 0 | b'\r' | b'\n')));
+    }
+    if let Ok(name_str) = std::str::from_utf8(raw_name) {
+        let valid = crate::types::validate_header_name(name_str);
+        assert_eq!(valid.is_ok(), reqwest_name.is_ok());
+        if valid.is_ok() {
+            assert!(!name_str.contains(['\r', '\n', ':', ' ']));
+        }
+    }
+    if let Ok(val_str) = std::str::from_utf8(raw_value) {
+        let valid = crate::types::validate_header_value(val_str);
+        assert_eq!(valid.is_ok(), reqwest_value.is_ok());
+        if valid.is_ok() {
+            assert!(!val_str
+                .as_bytes()
+                .iter()
+                .any(|b| matches!(*b, 0 | b'\r' | b'\n')));
+        }
     }
     if let Ok(value) = std::str::from_utf8(bytes) {
         let _ = crate::types::Method::from_str(value);

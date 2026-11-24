@@ -380,11 +380,9 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
     .to_string();
     if let Some(headers) = prop(&options, "headers") {
         for (name, values) in super::parse_headers(&headers)?.iter() {
-            reqwest::header::HeaderName::from_bytes(name.as_bytes())
-                .map_err(|e| invalid("headers", &e.to_string()))?;
+            crate::types::validate_header_name(name).map_err(|e| invalid("headers", e))?;
             for value in values {
-                reqwest::header::HeaderValue::from_str(value)
-                    .map_err(|e| invalid("headers", &e.to_string()))?;
+                crate::types::validate_header_value(value).map_err(|e| invalid("headers", e))?;
             }
         }
     }
@@ -466,7 +464,7 @@ fn connection_error(shared: &Shared, error: Error) -> JsValue {
     let url = shared.request_state.url.borrow();
     super::error_context(
         shared.request_state.with_cause(error.into_js()),
-        shared.settings.method.to_reqwest().as_str(),
+        shared.settings.method.as_str(),
         url.as_deref().unwrap_or(&shared.settings.target),
         shared
             .request_state
@@ -541,9 +539,9 @@ async fn run_loop(
         shared.inner.borrow_mut().state = State::Reconnecting;
         if let Some(callback) = &shared.settings.on_reconnect {
             let info = js_sys::Object::new();
-            let _ = set(&info, "attempt", &failures.into());
+            let _ = super::set_f64(&info, "attempt", f64::from(failures));
             #[allow(clippy::cast_precision_loss)]
-            let _ = set(&info, "delayMs", &(delay.as_millis() as f64).into());
+            let _ = super::set_f64(&info, "delayMs", delay.as_millis() as f64);
             let _ = set(&info, "error", &error);
             call(Some(callback), Some(&info));
         }
@@ -755,9 +753,9 @@ fn dispatch(shared: &Rc<Shared>, event: sse::Event) -> bool {
         JsValue::from_str(&event.data)
     };
     let value = js_sys::Object::new();
-    let _ = set(&value, "event", &event.event.into());
+    let _ = super::set_str(&value, "event", &event.event);
     let _ = set(&value, "data", &data);
-    let _ = set(&value, "id", &event.id.into());
+    let _ = super::set_str(&value, "id", &event.id);
     let value: JsValue = value.into();
 
     if settings.on_event.is_some() {
@@ -786,7 +784,7 @@ fn finish(shared: &Rc<Shared>, error: Option<JsValue>) {
         let url = shared.request_state.url.borrow();
         super::error_context(
             error,
-            shared.settings.method.to_reqwest().as_str(),
+            shared.settings.method.as_str(),
             url.as_deref().unwrap_or(&shared.settings.target),
             shared
                 .request_state

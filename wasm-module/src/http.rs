@@ -14,19 +14,16 @@ use wasm_bindgen_futures::future_to_promise;
 
 /// Fetch a URL and parse the body as JSON (whatever its Content-Type).
 /// An empty body resolves to `null`.
-#[wasm_bindgen]
 pub async fn fetch_json(url: String) -> Result<JsValue> {
     fetch_body(url, "json").await
 }
 
 /// Fetch JSON data and return as a Promise
-#[wasm_bindgen]
 pub fn fetch_json_promise(url: String) -> js_sys::Promise {
     future_to_promise(async move { fetch_json(url).await.map_err(|e| JsValue::from(e)) })
 }
 
 /// Fetch a URL and return the body as text
-#[wasm_bindgen]
 pub async fn fetch_text(url: String) -> Result<String> {
     Ok(fetch_body(url, "text")
         .await?
@@ -55,7 +52,6 @@ async fn fetch_body(url: String, response_type: &str) -> Result<JsValue> {
 /// Fetch with a method, headers and an optional string body.
 ///
 /// Resolves to `{ status, statusText, ok, url, headers, body }`.
-#[wasm_bindgen]
 pub async fn fetch_with_options(
     url: String,
     method: String,
@@ -80,7 +76,6 @@ pub async fn fetch_with_options(
 }
 
 /// Create a configured HTTP client (exported for advanced use)
-#[wasm_bindgen]
 pub fn create_client() -> Result<WasmClient> {
     WasmClient::new(None)
 }
@@ -88,28 +83,24 @@ pub fn create_client() -> Result<WasmClient> {
 // Backward compatibility functions (deprecated)
 
 /// Fetch JSON data (deprecated, use fetch_json instead)
-#[wasm_bindgen]
 #[deprecated(note = "Use fetch_json instead")]
 pub async fn fetch_wasm_json(url: String) -> Result<JsValue> {
     fetch_json(url).await
 }
 
 /// Fetch HTML data (deprecated, use fetch_text instead)
-#[wasm_bindgen]
 #[deprecated(note = "Use fetch_text instead")]
 pub async fn fetch_wasm_html(url: String) -> Result<String> {
     fetch_text(url).await
 }
 
 /// Fetch data and return as map (deprecated, use fetch_json instead)
-#[wasm_bindgen]
 #[deprecated(note = "Use fetch_json instead")]
 pub async fn fetch_wasm_map(url: String) -> Result<JsValue> {
     fetch_json(url).await
 }
 
 /// Fetch API data (deprecated, use fetch_json instead)
-#[wasm_bindgen]
 #[deprecated(note = "Use fetch_json instead")]
 pub async fn fetch_wasm_api(url: String) -> Result<JsValue> {
     fetch_json(url).await
