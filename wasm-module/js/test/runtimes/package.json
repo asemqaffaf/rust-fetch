@@ -6,6 +6,6 @@
   "devDependencies": {
     "bun": "1.4.4",
     "deno": "2.9.6",
-    "workerd": "1.20261110.1"
+    "workerd": "1.20261118.1"
   }
 }

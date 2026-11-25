@@ -33,7 +33,7 @@
     "esbuild": "0.28.2",
     "got": "16.2.0",
     "ky": "2.2.0",
-    "playwright": "1.65.0",
+    "playwright": "1.65.1",
     "typescript": "^7.0.2",
     "typescript-5.2": "npm:typescript@5.2.2",
     "undici": "7.30.2",
