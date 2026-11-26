@@ -105,12 +105,19 @@ impl Stream for ReadableStreamReader {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    /// Shared no-op rejection handler so cancelled reader promises never become
+    /// unhandled rejections.
+    pub(crate) static IGNORE: Closure<dyn FnMut(JsValue)> = Closure::new(|_| {});
+}
+
 impl Drop for ReadableStreamReader {
     fn drop(&mut self) {
         if let Some(reader) = self.reader.take() {
             let _promise = reader.cancel();
             #[cfg(target_arch = "wasm32")]
-            super::websocket::IGNORE.with(|ignore| {
+            IGNORE.with(|ignore| {
                 let _ = _promise.catch(ignore);
             });
             let _ = reader.release_lock();
@@ -250,4 +257,47 @@ impl Future for PullFuture {
 /// Expose a boxed Rust `Stream` as a JS `ReadableStream`.
 pub(crate) fn from_stream(stream: Pin<Box<JsStream>>) -> web_sys::ReadableStream {
     JsReadableStream::new_readable_stream(IntoUnderlyingSource::new(stream)).unchecked_into()
+}
+
+/// Thin Wasm bridge over the fuzzed Rust [`crate::sse::Parser`], used internally
+/// by `js/connections.js`'s `EventStream`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(skip_typescript)]
+pub struct __SseParser {
+    inner: crate::sse::Parser,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl __SseParser {
+    #[wasm_bindgen(constructor)]
+    pub fn new(max_line: Option<u32>, max_event: Option<u32>) -> Self {
+        Self {
+            inner: crate::sse::Parser::with_limit(max_line.map(|n| n as usize))
+                .event_limit(max_event.map(|n| n as usize)),
+        }
+    }
+
+    pub fn feed(&mut self, chunk: &[u8]) -> JsValue {
+        let (events, error) = self.inner.feed(chunk);
+        let js_events = js_sys::Array::new();
+        for event in events {
+            let tuple = js_sys::Array::new();
+            tuple.push(&JsValue::from_str(&event.event));
+            tuple.push(&JsValue::from_str(&event.data));
+            tuple.push(&JsValue::from_str(&event.id));
+            js_events.push(&tuple);
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let retry = self
+            .inner
+            .take_retry()
+            .map_or(JsValue::NULL, |ms| JsValue::from_f64(ms as f64));
+        let err = error.map_or(JsValue::NULL, JsValue::from);
+        let out = js_sys::Array::new();
+        out.push(&js_events);
+        out.push(&retry);
+        out.push(&err);
+        out.into()
+    }
 }

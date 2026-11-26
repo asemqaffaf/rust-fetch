@@ -184,6 +184,7 @@ impl Error {
     }
 
     /// A WebSocket message refused because `option` (`limit`) was reached
+    #[cfg_attr(any(target_arch = "wasm32", not(test)), allow(dead_code))]
     pub(crate) fn queue_full(option: &'static str, limit: usize) -> Self {
         Error::Network {
             message: format!(

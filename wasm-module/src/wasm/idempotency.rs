@@ -31,7 +31,7 @@ impl Defaults {
         Self::default().resolve(options)
     }
 
-    fn resolve(&self, options: &Options) -> Result<Self> {
+    pub(crate) fn resolve(&self, options: &Options) -> Result<Self> {
         let key = match options.get("idempotencyKey") {
             Some(value) => parse_key(&value)?,
             None => self.key.clone(),
@@ -49,7 +49,7 @@ impl Defaults {
         Ok(Self { key, header })
     }
 
-    fn value(&self) -> Result<Option<String>> {
+    pub(crate) fn value(&self) -> Result<Option<String>> {
         match &self.key {
             None => Ok(None),
             Some(Key::Value(key)) => Ok(Some(key.clone())),
@@ -82,25 +82,4 @@ pub(crate) fn apply(
             .idempotency_key_header(resolved.header.as_deref().unwrap_or("Idempotency-Key"), key),
         None => Ok(builder),
     }
-}
-
-/// Reconnecting an SSE stream must keep its key, rather than generating a new
-/// one each time its POST request is prepared. Inherit other options without
-/// changing the caller's object.
-pub(crate) fn freeze(options: JsValue, defaults: &Defaults) -> Result<JsValue> {
-    let resolved = defaults.resolve(&Options::new(&options))?;
-    let Some(key) = resolved.value()? else {
-        return Ok(options);
-    };
-    let frozen = if options.is_object() {
-        js_sys::Object::create(options.unchecked_ref())
-    } else {
-        js_sys::Object::new()
-    };
-    let descriptor = js_sys::Object::create(JsValue::NULL.unchecked_ref());
-    super::set(&descriptor, "value", &key.into())?;
-    // Defining an own property also works when the caller's inherited
-    // property is read-only (for example Object.freeze(options)).
-    js_sys::Object::define_property(&frozen, &"idempotencyKey".into(), &descriptor);
-    Ok(frozen.into())
 }

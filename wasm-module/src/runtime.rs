@@ -27,6 +27,7 @@ pub(crate) async fn sleep(duration: Duration) {
 /// Run a future, failing with [`Error::Timeout`] if it takes longer than `duration`.
 ///
 /// The future is dropped on timeout, which aborts the underlying request.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) async fn timeout<T>(
     duration: Duration,
     fut: impl Future<Output = Result<T>>,
@@ -130,6 +131,7 @@ pub(crate) fn random() -> f64 {
 }
 
 /// A phase timeout preserves errors returned by the operation itself.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn timeout_phase<T, E: From<Error>, F: Future<Output = std::result::Result<T, E>>>(
     duration: Duration,
     phase: crate::TimeoutPhase,
