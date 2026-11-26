@@ -50,12 +50,19 @@ impl TimeoutPhase {
 
 /// Structured timeout details, also used as a typed error source to preserve
 /// the existing exhaustive Rust error enum.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub struct TimeoutDetails {
     /// Which phase expired.
     pub phase: TimeoutPhase,
     /// Configured duration, in milliseconds.
     pub duration_ms: u64,
+}
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for TimeoutDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 impl fmt::Display for TimeoutDetails {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -130,9 +137,9 @@ pub(crate) fn with_deadline<T, F: Future<Output = Result<T>>>(
 ) -> impl Future<Output = Result<T>> {
     let configured = deadline.map_or(Duration::ZERO, |deadline| deadline.duration);
     let remaining = deadline.map(Deadline::remaining);
-    let expired = move || Error::phase_timeout(TimeoutPhase::Total, configured);
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let expired = move || Error::phase_timeout(TimeoutPhase::Total, configured);
         match remaining {
             None => Either::Left(future),
             Some(remaining) if remaining.is_zero() => {
@@ -148,9 +155,7 @@ pub(crate) fn with_deadline<T, F: Future<Output = Result<T>>>(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        use futures_util::FutureExt;
-        crate::wasm::futures::Deadline::until(future, remaining)
-            .map(move |result| result.unwrap_or_else(|()| Err(expired())))
+        crate::wasm::futures::Deadline::until(future, remaining, TimeoutPhase::Total, configured)
     }
 }
 
@@ -233,26 +238,29 @@ pub(crate) trait DeadlineBody: Stream<Item = Result<Vec<u8>>> + 'static {}
 #[cfg(target_arch = "wasm32")]
 impl<S: Stream<Item = Result<Vec<u8>>> + 'static> DeadlineBody for S {}
 
-struct BodyState<S> {
-    inner: Option<Pin<Box<S>>>,
+struct BodyState {
+    inner: Option<Pin<Box<dyn DeadlineBody>>>,
     expired: bool,
     waker: Option<Waker>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Task {
-    #[cfg(not(target_arch = "wasm32"))]
     handle: tokio::task::JoinHandle<()>,
-    #[cfg(target_arch = "wasm32")]
-    handle: futures_util::future::AbortHandle,
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Task {
     fn drop(&mut self) {
         self.handle.abort();
     }
 }
 
-async fn expire_body<S>(weak: std::sync::Weak<Mutex<BodyState<S>>>, deadline: Deadline) {
-    runtime::sleep(deadline.remaining()).await;
+#[cfg(target_arch = "wasm32")]
+struct Task {
+    _timer: crate::wasm::futures::Timer,
+}
+
+fn trigger_expire(weak: &std::sync::Weak<Mutex<BodyState>>) {
     if let Some(state) = weak.upgrade() {
         let mut state = state
             .lock()
@@ -268,33 +276,36 @@ async fn expire_body<S>(weak: std::sync::Weak<Mutex<BodyState<S>>>, deadline: De
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+async fn expire_body(weak: std::sync::Weak<Mutex<BodyState>>, deadline: Deadline) {
+    runtime::sleep(deadline.remaining()).await;
+    trigger_expire(&weak);
+}
+
 /// The timer owns a weak reference, so it cannot keep an abandoned body alive.
-pub(crate) struct DeadlineStream<S> {
-    state: Arc<Mutex<BodyState<S>>>,
+pub(crate) struct DeadlineStream {
+    state: Arc<Mutex<BodyState>>,
     task: Option<Task>,
     duration: Duration,
     done: bool,
 }
-impl<S: DeadlineBody> DeadlineStream<S> {
-    pub(crate) fn new(inner: S, deadline: Deadline) -> Self {
+impl DeadlineStream {
+    pub(crate) fn new<S: DeadlineBody>(inner: S, deadline: Deadline) -> Self {
         let state = Arc::new(Mutex::new(BodyState {
             inner: Some(Box::pin(inner)),
             expired: false,
             waker: None,
         }));
         let weak = Arc::downgrade(&state);
-        let expire = expire_body(weak, deadline);
         #[cfg(not(target_arch = "wasm32"))]
         let task = Task {
-            handle: tokio::spawn(expire),
+            handle: tokio::spawn(expire_body(weak, deadline)),
         };
         #[cfg(target_arch = "wasm32")]
-        let task = {
-            let (handle, registration) = futures_util::future::AbortHandle::new_pair();
-            wasm_bindgen_futures::spawn_local(async move {
-                let _ = futures_util::future::Abortable::new(expire, registration).await;
-            });
-            Task { handle }
+        let task = Task {
+            _timer: crate::wasm::futures::Timer::new(deadline.remaining(), move || {
+                trigger_expire(&weak);
+            }),
         };
         Self {
             state,
@@ -304,7 +315,7 @@ impl<S: DeadlineBody> DeadlineStream<S> {
         }
     }
 }
-impl<S: DeadlineBody> Stream for DeadlineStream<S> {
+impl Stream for DeadlineStream {
     type Item = Result<Vec<u8>>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -470,7 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn deadlines_close_unpolled_bodies_and_wake_waiting_readers() {
-        expire_body::<TestBody>(std::sync::Weak::new(), Deadline::new(Duration::ZERO)).await;
+        expire_body(std::sync::Weak::new(), Deadline::new(Duration::ZERO)).await;
         let dropped = Arc::new(AtomicBool::new(false));
         let mut body = DeadlineStream::new(
             boxed(PendingBody(Arc::clone(&dropped))),

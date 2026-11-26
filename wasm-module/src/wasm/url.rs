@@ -41,7 +41,10 @@ impl Url {
         reason = "serialization of a parsed URL parses again"
     )]
     fn js(&self) -> web_sys::Url {
-        web_sys::Url::new(&self.href).expect("a parsed URL parses again")
+        // `.ok().expect(...)` avoids formatting `Err(JsValue)` via `Debug` (`__wbindgen_debug_string`).
+        web_sys::Url::new(&self.href)
+            .ok()
+            .expect("a parsed URL parses again")
     }
 
     pub(crate) fn as_str(&self) -> &str {

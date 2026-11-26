@@ -1,3 +1,14 @@
+// Unconstructible compatibility exports retained from the previous wasm-streams bridge.
+const privateCtor = () => {
+  throw new TypeError('Illegal constructor');
+};
+export class IntoUnderlyingByteSource {
+  constructor() { privateCtor(); }
+}
+export class IntoUnderlyingSink {
+  constructor() { privateCtor(); }
+}
+
 // Client verb shortcuts routed through WasmClient.__dispatch (observability.js wires standalone exports).
 (() => {
   const OP_GET = 0;

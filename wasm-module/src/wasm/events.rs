@@ -10,7 +10,10 @@
 
 use super::futures::{abortable, AbortableStream};
 use super::websocket::{call, parse_reconnect, report, IGNORE};
-use super::{callback_option, invalid, parse_method, prop, set, BodyMode, JsRequest, WasmClient};
+use super::{
+    invalid, parse_callbacks_5, parse_method, parse_opt_bool, prop, set, BodyMode, JsRequest,
+    WasmClient,
+};
 use crate::{
     client::{calculate_retry_delay, page_url, resolve_url, with_jitter},
     error::{Error, Result},
@@ -351,6 +354,7 @@ impl WasmClient {
 }
 
 /// Parse and validate the options up front, so mistakes throw from `events()`
+#[inline(never)]
 fn settings(client: &crate::client::Client, target: String, options: JsValue) -> Result<Settings> {
     let options = super::idempotency::freeze(options, &client.config.idempotency)?;
     super::parse_phase_options(&super::Options::new(&options), &client.config.phases)?;
@@ -366,10 +370,11 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         .map(|params| super::parse_params(&params))
         .transpose()?
         .unwrap_or_default();
-    let allow_absolute = match prop(&options, "allowAbsoluteUrls") {
-        Some(value) => super::parse_bool(&value, "allowAbsoluteUrls")?,
-        None => client.config.allow_absolute_urls,
-    };
+    let allow_absolute = parse_opt_bool(
+        &options,
+        "allowAbsoluteUrls",
+        client.config.allow_absolute_urls,
+    )?;
     crate::client::check_absolute_url(client.config.base_url.as_deref(), &target, allow_absolute)?;
     let url = resolve_url(
         client.config.base_url.as_deref(),
@@ -392,11 +397,7 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
     if let Some(retries) = prop(&options, "retries") {
         super::parse_retries(&retries)?;
     }
-    if let Some(signal) = prop(&options, "signal") {
-        if !js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) {
-            return Err(invalid("signal", "must be an AbortSignal"));
-        }
-    }
+    super::parse_signal(prop(&options, "signal"))?;
     let reconnect = match prop(&options, "reconnect") {
         Some(value) => parse_reconnect(&value)?,
         // Like EventSource for GET; other methods would resend their body
@@ -411,12 +412,7 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
             }
         }
     }
-    let json = match prop(&options, "messageType").map(|value| value.as_string()) {
-        None => false,
-        Some(Some(name)) if name == "auto" => false,
-        Some(Some(name)) if name == "json" => true,
-        Some(_) => return Err(invalid("messageType", "must be 'auto' or 'json'")),
-    };
+    let json = super::parse_message_type(&options)?;
     let end = match super::raw_prop(&options, "end") {
         value if value.is_undefined() => json.then(|| "[DONE]".to_string()),
         value if value.is_null() => None,
@@ -430,6 +426,10 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         let value = super::raw_prop(&options, name);
         super::parse_stream_limit(&value, client, name)
     };
+    let [on_open, on_event, on_error, on_reconnect, on_close] = parse_callbacks_5(
+        &options,
+        ["onOpen", "onEvent", "onError", "onReconnect", "onClose"],
+    )?;
     Ok(Settings {
         method,
         url,
@@ -441,11 +441,11 @@ fn settings(client: &crate::client::Client, target: String, options: JsValue) ->
         reconnect,
         json,
         end,
-        on_open: callback_option(&options, "onOpen")?,
-        on_event: callback_option(&options, "onEvent")?,
-        on_error: callback_option(&options, "onError")?,
-        on_reconnect: callback_option(&options, "onReconnect")?,
-        on_close: callback_option(&options, "onClose")?,
+        on_open,
+        on_event,
+        on_error,
+        on_reconnect,
+        on_close,
         options,
     })
 }

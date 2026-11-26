@@ -100,6 +100,7 @@ impl Delay {
 impl Future for Delay {
     type Output = ();
 
+    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         loop {
             if self.callback.is_none() {
@@ -117,6 +118,31 @@ impl Future for Delay {
 }
 
 impl Drop for Delay {
+    #[inline(never)]
+    fn drop(&mut self) {
+        clear_timeout(&self.handle);
+    }
+}
+
+/// A one-shot `setTimeout` timer cleared synchronously on drop.
+pub(crate) struct Timer {
+    handle: JsValue,
+    _callback: Closure<dyn FnMut()>,
+}
+
+impl Timer {
+    pub(crate) fn new(delay: Duration, callback: impl FnMut() + 'static) -> Self {
+        let callback = Closure::<dyn FnMut()>::new(callback);
+        let ms = i32::try_from(delay.as_millis()).unwrap_or(i32::MAX);
+        let handle = set_timeout(callback.as_ref().unchecked_ref(), ms);
+        Self {
+            handle,
+            _callback: callback,
+        }
+    }
+}
+
+impl Drop for Timer {
     #[inline(never)]
     fn drop(&mut self) {
         clear_timeout(&self.handle);
@@ -154,6 +180,7 @@ impl Aborted {
 impl Future for Aborted {
     type Output = ();
 
+    #[inline(never)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         if self.listener.is_none() && !self.signal.aborted() {
             let listener = WakeState::callback(&self.state);
@@ -229,71 +256,107 @@ impl<T, F: Future<Output = Result<T>>> Future for Abortable<F> {
 }
 
 pin_project_lite::pin_project! {
-    /// A future with a deadline: its output, or `Err(())` once `duration`
-    /// passes first (for `runtime::timeout`)
+    /// A future with a deadline: its result, or a phase timeout error once
+    /// `duration` passes first (for `runtime::timeout*` and `timeouts::with_deadline`)
     pub(crate) struct Deadline<F> {
         #[pin]
         fut: F,
         delay: Option<Delay>,
         expired: bool,
+        phase: crate::TimeoutPhase,
+        configured: Duration,
     }
 }
 
 impl<F> Deadline<F> {
-    pub(crate) fn new(fut: F, duration: Duration) -> Self {
-        Self::optional(fut, Some(duration))
+    pub(crate) fn new(
+        fut: F,
+        duration: Duration,
+        phase: crate::TimeoutPhase,
+        configured: Duration,
+    ) -> Self {
+        Self::optional(fut, Some(duration), phase, configured)
     }
 
     /// Without a duration this only runs `fut`. Callers that may or may not
     /// time out use one future type, so `fut` is compiled into one poll path.
-    pub(crate) fn optional(fut: F, duration: Option<Duration>) -> Self {
+    pub(crate) fn optional(
+        fut: F,
+        duration: Option<Duration>,
+        phase: crate::TimeoutPhase,
+        configured: Duration,
+    ) -> Self {
         Self {
             fut,
             delay: duration.map(Delay::new),
             expired: false,
+            phase,
+            configured,
         }
     }
 
     /// Like `optional`, but a zero duration fails at once without polling `fut`
     /// (a total deadline that already passed must not start the request).
-    pub(crate) fn until(fut: F, remaining: Option<Duration>) -> Self {
+    pub(crate) fn until(
+        fut: F,
+        remaining: Option<Duration>,
+        phase: crate::TimeoutPhase,
+        configured: Duration,
+    ) -> Self {
         let expired = remaining.is_some_and(|remaining| remaining.is_zero());
         Self {
             fut,
             delay: remaining.filter(|_| !expired).map(Delay::new),
             expired,
+            phase,
+            configured,
         }
     }
 }
 
-impl<F: Future> Future for Deadline<F> {
-    type Output = std::result::Result<F::Output, ()>;
+#[inline(never)]
+fn poll_deadline_timer(delay: &mut Option<Delay>, cx: &mut Context<'_>) -> bool {
+    delay
+        .as_mut()
+        .is_some_and(|delay| Pin::new(delay).poll(cx).is_ready())
+}
+
+impl<T, E: From<Error>, F: Future<Output = std::result::Result<T, E>>> Future for Deadline<F> {
+    type Output = std::result::Result<T, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         if *this.expired {
-            return Poll::Ready(Err(()));
+            return Poll::Ready(Err(
+                Error::phase_timeout(*this.phase, *this.configured).into()
+            ));
         }
         // The work first, as `select` did: a result that's ready wins
         if let Poll::Ready(output) = this.fut.poll(cx) {
-            return Poll::Ready(Ok(output));
+            return Poll::Ready(output);
         }
-        match this.delay {
-            Some(delay) => Pin::new(delay).poll(cx).map(Err),
-            None => Poll::Pending,
+        if poll_deadline_timer(this.delay, cx) {
+            return Poll::Ready(Err(
+                Error::phase_timeout(*this.phase, *this.configured).into()
+            ));
         }
+        Poll::Pending
     }
 }
 
-/// A stream that fails with [`Error::Cancelled`] once an `AbortSignal` fires
-pub(crate) struct AbortableStream<S> {
-    inner: Pin<Box<S>>,
+/// A stream that fails with [`Error::Cancelled`] once an `AbortSignal` fires.
+/// Type-erased over the already-boxed inner stream so all pipelines share one `poll_next`.
+pub(crate) struct AbortableStream<T> {
+    inner: Pin<Box<dyn futures_util::Stream<Item = Result<T>>>>,
     aborted: Option<Aborted>,
     done: bool,
 }
 
-impl<S> AbortableStream<S> {
-    pub(crate) fn new(inner: S, signal: Option<web_sys::AbortSignal>) -> Self {
+impl<T> AbortableStream<T> {
+    pub(crate) fn new<S: futures_util::Stream<Item = Result<T>> + 'static>(
+        inner: S,
+        signal: Option<web_sys::AbortSignal>,
+    ) -> Self {
         Self {
             inner: Box::pin(inner),
             aborted: signal.map(Aborted::new),
@@ -302,7 +365,7 @@ impl<S> AbortableStream<S> {
     }
 }
 
-impl<T, S: futures_util::Stream<Item = Result<T>>> futures_util::Stream for AbortableStream<S> {
+impl<T> futures_util::Stream for AbortableStream<T> {
     type Item = Result<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<T>>> {

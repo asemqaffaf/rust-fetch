@@ -1,9 +1,8 @@
 // The `schema` request option (#43): validate the response body with any Standard Schema (Zod, Valibot, ArkType…).
 (() => {
-  const Base = WasmClient;
   const check = (options) => {
-    const schema = options == null ? undefined : options.schema;
-    if (schema === undefined) return undefined;
+    const schema = options?.schema;
+    if (schema === undefined) return;
     if (schema === null || (typeof schema !== 'object' && typeof schema !== 'function') || typeof schema['~standard']?.validate !== 'function') throw invalidInput('schema', 'must be a Standard Schema (a validator with ~standard.validate)');
     if (options.responseType === 'stream' || options.responseType === 'ndjson') throw invalidInput('schema', 'cannot validate a streamed responseType');
     return schema['~standard'];
@@ -17,18 +16,11 @@
       name: 'ValidationError', kind: 'ValidationError', issues, method, url: response.url, status: response.status,
     });
   };
-  class SchemaClient extends Base {}
-  for (const name of REQUEST_METHODS) {
-    const index = optionsArgIndex(name);
-    const raw = Base.prototype[name];
-    const method = name === 'request' || name === 'fetch' ? undefined : name.replace('_json', '').toUpperCase();
-    defineMethod(SchemaClient.prototype, name, function (...args) {
-      let standard;
-      try { standard = check(args[index]); } catch (error) { return Promise.reject(error); }
-      const pending = raw.apply(this, args);
-      return standard ? pending.then((response) => validated(method ?? (name === 'request' ? String(args[0]).toUpperCase() : String(args[1]?.method ?? 'GET').toUpperCase()), response, standard)) : pending;
-    });
-  }
-  setFnName(SchemaClient, 'WasmClient');
-  WasmClient = SchemaClient;
+  class SchemaClient extends WasmClient {}
+  wrapClient(SchemaClient, (name, index, raw) => function (...args) {
+    let standard;
+    try { standard = check(args[index]); } catch (error) { return Promise.reject(error); }
+    const pending = raw.apply(this, args);
+    return standard ? pending.then((response) => validated(String(methodOf(name, args, args[1])).toUpperCase(), response, standard)) : pending;
+  });
 })();

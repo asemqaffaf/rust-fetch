@@ -86,7 +86,7 @@ impl Lines {
         self.count += 1;
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let text = String::from_utf8_lossy(line);
-        if text.trim().is_empty() {
+        if text.trim_ascii().is_empty() {
             return None;
         }
         Some(Line {

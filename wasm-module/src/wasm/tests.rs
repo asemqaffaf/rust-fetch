@@ -5,7 +5,7 @@
 use super::futures::{abortable, AbortableStream, Delay};
 use super::*;
 use crate::runtime;
-use crate::types::Body;
+use crate::types::WasmBody;
 use futures_util::StreamExt;
 use wasm_bindgen_test::*;
 
@@ -34,7 +34,10 @@ fn request() -> RequestBuilder {
 }
 
 fn body_of(request: &RequestBuilder) -> Option<Vec<u8>> {
-    request.config.body.as_ref().map(|b| b.to_bytes().unwrap())
+    request.config.body.as_ref().map(|b| match b {
+        WasmBody::Text(s) => s.as_bytes().to_vec(),
+        WasmBody::Binary(bytes) => bytes.clone(),
+    })
 }
 
 fn content_type(request: &RequestBuilder) -> Option<String> {
@@ -289,7 +292,7 @@ async fn bodies_are_encoded_by_type() {
             .unwrap()
             .config
             .body,
-        Some(Body::Text(_))
+        Some(WasmBody::Text(_))
     ));
     assert!(matches!(
         apply_body(request(), BodyMode::Auto(js("new Uint8Array(1)")))
@@ -297,7 +300,7 @@ async fn bodies_are_encoded_by_type() {
             .unwrap()
             .config
             .body,
-        Some(Body::Binary(_))
+        Some(WasmBody::Binary(_))
     ));
 }
 
@@ -1102,7 +1105,7 @@ fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
         json_req.config.headers.get_first("content-type"),
         Some("application/json")
     );
-    assert!(matches!(json_req.config.body, Some(Body::Binary(_))));
+    assert!(matches!(json_req.config.body, Some(WasmBody::Binary(_))));
     assert!(super::transport::StreamingRequest::new(
         "https://example.com/json",
         &json_req.config,
@@ -1128,7 +1131,7 @@ fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
     );
     assert!(matches!(
         form_req.config.body.as_ref(),
-        Some(Body::Text(s)) if s == "k=a+b"
+        Some(WasmBody::Text(s)) if s == "k=a+b"
     ));
     assert!(super::transport::StreamingRequest::new(
         "https://example.com/form",

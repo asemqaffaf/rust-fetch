@@ -9,7 +9,7 @@
 //! may call back into the connection.
 
 use super::{
-    callback_option, invalid, js_error_message, non_negative_u32, parse_delay, parse_headers,
+    invalid, js_error_message, non_negative_u32, parse_callbacks_5, parse_headers, parse_opt_bool,
     parse_params, parse_timeout, prop, set, WasmClient,
 };
 use crate::{
@@ -143,21 +143,6 @@ extern "C" {
     #[wasm_bindgen(constructor, catch, js_class = WebSocket)]
     fn new(url: &str, protocols: &JsValue) -> std::result::Result<Socket, JsValue>;
 
-    #[wasm_bindgen(method, setter = binaryType)]
-    fn set_binary_type(this: &Socket, value: &str);
-
-    #[wasm_bindgen(method, setter = onopen)]
-    fn set_onopen(this: &Socket, handler: Option<&js_sys::Function>);
-
-    #[wasm_bindgen(method, setter = onmessage)]
-    fn set_onmessage(this: &Socket, handler: Option<&js_sys::Function>);
-
-    #[wasm_bindgen(method, setter = onclose)]
-    fn set_onclose(this: &Socket, handler: Option<&js_sys::Function>);
-
-    #[wasm_bindgen(method, setter = onerror)]
-    fn set_onerror(this: &Socket, handler: Option<&js_sys::Function>);
-
     #[wasm_bindgen(method, catch)]
     fn send(this: &Socket, data: &JsValue) -> std::result::Result<(), JsValue>;
 
@@ -166,12 +151,6 @@ extern "C" {
 
     #[wasm_bindgen(method, js_name = close)]
     fn abandon(this: &Socket);
-
-    #[wasm_bindgen(method, getter)]
-    fn protocol(this: &Socket) -> String;
-
-    #[wasm_bindgen(method, getter = bufferedAmount)]
-    fn buffered_amount(this: &Socket) -> f64;
 }
 
 thread_local! {
@@ -237,10 +216,10 @@ impl Attempt {
     }
 
     fn detach(&self) {
-        self.socket.set_onopen(None);
-        self.socket.set_onmessage(None);
-        self.socket.set_onclose(None);
-        self.socket.set_onerror(None);
+        let socket: &js_sys::Object = self.socket.unchecked_ref();
+        for name in ["onopen", "onmessage", "onclose", "onerror"] {
+            let _ = set(socket, name, &JsValue::NULL);
+        }
     }
 }
 
@@ -250,29 +229,7 @@ impl Drop for Attempt {
     }
 }
 
-/// A `setTimeout` timer, cleared when dropped
-struct Timer {
-    handle: JsValue,
-    _callback: Closure<dyn FnMut()>,
-}
-
-impl Timer {
-    fn new(delay: Duration, callback: impl FnMut() + 'static) -> Self {
-        let callback = Closure::<dyn FnMut()>::new(callback);
-        let ms = i32::try_from(delay.as_millis()).unwrap_or(i32::MAX);
-        let handle = super::futures::set_timeout(callback.as_ref().unchecked_ref(), ms);
-        Self {
-            handle,
-            _callback: callback,
-        }
-    }
-}
-
-impl Drop for Timer {
-    fn drop(&mut self) {
-        super::futures::clear_timeout(&self.handle);
-    }
-}
+use super::futures::Timer;
 
 struct Inner {
     state: State,
@@ -329,7 +286,7 @@ impl WebSocketConnection {
         inner
             .attempt
             .as_ref()
-            .map(|attempt| attempt.socket.protocol())
+            .and_then(|attempt| js_get(&attempt.socket, "protocol").as_string())
             .unwrap_or_default()
     }
 
@@ -341,7 +298,8 @@ impl WebSocketConnection {
         inner
             .attempt
             .as_ref()
-            .map_or(0.0, |attempt| attempt.socket.buffered_amount())
+            .and_then(|attempt| js_get(&attempt.socket, "bufferedAmount").as_f64())
+            .unwrap_or(0.0)
             + queued
     }
 
@@ -419,13 +377,7 @@ impl WasmClient {
             });
         }
         let settings = settings(&self.inner, &url, &options)?;
-        let signal = match prop(&options, "signal") {
-            Some(signal) if js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) => {
-                Some(signal.unchecked_into::<web_sys::AbortSignal>())
-            }
-            Some(_) => return Err(invalid("signal", "must be an AbortSignal")),
-            None => None,
-        };
+        let signal = super::parse_signal(prop(&options, "signal"))?;
 
         let mut opened_callbacks = None;
         let opened = js_sys::Promise::new(&mut |resolve, reject| {
@@ -492,16 +444,14 @@ impl WasmClient {
 }
 
 /// Parse the options and resolve the URL
+#[inline(never)]
 fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Result<Settings> {
     let config = &client.config;
     let params = prop(options, "params")
         .map(|params| parse_params(&params))
         .transpose()?
         .unwrap_or_default();
-    let allow_absolute = match prop(options, "allowAbsoluteUrls") {
-        Some(value) => super::parse_bool(&value, "allowAbsoluteUrls")?,
-        None => config.allow_absolute_urls,
-    };
+    let allow_absolute = parse_opt_bool(options, "allowAbsoluteUrls", config.allow_absolute_urls)?;
     crate::client::check_absolute_url(config.base_url.as_deref(), url, allow_absolute)?;
     let url = websocket_url(config.base_url.as_deref(), url, &params)?;
 
@@ -540,10 +490,8 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
             "must be an undici dispatcher, e.g. a ProxyAgent",
         ));
     }
-    let block_private_network = match prop(options, "allowPrivateNetwork") {
-        Some(value) => !super::parse_bool(&value, "allowPrivateNetwork")?,
-        None => !config.allow_private_network,
-    };
+    let block_private_network =
+        !parse_opt_bool(options, "allowPrivateNetwork", config.allow_private_network)?;
     let protocols: JsValue = if super::transport::is_node() {
         // allowPrivateNetwork: false connects through a dispatcher that checks
         // where it connects; another dispatcher couldn't be checked
@@ -574,7 +522,7 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         if merged.iter().next().is_some() {
             let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
             for (name, values) in merged.iter() {
-                super::set_str(&js_headers, name, &values.join(", "))?;
+                super::set_str(&js_headers, name, &super::join_strings(values, ", "))?;
             }
             set(&init, "headers", &js_headers)?;
         }
@@ -606,17 +554,17 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         .map(|value| parse_reconnect(&value))
         .transpose()?
         .flatten();
-    let json = match prop(options, "messageType").map(|value| value.as_string()) {
-        None => false,
-        Some(Some(name)) if name == "auto" => false,
-        Some(Some(name)) if name == "json" => true,
-        Some(_) => return Err(invalid("messageType", "must be 'auto' or 'json'")),
-    };
+    let json = super::parse_message_type(options)?;
     let limit = |name| {
         prop(options, name)
             .map(|value| super::positive_u32(&value, name))
             .transpose()
     };
+
+    let [on_open, on_message, on_error, on_reconnect, on_close] = parse_callbacks_5(
+        options,
+        ["onOpen", "onMessage", "onError", "onReconnect", "onClose"],
+    )?;
 
     Ok(Settings {
         url,
@@ -631,11 +579,11 @@ fn settings(client: &crate::client::Client, url: &str, options: &JsValue) -> Res
         block_private_network: block_private_network && super::transport::is_node(),
         max_queued_messages: limit("maxQueuedMessages")?,
         max_queued_bytes: limit("maxQueuedBytes")?,
-        on_open: callback_option(options, "onOpen")?,
-        on_message: callback_option(options, "onMessage")?,
-        on_error: callback_option(options, "onError")?,
-        on_reconnect: callback_option(options, "onReconnect")?,
-        on_close: callback_option(options, "onClose")?,
+        on_open,
+        on_message,
+        on_error,
+        on_reconnect,
+        on_close,
     })
 }
 
@@ -661,6 +609,7 @@ fn websocket_url(base: Option<&str>, url: &str, params: &[(String, String)]) -> 
 }
 
 /// `true`, a maximum number of attempts, or `ReconnectOptions`; `None` for off
+#[inline(never)]
 pub(crate) fn parse_reconnect(value: &JsValue) -> Result<Option<RetryConfig>> {
     let mut config = RetryConfig {
         max_retries: u32::MAX,
@@ -694,18 +643,13 @@ pub(crate) fn parse_reconnect(value: &JsValue) -> Result<Option<RetryConfig>> {
             non_negative_u32(count, "reconnect.maxRetries")?
         };
     }
-    if let Some(v) = prop(value, "initialDelayMs") {
-        config.initial_delay = parse_delay(&v, "reconnect.initialDelayMs")?;
-    }
-    if let Some(v) = prop(value, "maxDelayMs") {
-        config.max_delay = parse_delay(&v, "reconnect.maxDelayMs")?;
-    }
-    if let Some(v) = prop(value, "multiplier") {
-        config.multiplier = v
-            .as_f64()
-            .filter(|m| m.is_finite() && *m >= 1.0)
-            .ok_or_else(|| invalid("reconnect.multiplier", "must be a number >= 1"))?;
-    }
+    super::parse_backoff_fields(
+        &mut config,
+        value,
+        "reconnect.initialDelayMs",
+        "reconnect.maxDelayMs",
+        "reconnect.multiplier",
+    )?;
     Ok(Some(config))
 }
 
@@ -723,7 +667,8 @@ fn connect(shared: &Rc<Shared>) {
 
 /// Attach the handlers and the connect timeout to a new socket
 fn start(shared: &Rc<Shared>, socket: Socket) {
-    socket.set_binary_type("arraybuffer");
+    let target: &js_sys::Object = socket.unchecked_ref();
+    let _ = super::set_str(target, "binaryType", "arraybuffer");
     let on_open = {
         let shared = shared.clone();
         Closure::<dyn FnMut(JsValue)>::new(move |_| opened(&shared))
@@ -753,10 +698,10 @@ fn start(shared: &Rc<Shared>, socket: Socket) {
             dropped(&shared, 1006, String::new(), false);
         })
     };
-    socket.set_onerror(Some(on_error.as_ref().unchecked_ref()));
-    socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
-    socket.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
-    socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+    let _ = set(target, "onerror", on_error.as_ref());
+    let _ = set(target, "onopen", on_open.as_ref());
+    let _ = set(target, "onmessage", on_message.as_ref());
+    let _ = set(target, "onclose", on_close.as_ref());
 
     let timer = shared.settings.timeout.map(|timeout| {
         let shared = shared.clone();
