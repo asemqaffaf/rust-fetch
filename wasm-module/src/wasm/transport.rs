@@ -1,51 +1,33 @@
-//! Buffered JavaScript responses stay in JS memory. Rust still resolves URLs,
-//! validates requests, and applies the same retry and timeout policy as the
-//! native client. Streaming/progress use the existing incremental reader.
+//! JavaScript transport bridge for both buffered and streamed requests.
 //!
-//! Two transports carry the bytes:
-//! - Node.js: the transport registered by the package's Node entry
-//!   (`node:http`/`node:https` with keep-alive), which avoids the overhead of
-//!   Node's WHATWG `fetch()` implementation. To keep JS/wasm round trips per
-//!   request to a minimum, it also enforces the per-attempt timeout and
-//!   decodes the body (with the same rules as `decode_body` below), handing
-//!   back the finished response object.
-//! - Everywhere else: the runtime's `fetch()`, or `XMLHttpRequest` for
-//!   requests with an `onUploadProgress` callback, since `fetch()` can't
-//!   report upload progress.
+//! Rust resolves URLs, validates headers/options, and runs the shared retry,
+//! timeout, circuit-breaker, rate-limiter, concurrency-limiter, and retry-budget
+//! policies. The actual wire I/O is delegated to a single JS transport function:
+//! - Custom `options.transport` (e.g. `createMockTransport()`) when provided
+//! - Node.js: bound by `js/node.js` (`node:http`/`node:https` or the native addon)
+//! - Browsers / edge runtimes: bound by `js/browser-transport.js` (`fetch()` / `XMLHttpRequest`)
 
-use super::{invalid, js_error_message, set, set_bool, set_f64, set_str, BodyType};
+use super::{concat2, invalid, js_error_message, put, put_bool, put_f64, put_str, BodyType};
 use crate::{
     client::{parse_retry_after, Attempt},
     error::{Error, Result},
     types::{
-        is_json_content_type, is_redirect_status, is_text_content_type, Headers, Redirect,
-        WasmBody, WasmRequestConfig, DEFAULT_MAX_REDIRECTS,
+        is_redirect_status, Headers, Redirect, WasmBody, WasmRequestConfig, DEFAULT_MAX_REDIRECTS,
     },
 };
-use futures_util::StreamExt;
 use std::cell::OnceCell;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(catch, js_name = fetch)]
-    fn fetch_native(request: &web_sys::Request) -> std::result::Result<js_sys::Promise, JsValue>;
-
     // js_sys::JSON::parse takes &str, which would copy a JS string into wasm
     // and then back out. Keep the decoded text in JS instead.
     #[wasm_bindgen(catch, js_namespace = JSON, js_name = parse)]
     pub(crate) fn parse_native_json(text: &JsValue) -> std::result::Result<JsValue, JsValue>;
-
-    #[wasm_bindgen(js_name = TextDecoder)]
-    type NativeTextDecoder;
-
-    #[wasm_bindgen(constructor, js_class = TextDecoder)]
-    fn new() -> NativeTextDecoder;
-
-    #[wasm_bindgen(method, catch, js_name = decode)]
-    fn decode(this: &NativeTextDecoder, bytes: &JsValue) -> std::result::Result<JsValue, JsValue>;
 }
 
 struct NodeBindings {
@@ -53,10 +35,16 @@ struct NodeBindings {
     websocket_guard: js_sys::Function,
 }
 
+struct BrowserRuntime {
+    transport: js_sys::Function,
+    finalize_stream: js_sys::Function,
+    encode_body: js_sys::Function,
+}
+
 thread_local! {
-    static TEXT_DECODER: NativeTextDecoder = NativeTextDecoder::new();
     /// Owned by this Wasm instance, never discovered through another copy's globals.
     static NODE_BINDINGS: OnceCell<NodeBindings> = const { OnceCell::new() };
+    static BROWSER_RUNTIME: OnceCell<BrowserRuntime> = const { OnceCell::new() };
 }
 
 /// Private adapter handshake, called synchronously by the Node entry point.
@@ -75,8 +63,88 @@ pub fn bind_node_transport(
         .map_err(|_| JsValue::from_str("The Node.js transport is already bound"))
 }
 
+/// Private adapter handshake, called synchronously during browser glue init.
+#[wasm_bindgen(js_name = __bindBrowserTransport, skip_typescript)]
+pub fn bind_browser_transport(
+    transport: js_sys::Function,
+    finalize_stream: js_sys::Function,
+    encode_body: js_sys::Function,
+) {
+    BROWSER_RUNTIME.with(|slot| {
+        let _ = slot.set(BrowserRuntime {
+            transport,
+            finalize_stream,
+            encode_body,
+        });
+    });
+}
+
 fn node_transport() -> Option<js_sys::Function> {
     NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.transport.clone()))
+}
+
+fn browser_transport() -> Option<js_sys::Function> {
+    BROWSER_RUNTIME.with(|slot| slot.get().map(|rt| rt.transport.clone()))
+}
+
+pub(crate) fn finalize_stream_fn() -> Option<js_sys::Function> {
+    BROWSER_RUNTIME.with(|slot| slot.get().map(|rt| rt.finalize_stream.clone()))
+}
+
+pub(crate) fn encode_body_fn() -> Option<js_sys::Function> {
+    BROWSER_RUNTIME.with(|slot| slot.get().map(|rt| rt.encode_body.clone()))
+}
+
+/// Wrap a raw streamed transport response in the JS stream finalizer
+/// (`maxResponseBytes`, `idleTimeoutMs`, `deadlineMs`, `signal`,
+/// `onDownloadProgress`, `ndjson`, and deterministic `Permit` release).
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finalize_stream_response(
+    response: JsValue,
+    ndjson: bool,
+    max_line_bytes: Option<usize>,
+    max_response_bytes: Option<u64>,
+    idle: Option<std::time::Duration>,
+    deadline: Option<crate::timeouts::Deadline>,
+    signal: Option<web_sys::AbortSignal>,
+    on_download_progress: Option<js_sys::Function>,
+    permit: Option<crate::limiter::Ticket>,
+) -> Result<JsValue> {
+    let finalize = finalize_stream_fn().ok_or_else(|| Error::JsInterop {
+        message: "Stream runtime is not bound".to_string(),
+    })?;
+    let cfg: js_sys::Object = js_sys::Object::create(JsValue::NULL.unchecked_ref());
+    if ndjson {
+        put_bool(&cfg, "ndjson", true);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    if let Some(n) = max_line_bytes {
+        put_f64(&cfg, "maxLineBytes", n as f64);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    if let Some(n) = max_response_bytes {
+        put_f64(&cfg, "maxResponseBytes", n as f64);
+    }
+    if let Some(d) = idle {
+        put_f64(&cfg, "idleMs", d.as_secs_f64() * 1000.0);
+    }
+    if let Some(dl) = deadline {
+        put_f64(&cfg, "deadlineMs", dl.remaining().as_secs_f64() * 1000.0);
+        #[allow(clippy::cast_precision_loss)]
+        put_f64(&cfg, "totalDeadlineMs", dl.duration.as_millis() as f64);
+    }
+    if let Some(sig) = signal {
+        put(&cfg, "signal", sig.as_ref());
+    }
+    if let Some(cb) = on_download_progress {
+        put(&cfg, "onDownloadProgress", cb.as_ref());
+    }
+    if let Some(permit) = permit {
+        let on_done = Closure::once_into_js(move || drop(permit));
+        put(&cfg, "onDone", &on_done);
+    }
+    Ok(finalize.call2(&JsValue::UNDEFINED, &response, &cfg)?)
 }
 
 pub(crate) fn node_websocket_guard() -> Option<js_sys::Function> {
@@ -84,13 +152,10 @@ pub(crate) fn node_websocket_guard() -> Option<js_sys::Function> {
 }
 
 /// `onUploadProgress` and `onDownloadProgress` for a request sent here
-/// (requests with only `onDownloadProgress` take the reqwest path instead)
 #[derive(Default)]
 pub(crate) struct ProgressCallbacks {
     pub(crate) upload: Option<js_sys::Function>,
     pub(crate) download: Option<js_sys::Function>,
-    pub(crate) observer: Option<js_sys::Function>,
-    pub(crate) request_state: Option<std::sync::Arc<super::RequestState>>,
 }
 
 /// Per-request settings for the transports, beyond the `RequestConfig`
@@ -116,43 +181,27 @@ pub(crate) struct TransportOptions<'a> {
     pub(crate) request_state: Option<&'a std::sync::Arc<super::RequestState>>,
 }
 
-pub(crate) enum PreparedRequest {
-    Fetch {
-        upload: Option<super::upload::Upload>,
-        phases: Option<Box<crate::PhaseTimeouts>>,
-        url: String,
-        init: web_sys::RequestInit,
-        body_type: BodyType,
-        /// Without `XMLHttpRequest` (e.g. in a service worker), progress is
-        /// reported once each way: when the response arrives and when its
-        /// body has been read
-        progress: ProgressCallbacks,
-        body_length: u32,
-        /// `manual` and `error` are applied by requesting `redirect: 'manual'`
-        redirect: Redirect,
-        /// `maxResponseBytes`
-        limit: Option<u64>,
-    },
-    Xhr {
-        method: String,
-        url: String,
-        headers: Vec<(String, String)>,
-        body: Option<js_sys::Uint8Array>,
-        body_type: BodyType,
-        progress: ProgressCallbacks,
-        /// `credentials: 'include'`
-        with_credentials: bool,
-    },
-    Node {
-        transport: js_sys::Function,
-        request_state: Option<std::sync::Arc<super::RequestState>>,
-        /// `{ method, url, headers, body?, timeout?, bodyType, redirect?,
-        /// maxRedirects?, proxy? }`, reused for every attempt
-        request: js_sys::Object,
-        timeout_ms: u64,
-        /// Whether redirect responses resolve (`redirect: 'manual'`)
-        manual: bool,
-    },
+pub(crate) struct PreparedRequest {
+    transport: js_sys::Function,
+    request_state: Option<std::sync::Arc<super::RequestState>>,
+    /// `{ method, url, headers, body?, timeout?, bodyType?, stream?, redirect?,
+    /// maxRedirects?, proxy?, fetchOptions?, ... }`, reused for every attempt
+    request: js_sys::Object,
+    timeout_ms: u64,
+    /// Whether the transport enforces the per-attempt timeout itself
+    enforces_timeout: bool,
+    /// Whether redirect responses resolve (`redirect: 'manual'`)
+    manual: bool,
+    /// Whether `status: 0` (browser opaque / opaqueredirect) resolves as success
+    allow_opaque: bool,
+}
+
+/// The head of a streamed response, and its unread body
+pub(crate) struct StreamedResponse {
+    pub(crate) status: u16,
+    pub(crate) url: String,
+    pub(crate) headers: Headers,
+    pub(crate) body: FetchBody,
 }
 
 /// Encode `WasmRequestConfig::body` for JS transports without pulling
@@ -163,13 +212,22 @@ fn prepare_body(
     let Some(body) = &config.body else {
         return Ok((None, None));
     };
-    let (content_type, bytes): (&'static str, &[u8]) = match body {
-        WasmBody::Text(s) => ("text/plain", s.as_bytes()),
-        WasmBody::Binary(b) => ("application/octet-stream", b.as_slice()),
+    let (content_type, view) = match body {
+        WasmBody::Text(s) => (
+            "text/plain",
+            (!s.is_empty()).then(|| js_sys::Uint8Array::from(s.as_bytes())),
+        ),
+        WasmBody::Binary(b) => (
+            "application/octet-stream",
+            (!b.is_empty()).then(|| js_sys::Uint8Array::from(b.as_slice())),
+        ),
+        WasmBody::JsBytes(arr) => (
+            "application/octet-stream",
+            (arr.byte_length() > 0).then(|| arr.clone()),
+        ),
     };
     // A Content-Type the caller chose wins over the body's default
     let default_content_type = (!config.headers.contains("content-type")).then_some(content_type);
-    let view = (!bytes.is_empty()).then(|| js_sys::Uint8Array::from(bytes));
     Ok((default_content_type, view))
 }
 
@@ -181,514 +239,143 @@ impl PreparedRequest {
         body_type: BodyType,
         progress: ProgressCallbacks,
     ) -> Result<Self> {
-        let TransportOptions {
-            fetch_options,
-            limit,
-            ..
-        } = *options;
+        Self::build(url, config, options, Some((body_type, progress)))
+    }
+
+    pub(crate) fn new_streaming(
+        url: &str,
+        config: &WasmRequestConfig,
+        options: &TransportOptions,
+    ) -> Result<Self> {
+        Self::build(url, config, options, None)
+    }
+
+    #[inline(never)]
+    fn build(
+        url: &str,
+        config: &WasmRequestConfig,
+        options: &TransportOptions,
+        buffered: Option<(BodyType, ProgressCallbacks)>,
+    ) -> Result<Self> {
         let headers = validated_headers(config)?;
         let (default_content_type, body) = prepare_body(config)?;
         let method = config.method.as_str();
         let redirect = redirect_mode(config);
 
-        if let Some(transport) = options.transport.cloned().or_else(node_transport) {
-            let request = node_request(
-                url,
-                method,
-                &headers,
-                default_content_type,
-                body.as_ref(),
-                config,
-                options,
-            )?;
-            let timeout_ms = config
-                .timeout
-                .map_or(0, |t| u64::try_from(t.as_millis()).unwrap_or(u64::MAX));
-            if timeout_ms > 0 {
-                #[allow(clippy::cast_precision_loss)]
-                set_f64(&request, "timeout", timeout_ms as f64)?;
-            }
-            set_f64(&request, "bodyType", f64::from(body_type as u8))?;
-            if let Some(callback) = &progress.upload {
-                set(&request, "onUploadProgress", callback)?;
-            }
-            if let Some(callback) = &progress.download {
-                set(&request, "onDownloadProgress", callback)?;
-            }
-            return Ok(Self::Node {
-                transport,
-                request_state: options.request_state.cloned(),
-                request,
-                timeout_ms,
-                manual: redirect == Redirect::Manual,
-            });
-        }
-
-        // XMLHttpRequest always follows redirects and has no equivalent for
-        // most fetch() options; fetch() reports upload progress only once
-        // XMLHttpRequest can't stop reading at a limit either
-        let xhr = options.upload.is_none()
-            && progress.upload.is_some()
-            && redirect == Redirect::Follow
-            && limit.is_none()
-            && options.phases.response.is_none()
-            && options.phases.idle.is_none();
-        if let (true, Some(with_credentials)) = (xhr, xhr_credentials(fetch_options)) {
-            if has_global("XMLHttpRequest") {
-                let mut headers: Vec<(String, String)> = headers
-                    .iter()
-                    .map(|&(name, value)| (name.to_string(), value.to_string()))
-                    .collect();
-                if let Some(content_type) = default_content_type {
-                    headers.push(("content-type".to_string(), content_type.to_string()));
-                }
-                return Ok(Self::Xhr {
-                    method: method.to_string(),
-                    url: url.to_string(),
-                    headers,
-                    body,
-                    body_type,
-                    progress,
-                    with_credentials,
+        let (transport, is_browser) =
+            if let Some(transport) = options.transport.cloned().or_else(node_transport) {
+                (transport, false)
+            } else if let Some(transport) = browser_transport() {
+                (transport, true)
+            } else {
+                return Err(Error::JsInterop {
+                    message: "No transport is bound".to_string(),
                 });
-            }
-        }
+            };
 
-        if options.upload.is_some() && !super::upload::Upload::supported() {
-            return Err(super::invalid(
-                "body",
-                "Streaming uploads are unavailable in this runtime",
-            ));
-        }
-        let body_length = body.as_ref().map_or(0, js_sys::Uint8Array::length);
-        let init = fetch_init(
+        let request = transport_request(
+            url,
             method,
             &headers,
             default_content_type,
             body.as_ref(),
-            redirect,
-            fetch_options,
-        )?;
-        Ok(Self::Fetch {
-            upload: options.upload.cloned(),
-            phases: (options.phases.response.is_some() || options.phases.idle.is_some())
-                .then(|| Box::new(*options.phases)),
-            url: url.to_string(),
-            init,
-            body_type,
-            progress,
-            body_length,
-            redirect,
-            limit,
+            config,
+            options,
+            is_browser,
+        );
+
+        let (timeout_ms, enforces_timeout) = if let Some((body_type, progress)) = buffered {
+            let timeout_ms = config
+                .timeout
+                .map_or(0, |t| u64::try_from(t.as_millis()).unwrap_or(u64::MAX));
+            if !is_browser && timeout_ms > 0 {
+                #[allow(clippy::cast_precision_loss)]
+                put_f64(&request, "timeout", timeout_ms as f64);
+            }
+            put_f64(&request, "bodyType", f64::from(body_type as u8));
+            if let Some(callback) = &progress.upload {
+                put(&request, "onUploadProgress", callback);
+            }
+            if let Some(callback) = &progress.download {
+                put(&request, "onDownloadProgress", callback);
+            }
+            (timeout_ms, !is_browser)
+        } else {
+            put_bool(&request, "stream", true);
+            (0, false)
+        };
+
+        Ok(Self {
+            transport,
+            request_state: options.request_state.cloned(),
+            request,
+            timeout_ms,
+            enforces_timeout,
+            manual: redirect == Redirect::Manual,
+            allow_opaque: is_browser,
         })
     }
 
     /// Whether the transport enforces the per-attempt timeout itself
     pub(crate) fn enforces_timeout(&self) -> bool {
-        matches!(self, Self::Node { .. })
+        self.enforces_timeout
     }
 
-    pub(crate) fn send(&self) -> impl std::future::Future<Output = Result<Attempt<JsValue>>> + '_ {
-        match self {
-            Self::Node {
-                transport,
-                request_state,
-                request,
-                timeout_ms,
-                manual,
-            } => futures_util::future::Either::Left(send_node(
-                transport,
-                request,
-                *timeout_ms,
-                *manual,
-                request_state.as_deref(),
-            )),
-            _ => futures_util::future::Either::Right(self.send_browser()),
-        }
-    }
-
-    // The browser's upload, progress and timeout futures are not compiled by
-    // V8 on the first Node request. Node keeps its allocation-free poll path;
-    // only browser attempts allocate this separate future.
-    fn send_browser(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Attempt<JsValue>>> + '_>> {
-        Box::pin(async move {
-            match self {
-                Self::Fetch {
-                    upload,
-                    phases,
-                    url,
-                    init,
-                    body_type,
-                    progress,
-                    body_length,
-                    redirect,
-                    limit,
-                } => {
-                    send_fetch(
-                        url,
-                        init,
-                        *body_type,
-                        progress,
-                        *body_length,
-                        *redirect,
-                        *limit,
-                        phases.as_deref(),
-                        upload.as_ref(),
-                    )
-                    .await
-                }
-                Self::Xhr {
-                    method,
-                    url,
-                    headers,
-                    body,
-                    body_type,
-                    progress,
-                    with_credentials,
-                } => {
-                    send_xhr(
-                        method,
-                        url,
-                        headers,
-                        body.as_ref(),
-                        *body_type,
-                        progress,
-                        *with_credentials,
-                    )
-                    .await
-                }
-                Self::Node { .. } => unreachable!("Node attempts use send_node"),
-            }
-        })
-    }
-}
-
-/// A request whose response is returned as soon as its headers arrive
-/// (`responseType: 'stream' | 'ndjson'` and `events()`): through the Node
-/// transport in Node.js, and with `fetch()` everywhere else
-pub(crate) enum StreamingRequest {
-    Fetch {
-        upload: Option<super::upload::Upload>,
-        observer: Option<js_sys::Function>,
-        request_state: Option<std::sync::Arc<super::RequestState>>,
-        phases: Option<Box<crate::PhaseTimeouts>>,
-        url: String,
-        init: web_sys::RequestInit,
-        redirect: Redirect,
-        limit: Option<u64>,
-    },
-    /// Node.js: the Node transport, with `stream: true`. The core's timer
-    /// covers the attempt until the headers arrive.
-    Node {
-        transport: js_sys::Function,
-        request_state: Option<std::sync::Arc<super::RequestState>>,
-        request: js_sys::Object,
-        manual: bool,
-    },
-}
-
-/// The head of a streamed response, and its unread body
-pub(crate) struct StreamedResponse {
-    pub(crate) status: u16,
-    pub(crate) url: String,
-    pub(crate) headers: Headers,
-    pub(crate) body: FetchBody,
-}
-
-impl StreamingRequest {
-    pub(crate) fn new(
-        url: &str,
-        config: &WasmRequestConfig,
-        options: &TransportOptions,
-    ) -> Result<Self> {
-        let TransportOptions {
-            fetch_options,
-            limit,
-            ..
-        } = *options;
-        let headers = validated_headers(config)?;
-        let (default_content_type, body) = prepare_body(config)?;
-        let redirect = redirect_mode(config);
-        let method = config.method.as_str();
-        if let Some(transport) = options.transport.cloned().or_else(node_transport) {
-            let request = node_request(
-                url,
-                method,
-                &headers,
-                default_content_type,
-                body.as_ref(),
-                config,
-                options,
-            )?;
-            set_bool(&request, "stream", true)?;
-            return Ok(Self::Node {
-                transport,
-                request_state: options.request_state.cloned(),
-                request,
-                manual: redirect == Redirect::Manual,
-            });
-        }
-        let init = fetch_init(
-            method,
-            &headers,
-            default_content_type,
-            body.as_ref(),
-            redirect,
-            fetch_options,
-        )?;
-        if options.upload.is_some() && !super::upload::Upload::supported() {
-            return Err(super::invalid(
-                "body",
-                "Streaming uploads are unavailable in this runtime",
-            ));
-        }
-        Ok(Self::Fetch {
-            upload: options.upload.cloned(),
-            observer: options.observer.cloned(),
-            request_state: options.request_state.cloned(),
-            phases: (options.phases.response.is_some() || options.phases.idle.is_some())
-                .then(|| Box::new(*options.phases)),
-            url: url.to_string(),
-            init,
-            redirect,
-            limit,
-        })
-    }
-
-    /// One attempt, until the response headers arrive. Error statuses are
-    /// read in full, as for other requests.
-    pub(crate) async fn send(&self) -> Result<Attempt<StreamedResponse>> {
-        match self {
-            Self::Fetch {
-                upload,
-                observer,
-                request_state,
-                phases,
-                url,
-                init,
-                redirect,
-                limit,
-            } => {
-                send_fetch_streaming(
-                    url,
-                    init,
-                    *redirect,
-                    *limit,
-                    phases.as_deref(),
-                    upload.as_ref(),
-                    observer.as_ref(),
-                    request_state.as_deref(),
-                )
-                .await
-            }
-            Self::Node {
-                transport,
-                request_state,
-                request,
-                manual,
-            } => send_node_streaming(transport, request, *manual, request_state.as_deref()).await,
-        }
-    }
-}
-
-struct FetchHead {
-    response: web_sys::Response,
-    headers: web_sys::Headers,
-    status: u16,
-    controller: web_sys::AbortController,
-    guard: CancelGuard<Box<dyn FnOnce()>>,
-    _upload_guard: CancelGuard<Box<dyn FnOnce()>>,
-}
-
-/// Shared `fetch()` preamble + non-2xx error-body handling for buffered and
-/// streaming requests so both don't duplicate the async request state machine.
-async fn send_fetch_head(
-    url: &str,
-    init: &web_sys::RequestInit,
-    redirect: Redirect,
-    limit: Option<u64>,
-    phases: Option<&crate::PhaseTimeouts>,
-    upload: Option<&super::upload::Upload>,
-    upload_progress: Option<&js_sys::Function>,
-    body_length: u32,
-    observer: Option<&js_sys::Function>,
-    request_state: Option<&super::RequestState>,
-) -> Result<Attempt<FetchHead>> {
-    let controller = web_sys::AbortController::new().map_err(network_error)?;
-    set(init.unchecked_ref(), "signal", &controller.signal())?;
-    let cancel = controller.clone();
-    let guard = CancelGuard::new(Box::new(move || cancel.abort()) as Box<dyn FnOnce()>);
-    let session = start_upload(init, upload, upload_progress)?;
-    let source = session.clone();
-    let upload_guard =
-        CancelGuard::new(Box::new(move || cancel_upload(source.as_ref())) as Box<dyn FnOnce()>);
-    let request = web_sys::Request::new_with_str_and_init(url, init).map_err(invalid_request)?;
-    let receive = async {
-        JsFuture::from(fetch_native(&request).map_err(network_error)?)
+    pub(crate) async fn send(&self) -> Result<Attempt<JsValue>> {
+        let pending = self
+            .transport
+            .call1(&JsValue::UNDEFINED, &self.request)
+            .map_err(network_error)?;
+        let cancel: js_sys::Function =
+            js_sys::Reflect::get(&pending, &"cancel".into())?.unchecked_into();
+        let guard = CancelGuard::new(move || {
+            let _ = cancel.call0(&JsValue::UNDEFINED);
+        });
+        let response = JsFuture::from(js_sys::Promise::from(pending))
             .await
             .map_err(|error| {
-                crate::client::observe(observer, "cause", &error);
-                if let Some(state) = request_state {
+                destination(self.request_state.as_deref(), &error);
+                if let Some(state) = self.request_state.as_deref() {
                     state.remember_cause(&error);
                 }
-                upload_error(session.as_ref(), error)
-            })
-    };
-    crate::client::observe_text(observer, "transport", "fetch");
-    let response_timeout = phases.and_then(|phases| phases.response);
-    let response: web_sys::Response = crate::runtime::timeout_phase_optional(
-        response_timeout,
-        crate::TimeoutPhase::Response,
-        response_timeout.unwrap_or_default(),
-        receive,
-    )
-    .await?
-    .unchecked_into();
-    let status = response.status();
-    crate::client::observe(observer, "headers", &JsValue::UNDEFINED);
-    let headers = response.headers();
-    if let (Some(callback), true) = (upload_progress, body_length > 0) {
-        let length = f64::from(body_length);
-        report_progress(callback, length, Some(length));
-    }
-    let failed = !(200..300).contains(&status);
-    if let (true, Some(state)) = (failed, request_state) {
-        *state.url.borrow_mut() = Some(response.url());
-    }
-    let redirected = check_redirect(&response, &headers, redirect)?;
-    if failed && !redirected {
-        check_declared_length(&headers, limit)?;
-        let buffer = match (
-            limit.is_some() || phases.is_some_and(|phases| phases.idle.is_some()),
-            response.body(),
-        ) {
-            (true, Some(body)) => {
-                read_chunks(
-                    body,
-                    None,
-                    None,
-                    limit,
-                    phases.and_then(|phases| phases.idle),
-                    request_state,
-                )
-                .await?
-            }
-            _ => JsFuture::from(
-                response
-                    .array_buffer()
-                    .map_err(|error| captured_network_error(error, request_state))?,
-            )
-            .await
-            .map_err(|error| captured_network_error(error, request_state))?,
-        };
+                transport_error(&error, self.timeout_ms)
+            })?;
         guard.disarm();
-        let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
-        let retry_after = headers.get("retry-after")?;
-        return Ok(http_error(status, text.as_string(), retry_after.as_deref()));
-    }
-    Ok(Attempt::Success(FetchHead {
-        response,
-        headers,
-        status,
-        controller,
-        guard,
-        _upload_guard: upload_guard,
-    }))
-}
 
-async fn send_fetch_streaming(
-    url: &str,
-    init: &web_sys::RequestInit,
-    redirect: Redirect,
-    limit: Option<u64>,
-    phases: Option<&crate::PhaseTimeouts>,
-    upload: Option<&super::upload::Upload>,
-    observer: Option<&js_sys::Function>,
-    request_state: Option<&super::RequestState>,
-) -> Result<Attempt<StreamedResponse>> {
-    let head = match send_fetch_head(
-        url,
-        init,
-        redirect,
-        limit,
-        phases,
-        upload,
-        None,
-        0,
-        observer,
-        request_state,
-    )
-    .await?
-    {
-        Attempt::Success(head) => head,
-        Attempt::HttpError(error, retry_after) => {
-            return Ok(Attempt::HttpError(error, retry_after))
+        let status = super::get_f64(&response, "status").unwrap_or(0.0);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let status = status as u16;
+        let ok = (200..300).contains(&status)
+            || (self.allow_opaque && status == 0)
+            || (self.manual && is_redirect_status(status));
+        if !ok {
+            destination(self.request_state.as_deref(), &response);
+            let body = super::get_str(&response, "body");
+            let js_headers = super::get_prop(&response, "headers");
+            let retry_after =
+                own_prop(&js_headers, "retry-after").and_then(|value| value.as_string());
+            return Ok(http_error(status, body, retry_after.as_deref()));
         }
-    };
-    // From here on, the body is cancelled when it's dropped
-    head.guard.disarm();
-    let length = head
-        .headers
-        .get("content-length")?
-        .and_then(|length| length.trim_ascii().parse::<u64>().ok());
-    let response_url = match head.response.url() {
-        response_url if response_url.is_empty() => url.to_string(),
-        response_url => response_url,
-    };
-    Ok(Attempt::Success(StreamedResponse {
-        status: head.status,
-        url: response_url,
-        headers: rust_headers(&head.headers)?,
-        body: FetchBody {
-            body: head.response.body(),
-            controller: Some(head.controller),
-            length,
-        },
-    }))
+        // Same status text table across every transport
+        put_str(&response, "statusText", status_text(status));
+        Ok(Attempt::Success(response))
+    }
 }
 
-/// A streamed attempt through the Node transport, which resolves once the
-/// headers arrive with `{ status, url, headers, body }`: a `ReadableStream`
-/// for a successful response (or a manual redirect), else the text
-async fn send_node_streaming(
-    transport: &js_sys::Function,
-    request: &js_sys::Object,
-    manual: bool,
-    request_state: Option<&super::RequestState>,
-) -> Result<Attempt<StreamedResponse>> {
-    let pending = transport
-        .call1(&JsValue::UNDEFINED, request)
-        .map_err(network_error)?;
-    let cancel: js_sys::Function =
-        js_sys::Reflect::get(&pending, &"cancel".into())?.unchecked_into();
-    let guard = CancelGuard::new(move || {
-        let _ = cancel.call0(&JsValue::UNDEFINED);
-    });
-    let response = JsFuture::from(js_sys::Promise::from(pending))
-        .await
-        .map_err(|error| {
-            destination(request_state, &error);
-            if let Some(state) = request_state {
-                state.remember_cause(&error);
-            }
-            node_error(&error, 0)
-        })?;
-    guard.disarm();
-
-    let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
+/// Unpack a streamed transport response `{ status, url, headers, body, cancelBody? }`.
+#[inline(never)]
+pub(crate) fn into_streamed_response(response: JsValue) -> Result<StreamedResponse> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let status = get(&response, "status")?.as_f64().unwrap_or(0.0) as u16;
-    let js_headers = get(&response, "headers")?;
-    let body = get(&response, "body")?;
-    if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
-        destination(request_state, &response);
-        let retry_after = own_prop(&js_headers, "retry-after").and_then(|value| value.as_string());
-        return Ok(http_error(status, body.as_string(), retry_after.as_deref()));
-    }
+    let status = super::get_f64(&response, "status").unwrap_or(0.0) as u16;
+    let js_headers = super::get_prop(&response, "headers");
+    let body = super::get_prop(&response, "body");
+    let cancel = super::get_prop(&response, "cancelBody").dyn_into().ok();
     let mut headers = Headers::new();
-    let entries = js_sys::Object::entries(js_headers.unchecked_ref());
+    let entries = if js_sys::Array::is_array(&js_headers) {
+        js_sys::Array::from(&js_headers)
+    } else {
+        js_sys::Object::entries(js_headers.unchecked_ref())
+    };
     for entry in entries.iter() {
         let entry: js_sys::Array = entry.unchecked_into();
         headers.insert(
@@ -699,20 +386,21 @@ async fn send_node_streaming(
     let length = headers
         .get_first("content-length")
         .and_then(|length| length.trim_ascii().parse::<u64>().ok());
-    Ok(Attempt::Success(StreamedResponse {
+    Ok(StreamedResponse {
         status,
-        url: get(&response, "url")?.as_string().unwrap_or_default(),
+        url: super::get_str(&response, "url").unwrap_or_default(),
         headers,
         body: FetchBody {
-            controller: None,
             body: body.dyn_into().ok(),
+            cancel,
             length,
         },
-    }))
+    })
 }
 
-/// The Node transport's request object, without per-attempt settings
-fn node_request(
+/// The transport's request object, without per-attempt settings
+#[allow(clippy::too_many_arguments)]
+fn transport_request(
     url: &str,
     method: &str,
     headers: &[(&str, &str)],
@@ -720,11 +408,12 @@ fn node_request(
     body: Option<&js_sys::Uint8Array>,
     config: &WasmRequestConfig,
     options: &TransportOptions,
-) -> Result<js_sys::Object> {
-    let js_headers = js_sys::Object::create(JsValue::NULL.unchecked_ref());
+    is_browser: bool,
+) -> js_sys::Object {
+    let js_headers: js_sys::Object = js_sys::Object::create(JsValue::NULL.unchecked_ref());
     for &(name, value) in headers {
         // Repeated headers are sent as an array, one line each
-        let existing = js_sys::Reflect::get(&js_headers, &name.into())?;
+        let existing = super::get_prop(&js_headers, name);
         let value = if existing.is_undefined() {
             JsValue::from_str(value)
         } else if js_sys::Array::is_array(&existing) {
@@ -736,18 +425,18 @@ fn node_request(
             pair.push(&value.into());
             pair.into()
         };
-        set(&js_headers, name, &value)?;
+        put(&js_headers, name, &value);
     }
     if let Some(content_type) = default_content_type {
-        set_str(&js_headers, "content-type", content_type)?;
+        put_str(&js_headers, "content-type", content_type);
     }
     // No prototype: Object.prototype must not supply fields the transport reads
     let request = js_sys::Object::create(JsValue::NULL.unchecked_ref());
-    set_str(&request, "method", method)?;
-    set_str(&request, "url", url)?;
-    set(&request, "headers", &js_headers)?;
+    put_str(&request, "method", method);
+    put_str(&request, "url", url);
+    put(&request, "headers", &js_headers);
     if let Some(body) = body {
-        set(&request, "body", body)?;
+        put(&request, "body", body);
     }
     for (name, duration) in [
         ("connectTimeout", options.phases.connect),
@@ -755,49 +444,54 @@ fn node_request(
         ("idleTimeout", options.phases.idle),
     ] {
         if let Some(duration) = duration {
-            set_f64(&request, name, duration.as_secs_f64() * 1000.0)?;
+            put_f64(&request, name, duration.as_secs_f64() * 1000.0);
         }
     }
     if !config.follow_redirects {
-        set_str(&request, "redirect", "manual")?;
+        put_str(&request, "redirect", "manual");
     }
     if config.max_redirects != DEFAULT_MAX_REDIRECTS {
-        set_f64(&request, "maxRedirects", f64::from(config.max_redirects))?;
+        put_f64(&request, "maxRedirects", f64::from(config.max_redirects));
     }
-    if let Some(proxy) = options.proxy {
-        set_str(&request, "proxy", proxy)?;
-    }
-    if options.block_private_network {
-        set_bool(&request, "blockPrivateNetwork", true)?;
-    }
-    if !options.sensitive_headers.is_empty() {
-        let names: js_sys::Array = options
-            .sensitive_headers
-            .iter()
-            .map(JsValue::from)
-            .collect();
-        set(&request, "sensitiveHeaders", &names)?;
-    }
-    if !options.allow_insecure_redirects {
-        set_bool(&request, "allowInsecureRedirects", false)?;
+    if is_browser {
+        if let Some(fetch_options) = options.fetch_options {
+            put(&request, "fetchOptions", fetch_options);
+        }
+    } else {
+        if let Some(proxy) = options.proxy {
+            put_str(&request, "proxy", proxy);
+        }
+        if options.block_private_network {
+            put_bool(&request, "blockPrivateNetwork", true);
+        }
+        if !options.sensitive_headers.is_empty() {
+            let names = js_sys::Array::new();
+            for s in options.sensitive_headers {
+                names.push(&JsValue::from_str(s));
+            }
+            put(&request, "sensitiveHeaders", &names);
+        }
+        if !options.allow_insecure_redirects {
+            put_bool(&request, "allowInsecureRedirects", false);
+        }
     }
     if let Some(limit) = options.limit {
         #[allow(clippy::cast_precision_loss)]
-        set_f64(&request, "maxResponseBytes", limit as f64)?;
+        put_f64(&request, "maxResponseBytes", limit as f64);
     }
     if let Some(upload) = options.upload {
-        set(&request, "upload", upload.value())?;
+        put(&request, "upload", upload.value());
     }
     if let Some(observer) = options.observer {
-        set(&request, "__observe", observer)?;
+        put(&request, "__observe", observer);
     }
-    Ok(request)
+    request
 }
 
 /// A streamed response body; cancelled if dropped unread
 pub(crate) struct FetchBody {
     body: Option<web_sys::ReadableStream>,
-    controller: Option<web_sys::AbortController>,
+    cancel: Option<js_sys::Function>,
     length: Option<u64>,
 }
 
@@ -807,107 +501,68 @@ impl FetchBody {
         self.length
     }
 
-    /// The transport's own stream, for handing to the caller without copying
-    /// each chunk through WebAssembly; `None` for a response without a body
-    pub(crate) fn into_raw(
-        mut self,
-    ) -> (
-        Option<web_sys::ReadableStream>,
-        Option<web_sys::AbortController>,
-    ) {
-        (self.body.take(), self.controller.take())
-    }
-
     /// The body, chunk by chunk; dropping the stream cancels the body
     pub(crate) fn chunks(mut self) -> impl futures_util::Stream<Item = Result<Vec<u8>>> {
-        let chunks = match self.body.take() {
-            Some(body) => super::stream::read_stream(body).left_stream(),
-            None => futures_util::stream::empty().right_stream(),
+        let reader = match self.body.take() {
+            Some(body) => super::stream::read_stream(body),
+            None => super::stream::empty_reader(),
         };
-        body_with_abort(
-            chunks.map(|chunk| {
-                chunk
-                    .map(|chunk| js_sys::Uint8Array::new(&chunk).to_vec())
-                    .map_err(|error| body_error(&error))
-            }),
-            self.controller.take(),
-        )
+        BytesChunkStream {
+            reader,
+            abort: BodyAbort(self.cancel.take()),
+        }
+    }
+}
+
+struct BodyAbort(Option<js_sys::Function>);
+impl Drop for BodyAbort {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.0.take() {
+            let _ = cancel.call0(&JsValue::UNDEFINED);
+        }
+    }
+}
+
+struct BytesChunkStream {
+    reader: super::stream::ReadableStreamReader,
+    abort: BodyAbort,
+}
+
+impl futures_util::Stream for BytesChunkStream {
+    type Item = Result<Vec<u8>>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        match Pin::new(&mut this.reader).poll_next(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(None) => {
+                this.abort.0.take();
+                Poll::Ready(None)
+            }
+            Poll::Ready(Some(Ok(chunk))) => {
+                Poll::Ready(Some(Ok(js_sys::Uint8Array::new(&chunk).to_vec())))
+            }
+            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(body_error(&error)))),
+        }
     }
 }
 
 /// A transport stream that failed while its body was read
 pub(crate) fn body_error(error: &JsValue) -> Error {
     Error::Network {
-        message: format!("Failed to read response body: {}", js_error_message(error)),
+        message: concat2("Failed to read response body: ", &js_error_message(error)),
         source: None,
     }
 }
 
 impl Drop for FetchBody {
     fn drop(&mut self) {
-        if let Some(controller) = self.controller.take() {
-            controller.abort();
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.call0(&JsValue::UNDEFINED);
         } else if let Some(body) = self.body.take() {
             let _ = body.cancel();
         }
     }
-}
-
-struct BodyAbort(Option<web_sys::AbortController>);
-impl Drop for BodyAbort {
-    fn drop(&mut self) {
-        if let Some(controller) = self.0.take() {
-            controller.abort();
-        }
-    }
-}
-pin_project_lite::pin_project! {
-    struct BodyWithAbort<S> {
-        #[pin]
-        inner: S,
-        abort: BodyAbort,
-    }
-}
-impl<S: futures_util::Stream> futures_util::Stream for BodyWithAbort<S> {
-    type Item = S::Item;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let this = self.project();
-        let result = this.inner.poll_next(cx);
-        if matches!(&result, std::task::Poll::Ready(None)) {
-            this.abort.0.take();
-        }
-        result
-    }
-}
-/// Keep fetch's abort controller until EOF or cancellation. Reader cancellation
-/// alone does not promptly close an endless response in every browser.
-pub(crate) fn body_with_abort<S: futures_util::Stream>(
-    inner: S,
-    controller: Option<web_sys::AbortController>,
-) -> impl futures_util::Stream<Item = S::Item> {
-    BodyWithAbort {
-        inner,
-        abort: BodyAbort(controller),
-    }
-}
-
-/// `fetch()` response headers as [`Headers`]; repeated ones (`Set-Cookie`
-/// in Node.js) are kept as separate values
-fn rust_headers(headers: &web_sys::Headers) -> Result<Headers> {
-    let mut result = Headers::new();
-    if let Some(entries) = js_sys::try_iter(headers.as_ref())? {
-        for entry in entries {
-            let entry: js_sys::Array = entry?.unchecked_into();
-            result.insert(
-                entry.get(0).as_string().unwrap_or_default(),
-                entry.get(1).as_string().unwrap_or_default(),
-            );
-        }
-    }
-    Ok(result)
 }
 
 /// `redirect: 'manual' | 'error'` as the transports apply it
@@ -917,216 +572,6 @@ fn redirect_mode(config: &WasmRequestConfig) -> Redirect {
         (true, 0) => Redirect::Error,
         (true, _) => Redirect::Follow,
     }
-}
-
-/// The `RequestInit` for a `fetch()` call
-/// The body as a `Blob`: Node.js's `fetch()` (undici, in 20.20 and 22.13
-/// at least) can't resend a byte array after a 307 or 308 redirect, since the
-/// first attempt detaches its buffer, but it can resend a `Blob`. Browsers
-/// send either the same way.
-fn body_blob(body: &js_sys::Uint8Array) -> JsValue {
-    let constructor = js_sys::Reflect::get(&js_sys::global(), &"Blob".into())
-        .ok()
-        .and_then(|blob| blob.dyn_into::<js_sys::Function>().ok());
-    constructor
-        .and_then(|blob| {
-            let parts = js_sys::Array::new();
-            parts.push(body);
-            let args = js_sys::Array::new();
-            args.push(&parts);
-            js_sys::Reflect::construct(&blob, &args).ok()
-        })
-        .unwrap_or_else(|| body.into())
-}
-
-fn start_upload(
-    init: &web_sys::RequestInit,
-    upload: Option<&super::upload::Upload>,
-    progress: Option<&js_sys::Function>,
-) -> Result<Option<JsValue>> {
-    let Some(upload) = upload else {
-        return Ok(None);
-    };
-    let session = upload.open(progress)?;
-    let readable: js_sys::Function = js_sys::Reflect::get(&session, &"readable".into())
-        .map_err(Error::from)?
-        .unchecked_into();
-    set(
-        init.unchecked_ref(),
-        "body",
-        &readable.call0(&session).map_err(Error::from)?,
-    )?;
-    set_str(init.unchecked_ref(), "duplex", "half")?;
-    Ok(Some(session))
-}
-fn upload_error(session: Option<&JsValue>, error: JsValue) -> Error {
-    if let Some(session) = session {
-        let failure = js_sys::Reflect::get(session, &"failure".into())
-            .ok()
-            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-            .and_then(|f| f.call0(session).ok());
-        if let Some(failure) = failure.filter(|f| !f.is_undefined()) {
-            let message = js_sys::Reflect::get(&failure, &"error".into())
-                .ok()
-                .and_then(|v| v.as_string())
-                .unwrap_or_default();
-            if js_sys::Reflect::get(&failure, &"invalidInput".into())
-                .ok()
-                .and_then(|v| v.as_bool())
-                == Some(true)
-            {
-                return super::invalid("body", &message);
-            }
-            return network_error(js_sys::Reflect::get(&failure, &"cause".into()).unwrap_or(error));
-        }
-    }
-    network_error(error)
-}
-
-fn cancel_upload(session: Option<&JsValue>) {
-    if let Some(session) = session {
-        if let Ok(cancel) = js_sys::Reflect::get(session, &"cancel".into()) {
-            if let Some(cancel) = cancel.dyn_ref::<js_sys::Function>() {
-                let _ = cancel.call0(session);
-            }
-        }
-    }
-}
-
-fn fetch_init(
-    method: &str,
-    headers: &[(&str, &str)],
-    default_content_type: Option<&str>,
-    body: Option<&js_sys::Uint8Array>,
-    redirect: Redirect,
-    fetch_options: Option<&js_sys::Object>,
-) -> Result<web_sys::RequestInit> {
-    let js_headers = web_sys::Headers::new().map_err(invalid_request)?;
-    for (name, value) in headers {
-        js_headers.append(name, value).map_err(invalid_request)?;
-    }
-    if let Some(content_type) = default_content_type {
-        js_headers
-            .set("content-type", content_type)
-            .map_err(invalid_request)?;
-    }
-    // Null prototype: fetch() reads credentials, mode, cache and more by inheritance
-    let init = js_sys::Object::create(JsValue::NULL.unchecked_ref());
-    set_str(&init, "method", method)?;
-    set(&init, "headers", js_headers.as_ref())?;
-    if let Some(body) = body {
-        set(&init, "body", &body_blob(body))?;
-    }
-    if redirect != Redirect::Follow {
-        set_str(&init, "redirect", "manual")?;
-    }
-    // Validated by the bindings, so they're copied as they are
-    if let Some(options) = fetch_options {
-        js_sys::Object::assign(&init, options);
-    }
-    Ok(init.unchecked_into())
-}
-
-/// Whether `XMLHttpRequest` can apply these `fetch()` options, and if so its
-/// `withCredentials`. It can only send cross-origin credentials, not omit
-/// same-origin ones, and has nothing like the other options.
-fn xhr_credentials(fetch_options: Option<&js_sys::Object>) -> Option<bool> {
-    let Some(options) = fetch_options else {
-        return Some(false);
-    };
-    let credentials = js_sys::Reflect::get(options, &"credentials".into())
-        .ok()
-        .and_then(|value| value.as_string());
-    match (
-        js_sys::Object::keys(options).length(),
-        credentials.as_deref(),
-    ) {
-        (0, _) | (1, Some("same-origin")) => Some(false),
-        (1, Some("include")) => Some(true),
-        _ => None,
-    }
-}
-
-/// Whether a `fetch()` response is returned whatever its status: a redirect
-/// with `redirect: 'manual'` (failing for `redirect: 'error'`), or an opaque
-/// response. Browsers hide a redirect behind
-/// an opaque response with status 0; other runtimes (e.g. Deno) return the
-/// redirect itself.
-fn check_redirect(
-    response: &web_sys::Response,
-    headers: &web_sys::Headers,
-    redirect: Redirect,
-) -> Result<bool> {
-    let response_type = js_sys::Reflect::get(response, &"type".into())
-        .ok()
-        .and_then(|v| v.as_string());
-    let redirected = redirect != Redirect::Follow
-        && (response_type.as_deref() == Some("opaqueredirect")
-            || is_redirect_status(response.status()));
-    if redirected && redirect == Redirect::Error {
-        let message = match headers.get("location")? {
-            Some(location) => format!("Redirect not allowed: {} to {location}", response.status()),
-            None => "Redirect not allowed".to_string(),
-        };
-        return Err(Error::Network {
-            message,
-            source: None,
-        });
-    }
-    // `mode: 'no-cors'`: the browser hides a cross-origin response the same way
-    Ok(redirected || response_type.as_deref() == Some("opaque"))
-}
-
-/// Fail before reading a body whose `Content-Length` is over the limit (only
-/// for unencoded bodies: the limit applies to the decoded size)
-fn check_declared_length(headers: &web_sys::Headers, limit: Option<u64>) -> Result<()> {
-    let Some(limit) = limit else { return Ok(()) };
-    let encoded = headers
-        .get("content-encoding")?
-        .is_some_and(|encoding| !encoding.trim_ascii().eq_ignore_ascii_case("identity"));
-    let declared = headers
-        .get("content-length")?
-        .and_then(|length| length.trim_ascii().parse::<u64>().ok());
-    match declared {
-        Some(declared) if !encoded && declared > limit => Err(Error::too_large(limit)),
-        _ => Ok(()),
-    }
-}
-
-/// Read a body chunk by chunk into one `ArrayBuffer`, reporting download
-/// progress after each chunk and stopping past `limit` bytes
-async fn read_chunks(
-    body: web_sys::ReadableStream,
-    callback: Option<&js_sys::Function>,
-    total: Option<f64>,
-    limit: Option<u64>,
-    idle: Option<std::time::Duration>,
-    state: Option<&super::RequestState>,
-) -> Result<JsValue> {
-    let chunks = super::stream::read_stream(body)
-        .map(|chunk| chunk.map_err(|error| captured_network_error(error, state)));
-    let mut chunks = std::pin::pin!(crate::timeouts::idle(chunks, idle));
-    let mut parts = Vec::new();
-    let mut loaded = 0u32;
-    while let Some(chunk) = chunks.next().await {
-        let chunk: js_sys::Uint8Array = chunk?.unchecked_into();
-        loaded += chunk.length();
-        // Dropping the stream cancels the rest of the body
-        if let Some(limit) = limit.filter(|limit| u64::from(loaded) > *limit) {
-            return Err(Error::too_large(limit));
-        }
-        if let Some(callback) = callback {
-            report_progress(callback, f64::from(loaded), total);
-        }
-        parts.push(chunk);
-    }
-    let buffer = js_sys::Uint8Array::new_with_length(loaded);
-    let mut offset = 0;
-    for part in parts {
-        buffer.set(&part, offset);
-        offset += part.length();
-    }
-    Ok(buffer.buffer().into())
 }
 
 /// Header pairs, validated the same way as the reqwest-backed path
@@ -1142,357 +587,9 @@ fn validated_headers(config: &WasmRequestConfig) -> Result<Vec<(&str, &str)>> {
     Ok(pairs)
 }
 
-async fn send_fetch(
-    url: &str,
-    init: &web_sys::RequestInit,
-    body_type: BodyType,
-    progress: &ProgressCallbacks,
-    body_length: u32,
-    redirect: Redirect,
-    limit: Option<u64>,
-    phases: Option<&crate::PhaseTimeouts>,
-    upload: Option<&super::upload::Upload>,
-) -> Result<Attempt<JsValue>> {
-    let head = match send_fetch_head(
-        url,
-        init,
-        redirect,
-        limit,
-        phases,
-        upload,
-        progress.upload.as_ref(),
-        body_length,
-        progress.observer.as_ref(),
-        progress.request_state.as_deref(),
-    )
-    .await?
-    {
-        Attempt::Success(head) => head,
-        Attempt::HttpError(error, retry_after) => {
-            return Ok(Attempt::HttpError(error, retry_after))
-        }
-    };
-    let FetchHead {
-        response,
-        headers,
-        status,
-        controller: _,
-        guard,
-        _upload_guard,
-    } = head;
-    let total = headers
-        .get("content-length")?
-        // Parsed as an integer: parsing floats would add ~13 kB to the module
-        .and_then(|length| length.trim_ascii().parse::<u32>().ok())
-        .map(f64::from);
-    check_declared_length(&headers, limit)?;
-    // A successful response's body is read chunk by chunk to report progress,
-    // and any body when it's limited
-    let download = progress
-        .download
-        .as_ref()
-        .filter(|_| (200..300).contains(&status));
-    let (buffer, reported) = match (
-        download.is_some() || limit.is_some() || phases.is_some_and(|phases| phases.idle.is_some()),
-        response.body(),
-    ) {
-        (true, Some(body)) => (
-            read_chunks(
-                body,
-                download,
-                total,
-                limit,
-                phases.and_then(|phases| phases.idle),
-                progress.request_state.as_deref(),
-            )
-            .await?,
-            download.is_some(),
-        ),
-        _ => {
-            let buffer = JsFuture::from(response.array_buffer().map_err(|error| {
-                captured_network_error(error, progress.request_state.as_deref())
-            })?)
-            .await
-            .map_err(|error| captured_network_error(error, progress.request_state.as_deref()))?;
-            (buffer, false)
-        }
-    };
-    guard.disarm();
-    let length = buffer.unchecked_ref::<js_sys::ArrayBuffer>().byte_length();
-
-    // A body-less response (e.g. 204) is reported once
-    if let (Some(callback), false) = (download, reported) {
-        report_progress(callback, f64::from(length), total);
-    }
-    let content_type = headers.get("content-type")?.unwrap_or_default();
-    let body = decode_body(&buffer, length, &content_type, body_type).map_err(|error| {
-        if let Some(state) = &progress.request_state {
-            *state.url.borrow_mut() = Some(response.url());
-        }
-        error
-    })?;
-    let response_headers = js_sys::Object::from_entries(headers.as_ref())?;
-    // Node's Headers iterator can yield separate Set-Cookie entries.
-    // Preserve the existing API's comma-joined repeated header values.
-    if let Some(cookies) = headers.get("set-cookie")? {
-        set(&response_headers, "set-cookie", &cookies.into())?;
-    }
-    // An opaque redirect has no URL of its own
-    let response_url = match response.url() {
-        response_url if response_url.is_empty() => url.to_string(),
-        response_url => response_url,
-    };
-    success_response(status, &response_url, &response_headers, &body)
-}
-
-/// The finished `{ status, statusText, ok, url, headers, body }` of a 2xx
-/// response, or of a redirect returned with `redirect: 'manual'`
-fn success_response(
-    status: u16,
-    url: &str,
-    headers: &js_sys::Object,
-    body: &JsValue,
-) -> Result<Attempt<JsValue>> {
-    let result = js_sys::Object::new();
-    set_f64(&result, "status", f64::from(status))?;
-    set_str(&result, "statusText", status_text(status))?;
-    set_bool(&result, "ok", (200..300).contains(&status))?;
-    set_str(&result, "url", url)?;
-    set(&result, "headers", headers)?;
-    set(&result, "body", body)?;
-    Ok(Attempt::Success(result.into()))
-}
-
-/// One attempt through `XMLHttpRequest`, which, unlike `fetch()`, reports
-/// upload progress. Redirects, credentials and CORS work as with `fetch()`'s
-/// defaults, except that a cross-origin request with an upload listener is
-/// always preflighted.
-async fn send_xhr(
-    method: &str,
-    url: &str,
-    headers: &[(String, String)],
-    body: Option<&js_sys::Uint8Array>,
-    body_type: BodyType,
-    progress: &ProgressCallbacks,
-    with_credentials: bool,
-) -> Result<Attempt<JsValue>> {
-    let xhr = web_sys::XmlHttpRequest::new().map_err(network_error)?;
-    let xhr_obj: &js_sys::Object = xhr.unchecked_ref();
-    xhr.open_with_async(method, url, true)
-        .map_err(invalid_request)?;
-    if with_credentials {
-        set_bool(xhr_obj, "withCredentials", true)?;
-    }
-    for (name, value) in headers {
-        xhr.set_request_header(name, value)
-            .map_err(invalid_request)?;
-    }
-    set_str(xhr_obj, "responseType", "arraybuffer")?;
-
-    // Declared before the guard, so the guard detaches them before they're dropped
-    let total = body.map_or(0.0, |body| f64::from(body.length()));
-    let on_upload = progress.upload.clone().map(|callback| {
-        Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
-            report_progress(
-                &callback,
-                super::get_f64(&event, "loaded").unwrap_or(0.0),
-                Some(total),
-            );
-        })
-    });
-    let on_download = progress.download.clone().map(|callback| {
-        let xhr = xhr.clone();
-        Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
-            // Like the other transports, only a successful response's body
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let status = super::get_f64(&xhr, "status").unwrap_or(0.0) as u16;
-            if (200..300).contains(&status) {
-                let computable = super::get_bool(&event, "lengthComputable").unwrap_or(false);
-                let total = computable
-                    .then(|| super::get_f64(&event, "total"))
-                    .flatten();
-                report_progress(
-                    &callback,
-                    super::get_f64(&event, "loaded").unwrap_or(0.0),
-                    total,
-                );
-            }
-        })
-    });
-    crate::client::observe_text(progress.observer.as_ref(), "transport", "XMLHttpRequest");
-    let on_headers = progress.observer.clone().map(|observer| {
-        let xhr = xhr.clone();
-        let mut reported = false;
-        Closure::<dyn FnMut()>::new(move || {
-            if !reported && super::get_f64(&xhr, "readyState").unwrap_or(0.0) >= 2.0 {
-                reported = true;
-                crate::client::observe(Some(&observer), "headers", &JsValue::UNDEFINED);
-            }
-        })
-    });
-    if let Some(listener) = &on_headers {
-        let _ = set(xhr_obj, "onreadystatechange", listener.as_ref());
-    }
-    let upload: js_sys::Object = js_sys::Reflect::get(&xhr, &"upload".into())
-        .map_err(network_error)?
-        .unchecked_into();
-    if let Some(listener) = &on_upload {
-        let _ = set(&upload, "onprogress", listener.as_ref());
-    }
-    if let Some(listener) = &on_download {
-        let _ = set(xhr_obj, "onprogress", listener.as_ref());
-    }
-    let done = js_sys::Promise::new(&mut |resolve, reject| {
-        let _ = set(xhr_obj, "onload", &resolve);
-        let _ = set(xhr_obj, "onerror", &reject);
-    });
-    let guard = XhrGuard {
-        xhr: xhr.clone(),
-        upload,
-        finished: false,
-    };
-    xhr.send_with_opt_buffer_source(body.map(AsRef::as_ref))
-        .map_err(network_error)?;
-    JsFuture::from(done)
-        .await
-        .map_err(|_| network_error(JsValue::from_str("XMLHttpRequest failed")))?;
-    let mut guard = guard;
-    guard.finished = true;
-    drop(guard);
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let status = js_sys::Reflect::get(&xhr, &"status".into())
-        .map_err(network_error)?
-        .as_f64()
-        .unwrap_or(0.0) as u16;
-    let buffer = js_sys::Reflect::get(&xhr, &"response".into()).map_err(network_error)?;
-    let length = buffer
-        .dyn_ref::<js_sys::ArrayBuffer>()
-        .map_or(0, js_sys::ArrayBuffer::byte_length);
-    let headers = parse_header_block(&xhr.get_all_response_headers().map_err(network_error)?)?;
-    let header = |name: &str| {
-        js_sys::Reflect::get(&headers, &name.into())
-            .ok()
-            .and_then(|value| value.as_string())
-    };
-
-    if !(200..300).contains(&status) {
-        let text = TEXT_DECODER.with(|decoder| decoder.decode(&buffer))?;
-        return Ok(http_error(
-            status,
-            text.as_string(),
-            header("retry-after").as_deref(),
-        ));
-    }
-    let content_type = header("content-type").unwrap_or_default();
-    let body = decode_body(&buffer, length, &content_type, body_type)?;
-    let response_url = super::get_str(&xhr, "responseURL").unwrap_or_default();
-    success_response(status, &response_url, &headers, &body)
-}
-
-/// Detaches an `XMLHttpRequest`'s listeners, and aborts it if it was
-/// abandoned (timeout or cancellation) before finishing
-struct XhrGuard {
-    xhr: web_sys::XmlHttpRequest,
-    upload: js_sys::Object,
-    finished: bool,
-}
-
-impl Drop for XhrGuard {
-    fn drop(&mut self) {
-        let xhr_obj: &js_sys::Object = self.xhr.unchecked_ref();
-        for name in ["onreadystatechange", "onload", "onerror", "onprogress"] {
-            let _ = set(xhr_obj, name, &JsValue::NULL);
-        }
-        let _ = set(&self.upload, "onprogress", &JsValue::NULL);
-        if !self.finished {
-            let _ = self.xhr.abort();
-        }
-    }
-}
-
-/// `getAllResponseHeaders()` as an object with lower-cased names
-fn parse_header_block(block: &str) -> Result<js_sys::Object> {
-    let mut headers = Headers::new();
-    for line in block.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let Some((name, value)) = line.split_once(':') else {
-            continue;
-        };
-        let name = name.trim_ascii().to_ascii_lowercase();
-        let value = value.trim_ascii();
-        headers.insert(name, value);
-    }
-    super::headers_to_js(&headers)
-}
-
-/// Call a progress callback with `{ loaded, total }`, ignoring its exceptions
-fn report_progress(callback: &js_sys::Function, loaded: f64, total: Option<f64>) {
-    let event = js_sys::Object::new();
-    let _ = set(&event, "loaded", &loaded.into());
-    let _ = set(
-        &event,
-        "total",
-        &total.map_or(JsValue::NULL, JsValue::from_f64),
-    );
-    let _ = callback.call1(&JsValue::UNDEFINED, &event);
-}
-
 /// Whether this Wasm instance has been bound to its Node.js entry's transport.
 pub(crate) fn is_node() -> bool {
     NODE_BINDINGS.with(|bindings| bindings.get().is_some())
-}
-
-/// Whether `globalThis[name]` exists
-pub(crate) fn has_global(name: &str) -> bool {
-    js_sys::Reflect::get(&js_sys::global(), &name.into()).is_ok_and(|value| value.is_function())
-}
-
-async fn send_node(
-    transport: &js_sys::Function,
-    request: &js_sys::Object,
-    timeout_ms: u64,
-    manual: bool,
-    request_state: Option<&super::RequestState>,
-) -> Result<Attempt<JsValue>> {
-    let pending = transport
-        .call1(&JsValue::UNDEFINED, request)
-        .map_err(network_error)?;
-    let cancel: js_sys::Function =
-        js_sys::Reflect::get(&pending, &"cancel".into())?.unchecked_into();
-    let guard = CancelGuard::new(move || {
-        let _ = cancel.call0(&JsValue::UNDEFINED);
-    });
-    // Resolves to the finished `{ status, statusText, ok, url, headers, body }`
-    let response = JsFuture::from(js_sys::Promise::from(pending))
-        .await
-        .map_err(|error| {
-            destination(request_state, &error);
-            if let Some(state) = request_state {
-                state.remember_cause(&error);
-            }
-            node_error(&error, timeout_ms)
-        })?;
-    guard.disarm();
-
-    let get = |target: &JsValue, name: &str| js_sys::Reflect::get(target, &name.into());
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let status = get(&response, "status")?.as_f64().unwrap_or(0.0) as u16;
-    if !(200..300).contains(&status) && !(manual && is_redirect_status(status)) {
-        destination(request_state, &response);
-        // For error statuses the transport decodes the body as text
-        let body = get(&response, "body")?.as_string();
-        let retry_after = own_prop(&get(&response, "headers")?, "retry-after")
-            .and_then(|value| value.as_string());
-        return Ok(http_error(status, body, retry_after.as_deref()));
-    }
-    // Same status text table as the fetch() path
-    set(
-        response.unchecked_ref(),
-        "statusText",
-        &status_text(status).into(),
-    )?;
-    Ok(Attempt::Success(response))
 }
 
 /// A property the object itself has: the prototype chain is never consulted,
@@ -1506,8 +603,8 @@ fn own_prop(target: &JsValue, name: &str) -> Option<JsValue> {
     js_sys::Reflect::get(target, &name.into()).ok()
 }
 
-/// Map a Node transport rejection to an error kind
-fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
+/// Map a transport rejection to an error kind
+fn transport_error(error: &JsValue, timeout_ms: u64) -> Error {
     let code = own_prop(error, "code").and_then(|code| code.as_string());
     match code.as_deref() {
         Some("RUST_FETCH_TIMEOUT") => {
@@ -1530,8 +627,9 @@ fn node_error(error: &JsValue, timeout_ms: u64) -> Error {
                 .unwrap_or(0.0) as u64,
         ),
         Some("RUST_FETCH_UPLOAD_INPUT") => super::invalid("body", &js_error_message(error)),
+        Some("RUST_FETCH_INVALID_REQUEST") => super::invalid("request", &js_error_message(error)),
         Some("RUST_FETCH_PARSE") => Error::Parse {
-            message: format!("Failed to parse JSON response: {}", js_error_message(error)),
+            message: concat2("Failed to parse JSON response: ", &js_error_message(error)),
             source: None,
         },
         _ => network_error(error.clone()),
@@ -1577,70 +675,11 @@ impl<F: FnOnce()> Drop for CancelGuard<F> {
     }
 }
 
-/// Decode a `fetch()` body (an `ArrayBuffer`) without copying it into wasm
-/// memory. The Node transport applies the same rules in JS (`decodeBody` in
-/// `js/node.js`); the JS tests check that both paths agree.
-pub(crate) fn decode_body(
-    buffer: &JsValue,
-    length: u32,
-    content_type: &str,
-    body_type: BodyType,
-) -> Result<JsValue> {
-    if length == 0 {
-        return Ok(match body_type {
-            BodyType::Text => JsValue::from_str(""),
-            BodyType::Binary | BodyType::Stream | BodyType::Ndjson => {
-                js_sys::Uint8Array::new_with_length(0).into()
-            }
-            BodyType::Auto | BodyType::Json => JsValue::NULL,
-        });
-    }
-    let json = matches!(body_type, BodyType::Json)
-        || matches!(body_type, BodyType::Auto) && is_json_content_type(content_type);
-    let text = json
-        || matches!(body_type, BodyType::Text)
-        || matches!(body_type, BodyType::Auto) && is_text_content_type(content_type);
-
-    if text {
-        // Decode UTF-8 with replacement and strip the BOM, matching the Rust
-        // decoder. Length is checked first: a BOM-only body is not empty JSON.
-        let body = TEXT_DECODER.with(|decoder| decoder.decode(buffer))?;
-        return if json {
-            match parse_native_json(&body) {
-                Ok(value) => Ok(value),
-                Err(_) if matches!(body_type, BodyType::Auto) => Ok(body),
-                Err(error) => Err(Error::Parse {
-                    message: format!(
-                        "Failed to parse JSON response: {}",
-                        js_error_message(&error)
-                    ),
-                    source: None,
-                }),
-            }
-        } else {
-            Ok(body)
-        };
-    }
-
-    Ok(js_sys::Uint8Array::new(buffer).into())
-}
-
-fn invalid_request(error: JsValue) -> Error {
-    invalid("request", &js_error_message(&error))
-}
-
 fn network_error(error: JsValue) -> Error {
     Error::Network {
         message: js_error_message(&error),
         source: None,
     }
-}
-
-fn captured_network_error(error: JsValue, state: Option<&super::RequestState>) -> Error {
-    if let Some(state) = state {
-        state.remember_cause(&error);
-    }
-    network_error(error)
 }
 
 fn destination(state: Option<&super::RequestState>, value: &JsValue) {

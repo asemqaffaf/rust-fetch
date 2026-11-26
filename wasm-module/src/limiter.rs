@@ -5,9 +5,10 @@ use crate::{
     error::{Error, Result},
     runtime,
 };
-use futures_util::{future::poll_fn, Stream};
+use futures_util::Stream;
 use std::{
     collections::VecDeque,
+    future::poll_fn,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
@@ -270,9 +271,7 @@ impl Ticket {
             wait = wait.max((1.0 - state.tokens) * per / f64::from(rate.requests));
         }
         if wait > 0.0 {
-            return Poll::Ready(Some(
-                Duration::try_from_secs_f64(wait / 1000.0).unwrap_or(Duration::MAX),
-            ));
+            return Poll::Ready(Some(runtime::duration_from_ms(wait)));
         }
         if self.gate.config.rate.is_some() {
             state.tokens -= 1.0;

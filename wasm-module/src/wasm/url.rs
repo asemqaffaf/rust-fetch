@@ -65,8 +65,9 @@ impl Url {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_scheme(&mut self, scheme: &str) -> Result<(), ()> {
         let url = self.js();
-        url.set_protocol(&format!("{scheme}:"));
-        if url.protocol() != format!("{scheme}:") {
+        let target = super::concat2(scheme, ":");
+        url.set_protocol(&target);
+        if url.protocol() != target {
             return Err(());
         }
         self.href = url.href();

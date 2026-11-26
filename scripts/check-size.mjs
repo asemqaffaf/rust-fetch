@@ -9,8 +9,8 @@ import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
 const budgets = {
   // gzip is what browsers download; raw size matters for Node.js and parsing
-  'rust_fetch_bg.wasm': { raw: 254_000, gzip: 105_500, brotli: 88_000 }, // lowered after moving WebSocketConnection and EventStream to js/connections.js (keeping __SseParser + synchronous validation in Rust)
-  'rust_fetch.js': { raw: 69_000, gzip: 24_200, brotli: 21_500 }, // includes js/connections.js (WebSocketConnection + EventStream) on top of shared client-helpers.js and client modules
+  'rust_fetch_bg.wasm': { raw: 168_000, gzip: 71_500, brotli: 60_500 }, // lowered after moving browser fetch()/XHR transport, stream/NDJSON finalizer, and WasmBody::JsBytes encoding to js/browser-transport.js, trimming 6 web-sys features + IntoUnderlyingSource + Rust core size trims, and tuning wasm-opt -Oz --one-caller-inline-max-function-size=100 --converge --strip-producers
+  'rust_fetch.js': { raw: 75_500, gzip: 27_000, brotli: 24_200 }, // includes js/browser-transport.js and js/connections.js on top of shared client-helpers.js and client modules
   'node.js': { raw: 60_500, gzip: 19_400, brotli: 16_950 }, // Node transports, prototype-pollution hardening (#191), the compact native entry with a full-policy fallback (#181), and the certificate policy (#244); not loaded by browsers.
 };
 

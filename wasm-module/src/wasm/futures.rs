@@ -354,12 +354,14 @@ impl<T, E: From<Error>, F: Future<Output = std::result::Result<T, E>>> Future fo
 
 /// A stream that fails with [`Error::Cancelled`] once an `AbortSignal` fires.
 /// Type-erased over the already-boxed inner stream so all pipelines share one `poll_next`.
+#[cfg(test)]
 pub(crate) struct AbortableStream<T> {
     inner: Pin<Box<dyn futures_util::Stream<Item = Result<T>>>>,
     aborted: Option<Aborted>,
     done: bool,
 }
 
+#[cfg(test)]
 impl<T> AbortableStream<T> {
     pub(crate) fn new<S: futures_util::Stream<Item = Result<T>> + 'static>(
         inner: S,
@@ -373,6 +375,7 @@ impl<T> AbortableStream<T> {
     }
 }
 
+#[cfg(test)]
 impl<T> futures_util::Stream for AbortableStream<T> {
     type Item = Result<T>;
 
@@ -431,4 +434,11 @@ impl<F: Future<Output = std::result::Result<JsValue, JsValue>>> Future for Promi
         let _ = callback.call1(&JsValue::UNDEFINED, &value);
         Poll::Ready(())
     }
+}
+
+/// Pull the next item from a pinned stream without `futures_util::StreamExt`.
+pub(crate) fn next_item<S: futures_util::Stream>(
+    mut stream: Pin<&mut S>,
+) -> impl Future<Output = Option<S::Item>> + '_ {
+    std::future::poll_fn(move |cx| stream.as_mut().poll_next(cx))
 }

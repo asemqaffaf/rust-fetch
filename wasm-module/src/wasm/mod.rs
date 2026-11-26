@@ -16,13 +16,14 @@ pub(crate) mod upload;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod url;
 
-use self::futures::{abortable, AbortableStream};
+use self::futures::abortable;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::types::Multipart;
 use crate::{
-    client::{Client, RequestBuilder, StreamingResponse},
+    client::{Client, RequestBuilder},
     error::{Error, Result},
-    types::{Headers, Method, Multipart, Redirect, ResponseFormat, RetryConfig},
+    types::{Headers, Method, Redirect, ResponseFormat, RetryConfig},
 };
-use futures_util::StreamExt;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -832,34 +833,31 @@ impl WasmClient {
             let opts = Options::new(options);
             #[cfg(target_arch = "wasm32")]
             {
-                builder = builder.idempotency(idempotency::Defaults::parse(&opts)?);
+                builder.idempotency = idempotency::Defaults::parse(&opts)?;
             }
             if let Some(phases) = parse_phase_options(&opts, &crate::PhaseTimeouts::default())? {
-                builder = builder.phase_timeouts(phases);
+                builder.phases = phases;
             }
             if let Some(base_url) = opts.get("baseUrl") {
-                builder = builder.base_url(
+                builder.base_url = Some(
                     base_url
                         .as_string()
                         .ok_or_else(|| invalid("baseUrl", "must be a string"))?,
                 );
             }
             if let Some(headers) = opts.get("headers") {
-                builder = builder.default_headers(parse_headers(&headers)?);
+                builder.headers = parse_headers(&headers)?;
             }
             if let Some(timeout) = opts.get("timeoutMs") {
-                builder = match parse_timeout(&timeout)? {
-                    Some(timeout) => builder.timeout(timeout),
-                    None => builder.no_timeout(),
-                };
+                builder.timeout = parse_timeout(&timeout)?;
             }
             if let Some(retries) = opts.get("retries") {
-                builder = builder.retry_config(parse_retries(&retries)?);
+                builder.retry_config = Some(parse_retries(&retries)?);
             }
             // The rest are used by few clients. They sit in a function of
             // their own, which the runtime compiles only when one is set.
             if opts.has_any(&RARE_CLIENT_OPTIONS) {
-                builder = rare_client_options(builder, &opts)?;
+                rare_client_options(&mut builder, &opts)?;
             }
         }
 
@@ -869,61 +867,12 @@ impl WasmClient {
         })
     }
 
-    /// Run `interceptor` on every request before it is sent; returns an id for `ejectInterceptor`
-    #[wasm_bindgen(js_name = addRequestInterceptor)]
-    pub fn add_request_interceptor(&self, interceptor: RequestInterceptor) -> u32 {
-        let mut interceptors = self.interceptors.borrow_mut();
-        interceptors.next_id += 1;
-        let id = interceptors.next_id;
-        interceptors
-            .request
-            .push((id, interceptor.unchecked_into()));
-        id
-    }
-
-    /// Run handlers on every settled request, like `promise.then(onFulfilled, onRejected)`;
-    /// returns an id for `ejectInterceptor`
-    #[wasm_bindgen(js_name = addResponseInterceptor)]
-    pub fn add_response_interceptor(
-        &self,
-        on_fulfilled: Option<ResponseFulfilledInterceptor>,
-        on_rejected: Option<ResponseRejectedInterceptor>,
-    ) -> u32 {
-        let mut interceptors = self.interceptors.borrow_mut();
-        interceptors.next_id += 1;
-        let id = interceptors.next_id;
-        interceptors.response.push((
-            id,
-            on_fulfilled.map(JsCast::unchecked_into),
-            on_rejected.map(JsCast::unchecked_into),
-        ));
-        id
-    }
-
-    /// Remove an interceptor; returns whether it was registered
-    #[wasm_bindgen(js_name = ejectInterceptor)]
-    pub fn eject_interceptor(&self, id: u32) -> bool {
-        let mut interceptors = self.interceptors.borrow_mut();
-        let before = interceptors.request.len() + interceptors.response.len();
-        interceptors.request.retain(|(i, _)| *i != id);
-        interceptors.response.retain(|(i, _, _)| *i != id);
-        before != interceptors.request.len() + interceptors.response.len()
-    }
-
     /// Retries the client's `retryBudget` has refused so far (0 without a budget)
     #[wasm_bindgen(getter = retriesRefused)]
     pub fn retries_refused(&self) -> f64 {
         #[allow(clippy::cast_precision_loss)]
         let refused = self.inner.retries_refused() as f64;
         refused
-    }
-
-    /// Remove all interceptors
-    #[wasm_bindgen(js_name = clearInterceptors)]
-    pub fn clear_interceptors(&self) {
-        let mut interceptors = self.interceptors.borrow_mut();
-        interceptors.request.clear();
-        interceptors.response.clear();
     }
 
     /// Snapshot of client config for JS `websocket()` / `events()` wrappers
@@ -940,9 +889,9 @@ impl WasmClient {
             {
                 let resolved_idem = cfg.idempotency.resolve(&options)?;
                 if let Some(key) = resolved_idem.value()? {
-                    set_str(&obj, "idempotencyKey", &key)?;
+                    put_str(&obj, "idempotencyKey", &key);
                 } else if raw_prop(&sse_opts, "idempotencyKey").as_bool() == Some(false) {
-                    set_bool(&obj, "idempotencyKey", false)?;
+                    put_bool(&obj, "idempotencyKey", false);
                 }
             }
             let phases = parse_phase_options(&options, &cfg.phases)?.unwrap_or(cfg.phases);
@@ -994,60 +943,58 @@ impl WasmClient {
                 cfg.max_event_bytes,
                 "maxEventBytes",
             )?;
-            set_str(&obj, "url", resolved.as_str())?;
-            set_str(&obj, "method", method.as_str())?;
+            put_str(&obj, "url", resolved.as_str());
+            put_str(&obj, "method", method.as_str());
             if let Some(dl) = phases.deadline {
-                set_f64(&obj, "deadlineMs", dl.as_secs_f64() * 1000.0)?;
+                put_f64(&obj, "deadlineMs", dl.as_secs_f64() * 1000.0);
             }
             #[allow(clippy::cast_precision_loss)]
             if let Some(n) = max_line {
-                set_f64(&obj, "maxLineBytes", n as f64)?;
+                put_f64(&obj, "maxLineBytes", n as f64);
             }
             #[allow(clippy::cast_precision_loss)]
             if let Some(n) = max_event {
-                set_f64(&obj, "maxEventBytes", n as f64)?;
+                put_f64(&obj, "maxEventBytes", n as f64);
             }
-            let req_interceptors = js_sys::Array::new();
+            let req_snaps = js_sys::Array::new();
             for (_, f) in &self.interceptors.borrow().request {
-                req_interceptors.push(f);
+                req_snaps.push(f.as_ref());
             }
-            set(&obj, "sseInterceptors", req_interceptors.as_ref())?;
+            put(&obj, "sseInterceptors", req_snaps.as_ref());
             return Ok(obj.into());
         }
         if let Some(base) = &cfg.base_url {
-            set_str(&obj, "baseUrl", base)?;
+            put_str(&obj, "baseUrl", base);
         }
         if cfg.default_headers.iter().next().is_some() {
             let hdrs = headers_to_js(&cfg.default_headers)?;
-            set(&obj, "headers", hdrs.as_ref())?;
+            put(&obj, "headers", hdrs.as_ref());
         }
         if let Some(t) = cfg.timeout {
-            set_f64(&obj, "timeoutMs", t.as_secs_f64() * 1000.0)?;
+            put_f64(&obj, "timeoutMs", t.as_secs_f64() * 1000.0);
         }
         if let Some(t) = cfg.phases.idle {
-            set_f64(&obj, "idleTimeoutMs", t.as_secs_f64() * 1000.0)?;
+            put_f64(&obj, "idleTimeoutMs", t.as_secs_f64() * 1000.0);
         }
         if let Some(t) = cfg.phases.deadline {
-            set_f64(&obj, "deadlineMs", t.as_secs_f64() * 1000.0)?;
+            put_f64(&obj, "deadlineMs", t.as_secs_f64() * 1000.0);
         }
-        set_bool(&obj, "allowAbsoluteUrls", cfg.allow_absolute_urls)?;
+        put_bool(&obj, "allowAbsoluteUrls", cfg.allow_absolute_urls);
         #[cfg(target_arch = "wasm32")]
         {
-            set_bool(&obj, "allowPrivateNetwork", cfg.allow_private_network)?;
-            set_bool(&obj, "isNode", transport::is_node())?;
+            put_bool(&obj, "allowPrivateNetwork", cfg.allow_private_network);
+            put_bool(&obj, "isNode", transport::is_node());
             if let Some(guard) = transport::node_websocket_guard() {
-                set(&obj, "wsGuard", &guard)?;
+                put(&obj, "wsGuard", &guard);
             }
         }
         Ok(obj.into())
     }
 
-    /// Single request dispatch entry exported to JS; verb shortcuts live on
-    /// `WasmClient.prototype` in `js/methods.js` to avoid 10 duplicate FFI wrappers.
+    /// Single request dispatch entry exported to JS; verb shortcuts and
+    /// interceptors live on `WasmClient.prototype` in `js/client.js`.
     /// Encoding the verb as a `u8` avoids passing and parsing a `method: String`
     /// across the Wasm boundary on hot verb calls (`get`, `post`, etc.).
-    /// `wasm-bindgen` requires `pub` on exported methods; `#[doc(hidden)]` and
-    /// `skip_typescript` keep it internal (`methods.js` deletes `__dispatch`).
     #[doc(hidden)]
     #[wasm_bindgen(js_name = __dispatch, skip_typescript)]
     pub fn dispatch(
@@ -1070,6 +1017,7 @@ impl WasmClient {
         const OP_PATCH_JSON: u8 = 8;
         const OP_FETCH: u8 = 9;
         const OP_REQUEST: u8 = 10;
+        const OP_REQUEST_JSON: u8 = 11;
 
         match op {
             OP_GET => self.perform(
@@ -1093,47 +1041,169 @@ impl WasmClient {
                 BodyMode::Auto(JsValue::UNDEFINED),
                 a,
             ),
-            OP_POST => self.perform_init(Method::Post, url, a),
-            OP_PUT => self.perform_init(Method::Put, url, a),
-            OP_PATCH => self.perform_init(Method::Patch, url, a),
-            OP_POST_JSON => self.perform(
-                Method::Post,
-                url,
-                JsValue::UNDEFINED,
-                BodyMode::Json(a),
-                b.unwrap_or(JsValue::UNDEFINED),
-            ),
-            OP_PUT_JSON => self.perform(
-                Method::Put,
-                url,
-                JsValue::UNDEFINED,
-                BodyMode::Json(a),
-                b.unwrap_or(JsValue::UNDEFINED),
-            ),
-            OP_PATCH_JSON => self.perform(
-                Method::Patch,
-                url,
-                JsValue::UNDEFINED,
-                BodyMode::Json(a),
-                b.unwrap_or(JsValue::UNDEFINED),
-            ),
-            OP_FETCH => self.fetch(url, (!a.is_undefined() && !a.is_null()).then_some(a.into())),
-            OP_REQUEST => {
-                let method = a.as_string().unwrap_or_default();
-                self.request(
+            OP_POST | OP_PUT | OP_PATCH => {
+                let method = match op {
+                    OP_POST => Method::Post,
+                    OP_PUT => Method::Put,
+                    _ => Method::Patch,
+                };
+                let body = prop(&a, "body").unwrap_or(JsValue::UNDEFINED);
+                self.perform(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
+            }
+            OP_POST_JSON | OP_PUT_JSON | OP_PATCH_JSON => {
+                let method = match op {
+                    OP_POST_JSON => Method::Post,
+                    OP_PUT_JSON => Method::Put,
+                    _ => Method::Patch,
+                };
+                self.perform(
                     method,
                     url,
-                    b.map(Into::into),
-                    c.map(Into::into),
-                    d.map(Into::into),
+                    JsValue::UNDEFINED,
+                    BodyMode::Json(a),
+                    b.unwrap_or(JsValue::UNDEFINED),
+                )
+            }
+            OP_FETCH => {
+                let method = match prop(&a, "method") {
+                    Some(m) => match m.as_string() {
+                        Some(name) => match parse_method(&name) {
+                            Ok(method) => method,
+                            Err(e) => return reject_request(e, &name, &url),
+                        },
+                        None => {
+                            return reject_request(
+                                invalid("method", "must be a string"),
+                                "UNKNOWN",
+                                &url,
+                            )
+                        }
+                    },
+                    None => Method::Get,
+                };
+                let body = prop(&a, "body").unwrap_or(JsValue::UNDEFINED);
+                self.perform(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
+            }
+            OP_REQUEST | OP_REQUEST_JSON => {
+                let method_str = a.as_string().unwrap_or_default();
+                let method = match parse_method(&method_str) {
+                    Ok(m) => m,
+                    Err(e) => return reject_request(e, &method_str, &url),
+                };
+                let body = c.unwrap_or(JsValue::UNDEFINED);
+                let mode = if op == OP_REQUEST_JSON {
+                    BodyMode::Json(body)
+                } else {
+                    BodyMode::Auto(body)
+                };
+                self.perform(
+                    method,
+                    url,
+                    b.unwrap_or(JsValue::UNDEFINED),
+                    mode,
+                    d.unwrap_or(JsValue::UNDEFINED),
                 )
             }
             _ => reject_request(invalid("op", "unknown dispatch op"), "", &url),
         }
     }
+
+    /// Run `interceptor` on every request before it is sent; returns an id for `ejectInterceptor`
+    #[wasm_bindgen(js_name = addRequestInterceptor)]
+    pub fn add_request_interceptor(&self, interceptor: RequestInterceptor) -> u32 {
+        let mut interceptors = self.interceptors.borrow_mut();
+        interceptors.next_id += 1;
+        let id = interceptors.next_id;
+        interceptors
+            .request
+            .push((id, interceptor.unchecked_into()));
+        id
+    }
+
+    /// Run handlers on every settled request, like `promise.then(onFulfilled, onRejected)`;
+    /// returns an id for `ejectInterceptor`
+    #[wasm_bindgen(js_name = addResponseInterceptor)]
+    pub fn add_response_interceptor(
+        &self,
+        on_fulfilled: Option<ResponseFulfilledInterceptor>,
+        on_rejected: Option<ResponseRejectedInterceptor>,
+    ) -> u32 {
+        let mut interceptors = self.interceptors.borrow_mut();
+        interceptors.next_id += 1;
+        let id = interceptors.next_id;
+        interceptors.response.push((
+            id,
+            on_fulfilled.map(JsCast::unchecked_into),
+            on_rejected.map(JsCast::unchecked_into),
+        ));
+        id
+    }
+
+    /// Remove an interceptor; returns whether it was registered
+    #[wasm_bindgen(js_name = ejectInterceptor)]
+    pub fn eject_interceptor(&self, id: u32) -> bool {
+        let mut interceptors = self.interceptors.borrow_mut();
+        let before = interceptors.request.len() + interceptors.response.len();
+        interceptors.request.retain(|(i, _)| *i != id);
+        interceptors.response.retain(|(i, _, _)| *i != id);
+        before != interceptors.request.len() + interceptors.response.len()
+    }
+
+    /// Remove all interceptors
+    #[wasm_bindgen(js_name = clearInterceptors)]
+    pub fn clear_interceptors(&self) {
+        let mut interceptors = self.interceptors.borrow_mut();
+        interceptors.request.clear();
+        interceptors.response.clear();
+    }
 }
 
 impl WasmClient {
+    /// Fast direct request dispatch used by JS (`js/client.js` runs interceptors in JS).
+    #[allow(dead_code)]
+    fn perform_direct(
+        &self,
+        method: Method,
+        url: String,
+        headers: JsValue,
+        body: BodyMode,
+        options: JsValue,
+    ) -> ResponsePromise {
+        let client = self.inner.clone();
+        let context_url = url.clone();
+        let context_method = method.as_str();
+        let deadline = match request_deadline(&options, client.config.phases.deadline) {
+            Ok(deadline) => deadline,
+            Err(error) => return reject_request(error, context_method, &context_url),
+        };
+        let refused = std::sync::Arc::new(RequestState::default());
+        futures::promise(async move {
+            let request = match JsRequest::new(method, url, &headers, body, &options) {
+                Ok(mut req) => {
+                    req.deadline = deadline.map(Box::new);
+                    req
+                }
+                Err(error) => {
+                    return Err(enrich_request_error(
+                        error,
+                        &refused,
+                        &options,
+                        context_method,
+                        &context_url,
+                    ))
+                }
+            };
+            crate::timeouts::with_deadline(
+                deadline,
+                Box::pin(send_prepared(&client, request, &options, &refused)),
+            )
+            .await
+            .map_err(|error| {
+                enrich_request_error(error, &refused, &options, context_method, &context_url)
+            })
+        })
+        .unchecked_into()
+    }
     /// Make a GET request
     pub fn get(&self, url: String, options: Option<RequestOptions>) -> ResponsePromise {
         self.perform_empty(Method::Get, url, options)
@@ -1306,11 +1376,13 @@ impl WasmClient {
             let interceptors = self.interceptors.borrow();
             (interceptors.request.clone(), interceptors.response.clone())
         };
+        let refused = std::sync::Arc::new(RequestState::default());
         futures::promise(async move {
             let has_request_interceptors = !request_interceptors.is_empty();
-            let outer_deadline = has_request_interceptors
-                .then_some(deadline.as_deref().copied())
-                .flatten();
+            let active_meta = std::rc::Rc::new(RefCell::new(None::<(&'static str, String)>));
+            let active_meta_inner = Rc::clone(&active_meta);
+            let refused_inner = std::sync::Arc::clone(&refused);
+            let deadline_copy = deadline.as_deref().copied();
             let result = async {
                 let mut request = JsRequest::new(method, url, &headers, body, &options)?;
                 for (_, interceptor) in &request_interceptors {
@@ -1320,22 +1392,35 @@ impl WasmClient {
                     };
                 }
                 request.deadline = deadline;
-                // Without interceptors the outer error fallback already owns
-                // this URL. Copy only when an interceptor could have changed it.
-                let intercepted_url = has_request_interceptors.then(|| request.url.clone());
-                Ok(send(
+                if has_request_interceptors {
+                    *active_meta_inner.borrow_mut() =
+                        Some((request.method.as_str(), request.url.clone()));
+                }
+                Ok(Ok(send_prepared(
                     &client,
                     request,
                     &options,
-                    intercepted_url.as_deref().unwrap_or(&context_url),
-                    !has_request_interceptors,
+                    &refused_inner,
                 )
-                .await)
+                .await?))
             };
             // Boxed: the deadline wrapper then moves a pointer, not this state.
-            let mut result = crate::timeouts::with_deadline(outer_deadline, Box::pin(result))
-                .await
-                .unwrap_or_else(|error| Err(JsValue::from(error)));
+            let mut result =
+                match crate::timeouts::with_deadline(deadline_copy, Box::pin(result)).await {
+                    Ok(Ok(response)) => Ok(response),
+                    Ok(Err(interceptor_error)) => Err(interceptor_error),
+                    Err(error) => {
+                        let active = active_meta.borrow();
+                        let (err_method, err_url) = active
+                            .as_ref()
+                            .map_or((context_method, context_url.as_str()), |(m, u)| {
+                                (*m, u.as_str())
+                            });
+                        Err(enrich_request_error(
+                            error, &refused, &options, err_method, err_url,
+                        ))
+                    }
+                };
 
             for (_, on_fulfilled, on_rejected) in &response_interceptors {
                 result = match (result, on_fulfilled, on_rejected) {
@@ -1399,14 +1484,14 @@ impl JsRequest {
     async fn intercept(self, interceptor: &js_sys::Function) -> std::result::Result<Self, JsValue> {
         let info = js_sys::Object::new();
         let headers = headers_to_js(&self.headers)?;
-        set(&info, "method", &self.method.as_str().into())?;
-        set(&info, "url", &self.url.as_str().into())?;
-        set(&info, "headers", &headers)?;
+        put_str(&info, "method", self.method.as_str());
+        put_str(&info, "url", &self.url);
+        put(&info, "headers", &headers);
         let (body, force_json) = match self.body {
             BodyMode::Auto(body) => (body, false),
             BodyMode::Json(body) => (body, true),
         };
-        set(&info, "body", &body)?;
+        put(&info, "body", &body);
 
         let returned = call_async(interceptor, &info).await?;
         let info = if returned.is_object() {
@@ -1486,20 +1571,26 @@ thread_local! {
 }
 
 impl<'a> Options<'a> {
+    #[inline(never)]
     pub(crate) fn new(value: &'a JsValue) -> Self {
         let names = if !value.is_object() {
             Some(Vec::new())
         } else {
             is_plain_object(value).then(|| {
-                js_sys::Object::keys(value.unchecked_ref::<js_sys::Object>())
-                    .iter()
-                    .filter_map(|name| name.as_string())
-                    .collect()
+                let keys = js_sys::Object::keys(value.unchecked_ref::<js_sys::Object>());
+                let mut out = Vec::with_capacity(keys.length() as usize);
+                for i in 0..keys.length() {
+                    if let Some(name) = keys.get(i).as_string() {
+                        out.push(name);
+                    }
+                }
+                out
             })
         };
         Self { value, names }
     }
 
+    #[inline(never)]
     fn has(&self, name: &str) -> bool {
         self.names
             .as_ref()
@@ -1507,6 +1598,7 @@ impl<'a> Options<'a> {
     }
 
     /// Whether any of `names` may be set
+    #[inline(never)]
     fn has_any(&self, names: &[&str]) -> bool {
         self.names.as_ref().map_or(true, |own| {
             names.iter().any(|name| own.iter().any(|n| n == name))
@@ -1514,6 +1606,7 @@ impl<'a> Options<'a> {
     }
 
     /// The option, unless it's unset, `null` or `undefined`
+    #[inline(never)]
     pub(crate) fn get(&self, name: &str) -> Option<JsValue> {
         if self.has(name) {
             read(self.value, name)
@@ -1534,6 +1627,7 @@ impl<'a> Options<'a> {
     }
 
     /// The option as it is, `null` included (`undefined` when unset)
+    #[inline(never)]
     fn raw(&self, name: &str) -> JsValue {
         if self.has(name) {
             js_sys::Reflect::get(self.value, &name.into()).unwrap_or(JsValue::UNDEFINED)
@@ -1619,90 +1713,174 @@ fn error_context(error: JsValue, method: &str, url: &str, attempts: u32) -> JsVa
     error
 }
 
-/// Build, send and convert a request coming from JavaScript; an error says
-/// whether the retry budget refused to retry it (`retryBudgetExhausted`)
-pub(crate) fn send<'a>(
-    client: &'a Client,
-    request: JsRequest,
-    options: &'a JsValue,
-    original_url: &'a str,
-    apply_deadline: bool,
-) -> impl std::future::Future<Output = std::result::Result<JsValue, JsValue>> + 'a {
-    use futures_util::TryFutureExt;
-    let refused = std::sync::Arc::new(RequestState::default());
-    let method = request.method.as_str();
-    // An SSE connection reads the attempt count off its raw response, for
-    // errors that end the stream after it opened (idle timeout, drop)
-    let sse_state = raw_prop(options, "__sse")
-        .is_string()
-        .then(|| std::sync::Arc::clone(&refused));
-    send_request(client, request, options, &refused, apply_deadline)
-        .map_ok(move |response| {
-            if let Some(state) = sse_state {
-                put_f64(
-                    &response,
-                    "__attempts",
-                    f64::from(state.attempts.load(std::sync::atomic::Ordering::Relaxed)),
-                );
-            }
-            response
-        })
-        .map_err(move |error| {
-            let error = refused.with_cause(JsValue::from(error));
-            let error = with_abort_reason(
-                error,
-                js_sys::Reflect::get(options, &"signal".into())
-                    .ok()
-                    .as_ref(),
-            );
-            if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
-                let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
-            }
-            let resolved = refused.url.borrow();
-            error_context(
-                error,
-                method,
-                resolved.as_deref().unwrap_or(original_url),
-                refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
-            )
-        })
+#[inline(never)]
+fn enrich_request_error(
+    error: Error,
+    refused: &RequestState,
+    options: &JsValue,
+    method: &str,
+    fallback_url: &str,
+) -> JsValue {
+    let error = refused.with_cause(JsValue::from(error));
+    let error = with_abort_reason(
+        error,
+        js_sys::Reflect::get(options, &"signal".into())
+            .ok()
+            .as_ref(),
+    );
+    if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
+        put_bool(&error, "retryBudgetExhausted", true);
+    }
+    let resolved = refused.url.borrow();
+    error_context(
+        error,
+        method,
+        resolved.as_deref().unwrap_or(fallback_url),
+        refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
-pub(crate) fn send_request<'a>(
-    client: &'a Client,
+#[cfg(target_arch = "wasm32")]
+struct PreparedCall {
+    builder: RequestBuilder,
+    body_type: BodyType,
+    signal: Option<web_sys::AbortSignal>,
+    callbacks: transport::ProgressCallbacks,
+    max_line_bytes: Option<usize>,
+    pending_body: Option<js_sys::Promise>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(never)]
+fn prepare_call(
+    client: &Client,
     request: JsRequest,
-    options: &'a JsValue,
-    #[allow(unused_variables)] refused: &std::sync::Arc<RequestState>,
-    apply_deadline: bool,
-) -> impl std::future::Future<Output = Result<JsValue>> + 'a {
-    use futures_util::future::Either;
+    options: &JsValue,
+    refused: &std::sync::Arc<RequestState>,
+) -> Result<PreparedCall> {
     let options = Options::new(options);
-    let (mut builder, body) = match request_builder(client, request, &options) {
-        Ok(prepared) => prepared,
-        Err(error) => return Either::Left(std::future::ready(Err(error))),
-    };
-    #[cfg(target_arch = "wasm32")]
-    {
-        builder.retry_refused = Some(std::sync::Arc::clone(refused));
-        builder.observer = options.get("__observe").and_then(|v| v.dyn_into().ok());
-        builder.transport = options.own("__transport").and_then(|v| v.dyn_into().ok());
-    }
+    // Only the request's own headers can opt out of SSE's Accept, as in EventSource
+    let own_accept = request.headers.contains("accept");
+    let (mut builder, body) = request_builder(client, request, &options)?;
+    builder.retry_refused = Some(std::sync::Arc::clone(refused));
+    builder.observer = options.get("__observe").and_then(|v| v.dyn_into().ok());
+    builder.transport = options.own("__transport").and_then(|v| v.dyn_into().ok());
     let deadline = builder.effective_deadline();
     builder.deadline = deadline.map(Box::new);
-    // Box the request's large state machine once, so the deadline, error and
-    // promise wrappers move a pointer instead of copying it on every request.
-    Either::Right(crate::timeouts::with_deadline(
-        deadline.filter(|_| apply_deadline),
-        Box::pin(send_prepared(client, builder, body, options)),
-    ))
+
+    let body_type = match options.get("responseType") {
+        Some(value) => parse_body_type(&value)?,
+        None => BodyType::Auto,
+    };
+    let signal = parse_signal(options.get("signal"))?;
+    let progress = options.callback("onDownloadProgress")?;
+    let upload_progress = options.callback("onUploadProgress")?;
+    if let Some(redirect) = options.get("redirect") {
+        builder.redirect = parse_redirect(&redirect)?;
+        (
+            builder.config.follow_redirects,
+            builder.config.max_redirects,
+        ) = builder.redirect.config(builder.max_redirects);
+    }
+    if let Some(max) = options.get("maxRedirects") {
+        builder.max_redirects = parse_max_redirects(&max)?;
+        (
+            builder.config.follow_redirects,
+            builder.config.max_redirects,
+        ) = builder.redirect.config(builder.max_redirects);
+    }
+
+    let pending_body = apply_body_sync(&mut builder, body)?;
+    if let Some(last_id) = options.get("__sse").and_then(|v| v.as_string()) {
+        if !own_accept {
+            builder.config.headers.set("accept", "text/event-stream");
+        }
+        if !last_id.is_empty() {
+            builder.config.headers.set("last-event-id", last_id);
+        }
+    }
+    builder.apply_trace(options.get("__trace").and_then(|v| v.dyn_into().ok()))?;
+    crate::client::observe_text(
+        builder.observer.as_ref(),
+        "method",
+        builder.config.method.as_str(),
+    );
+    let mut max_line_bytes = None;
+    if let BodyType::Stream | BodyType::Ndjson = body_type {
+        let has_upload = builder.upload.is_some();
+        if upload_progress.is_some() && !has_upload {
+            return Err(invalid(
+                "onUploadProgress",
+                "can't be combined with a streamed responseType ('stream' or 'ndjson')",
+            ));
+        }
+        if let (Some(upload), Some(callback)) = (&builder.upload, &upload_progress) {
+            upload.progress(callback)?;
+        }
+        max_line_bytes = parse_stream_limit(
+            &options.raw("maxLineBytes"),
+            client.config.max_line_bytes,
+            "maxLineBytes",
+        )?;
+    }
+    Ok(PreparedCall {
+        builder,
+        body_type,
+        signal,
+        callbacks: transport::ProgressCallbacks {
+            upload: upload_progress,
+            download: progress,
+        },
+        max_line_bytes,
+        pending_body,
+    })
 }
 
-async fn send_prepared(
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn send_prepared(
     client: &Client,
-    mut builder: RequestBuilder,
-    body: BodyMode,
-    options: Options<'_>,
+    request: JsRequest,
+    options: &JsValue,
+    refused: &std::sync::Arc<RequestState>,
 ) -> Result<JsValue> {
+    let mut call = prepare_call(client, request, options, refused)?;
+    if let Some(promise) = call.pending_body {
+        let encoded = wasm_bindgen_futures::JsFuture::from(promise).await?;
+        apply_encoded_body(&mut call.builder, encoded);
+    }
+    let response = abortable(
+        call.signal.clone(),
+        call.builder.send_js(
+            call.body_type,
+            call.callbacks,
+            call.signal,
+            call.max_line_bytes,
+        ),
+    )
+    .await?;
+    // An SSE connection reads the attempt count off its raw response, for
+    // errors that end the stream after it opened (idle timeout, drop)
+    if raw_prop(options, "__sse").is_string() {
+        put_f64(
+            &response,
+            "__attempts",
+            f64::from(refused.attempts.load(std::sync::atomic::Ordering::Relaxed)),
+        );
+    }
+    Ok(response)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn send_prepared(
+    client: &Client,
+    request: JsRequest,
+    options: &JsValue,
+    _refused: &std::sync::Arc<RequestState>,
+) -> Result<JsValue> {
+    let options = Options::new(options);
+    let (mut builder, body) = request_builder(client, request, &options)?;
+    let deadline = builder.effective_deadline();
+    builder.deadline = deadline.map(Box::new);
     let body_type = match options.get("responseType") {
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
@@ -1714,65 +1892,38 @@ async fn send_prepared(
     }
     let upload_progress = options.callback("onUploadProgress")?;
     if let Some(redirect) = options.get("redirect") {
-        builder = builder.redirect(parse_redirect(&redirect)?);
+        builder.redirect = parse_redirect(&redirect)?;
+        (
+            builder.config.follow_redirects,
+            builder.config.max_redirects,
+        ) = builder.redirect.config(builder.max_redirects);
     }
     if let Some(max) = options.get("maxRedirects") {
-        builder = builder.max_redirects(parse_max_redirects(&max)?);
+        builder.max_redirects = parse_max_redirects(&max)?;
+        (
+            builder.config.follow_redirects,
+            builder.config.max_redirects,
+        ) = builder.redirect.config(builder.max_redirects);
     }
-
-    builder = apply_body(builder, body).await?;
-    #[cfg(target_arch = "wasm32")]
-    builder.apply_trace(options.get("__trace").and_then(|v| v.dyn_into().ok()))?;
-    #[cfg(target_arch = "wasm32")]
-    crate::client::observe_text(
-        builder.observer.as_ref(),
-        "method",
-        builder.config.method.as_str(),
-    );
+    builder = apply_body_native(builder, body).await?;
     if let BodyType::Stream | BodyType::Ndjson = body_type {
-        #[cfg(target_arch = "wasm32")]
-        let has_upload = builder.upload.is_some();
-        #[cfg(not(target_arch = "wasm32"))]
-        let has_upload = false;
-        if upload_progress.is_some() && !has_upload {
+        if upload_progress.is_some() {
             return Err(invalid(
                 "onUploadProgress",
                 "can't be combined with a streamed responseType ('stream' or 'ndjson')",
             ));
         }
-        #[cfg(target_arch = "wasm32")]
-        if let (Some(upload), Some(callback)) = (&builder.upload, &upload_progress) {
-            upload.progress(callback)?;
-        }
-        let max_line_bytes = parse_stream_limit(
+        let _ = parse_stream_limit(
             &options.raw("maxLineBytes"),
             client.config.max_line_bytes,
             "maxLineBytes",
         )?;
-        // This path is opt-in. Keep its larger header/body state out of
-        // every ordinary buffered request's inline future.
-        let response = Box::pin(abortable(signal.clone(), builder.send_streaming())).await?;
-        if let BodyType::Ndjson = body_type {
-            return ndjson_response_to_js(response, signal, max_line_bytes);
-        }
-        return streaming_response_to_js(response, signal);
+        return Err(Error::JsInterop {
+            message: "streaming responses require wasm32".to_string(),
+        });
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let callbacks = transport::ProgressCallbacks {
-            upload: upload_progress,
-            download: progress,
-            observer: builder.observer.clone(),
-            request_state: builder.retry_refused.clone(),
-        };
-        abortable(signal, builder.send_js(body_type, callbacks)).await
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = upload_progress;
-        let response = abortable(signal, builder.send()).await?;
-        response_to_js(response, body_type)
-    }
+    let response = abortable(signal, builder.send()).await?;
+    response_to_js(response, body_type)
 }
 
 /// Merge set phase fields; an omitted/null value inherits and zero disables.
@@ -1832,6 +1983,17 @@ pub(crate) fn request_deadline(
         Some(value) => parse_phase_duration(&value, "deadlineMs")?,
         None => base,
     };
+    #[cfg(target_arch = "wasm32")]
+    if let Some(d) = duration {
+        if js_sys::Object::has_own(
+            options.unchecked_ref::<js_sys::Object>(),
+            &"__deadlineEndMs".into(),
+        ) {
+            if let Some(end_ms) = get_f64(options, "__deadlineEndMs") {
+                return Ok(Some(crate::timeouts::Deadline::with_end(end_ms, d)));
+            }
+        }
+    }
     Ok(duration.map(crate::timeouts::Deadline::new))
 }
 
@@ -1866,20 +2028,17 @@ const RARE_CLIENT_OPTIONS: [&str; 25] = [
 ];
 
 #[inline(never)]
-fn rare_client_options(
-    mut builder: crate::client::ClientBuilder,
-    opts: &Options,
-) -> Result<crate::client::ClientBuilder> {
+fn rare_client_options(builder: &mut crate::client::ClientBuilder, opts: &Options) -> Result<()> {
     if let Some(budget) = opts.get("retryBudget") {
         if let Some(budget) = parse_retry_budget(&budget)? {
-            builder = builder.retry_budget(budget);
+            builder.retry_budget = Some(budget);
         }
     }
     if let Some(redirect) = opts.get("redirect") {
-        builder = builder.redirect(parse_redirect(&redirect)?);
+        builder.redirect = parse_redirect(&redirect)?;
     }
     if let Some(max) = opts.get("maxRedirects") {
-        builder = builder.max_redirects(parse_max_redirects(&max)?);
+        builder.max_redirects = parse_max_redirects(&max)?;
     }
     if let Some(circuit) = opts.get("circuitBreaker") {
         if !circuit.is_object() {
@@ -1893,7 +2052,7 @@ fn rare_client_options(
             .map(|value| parse_delay(&value, "circuitBreaker.resetAfterMs"))
             .transpose()?
             .unwrap_or(Duration::from_secs(30));
-        builder = builder.circuit_breaker(crate::CircuitBreaker::new(
+        builder.circuit = Some(crate::CircuitBreaker::new(
             u32::try_from(threshold).map_err(|_| {
                 invalid(
                     "circuitBreaker.failureThreshold",
@@ -1905,64 +2064,66 @@ fn rare_client_options(
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(callback) = opts.callback("onCircuitChange")? {
-        builder = builder.on_circuit_change(move |change: crate::CircuitChange| {
-            let value = js_sys::Object::new();
-            let _ = set(&value, "origin", &change.origin.into());
-            let _ = set(&value, "from", &change.from.as_str().into());
-            let _ = set(&value, "to", &change.to.as_str().into());
-            if let Err(error) = callback.call1(&JsValue::UNDEFINED, &value) {
-                let _ = js_sys::Promise::reject(&error);
-            }
-        });
+        builder.circuit_hook = Some(std::panic::AssertUnwindSafe(std::sync::Arc::new(
+            move |change: crate::CircuitChange| {
+                let value = js_sys::Object::new();
+                put_str(&value, "origin", &change.origin);
+                put_str(&value, "from", change.from.as_str());
+                put_str(&value, "to", change.to.as_str());
+                if let Err(error) = callback.call1(&JsValue::UNDEFINED, &value) {
+                    let _ = js_sys::Promise::reject(&error);
+                }
+            },
+        )));
     }
     if let Some(max) = opts.get("maxConcurrent") {
-        builder = builder.max_concurrent(positive_u32(&max, "maxConcurrent")?);
+        builder.limits.concurrent = Some(positive_u32(&max, "maxConcurrent")?);
     }
     if let Some(limit) = opts.get("rateLimit") {
         let requests =
             prop(&limit, "requests").ok_or_else(|| invalid("rateLimit.requests", "is required"))?;
         let per = prop(&limit, "perMs").ok_or_else(|| invalid("rateLimit.perMs", "is required"))?;
-        builder = builder.rate_limit(crate::RateLimit::new(
+        builder.limits.rate = Some(crate::RateLimit::new(
             u32::try_from(positive_u32(&requests, "rateLimit.requests")?)
                 .map_err(|_| invalid("rateLimit.requests", "must be a positive integer"))?,
             parse_delay(&per, "rateLimit.perMs")?,
         ));
     }
     if let Some(per_origin) = opts.bool("limitsPerOrigin")? {
-        builder = builder.limits_per_origin(per_origin);
+        builder.limits.per_origin = per_origin;
     }
     if let Some(max) = opts.get("maxPendingRequests") {
-        builder = builder.max_pending_requests(parse_max_pending_requests(&max)?);
+        builder.max_pending_requests = Some(parse_max_pending_requests(&max)?);
     }
     if let Some(max) = opts.get("maxLineBytes") {
-        builder = builder.max_line_bytes(positive_u32(&max, "maxLineBytes")?);
+        builder.max_line_bytes = Some(positive_u32(&max, "maxLineBytes")?);
     }
     if let Some(max) = opts.get("maxEventBytes") {
-        builder = builder.max_event_bytes(positive_u32(&max, "maxEventBytes")?);
+        builder.max_event_bytes = Some(positive_u32(&max, "maxEventBytes")?);
     }
     if let Some(names) = opts.get("sensitiveHeaders") {
-        builder = builder.sensitive_headers(parse_header_names(&names)?);
+        builder.sensitive_headers = parse_header_names(&names)?;
     }
     if let Some(allow) = opts.bool("allowInsecureRedirects")? {
-        builder = builder.allow_insecure_redirects(allow);
+        builder.allow_insecure_redirects = allow;
     }
     #[cfg(target_arch = "wasm32")]
     {
-        builder = builder.fetch_options(parse_fetch_options(opts, None)?);
+        builder.fetch_options = parse_fetch_options(opts, None)?;
         if let Some(allow) = opts.bool("allowAbsoluteUrls")? {
-            builder = builder.allow_absolute_urls(allow);
+            builder.allow_absolute_urls = allow;
         }
         if let Some(limit) = opts.get("maxResponseBytes") {
-            builder = builder.max_response_bytes(parse_max_response_bytes(&limit)?);
+            builder.max_response_bytes = Some(parse_max_response_bytes(&limit)?);
         }
         if let Some(allow) = opts.bool("allowPrivateNetwork")? {
-            builder = builder.allow_private_network(allow);
+            builder.allow_private_network = allow;
         }
         if let Some(proxy) = opts.get("proxy") {
-            builder = builder.proxy(Some(parse_proxy(&proxy)?));
+            builder.proxy = Some(parse_proxy(&proxy)?);
         }
     }
-    Ok(builder)
+    Ok(())
 }
 
 /// A request's method, URL, headers, query parameters and timeout; the body
@@ -1979,8 +2140,6 @@ pub(crate) fn request_builder(
         body,
         deadline,
     } = request;
-    // Only the request's own headers can opt out of SSE's Accept, as in EventSource
-    let own_accept = headers.contains("accept");
     let mut builder = client
         .request_owned(method, url)
         // Decode here rather than in Rust, so JSON is parsed by the JS engine
@@ -1988,39 +2147,36 @@ pub(crate) fn request_builder(
         .headers(headers);
 
     if let Some(phases) = parse_phase_options(options, &client.config.phases)? {
-        builder = builder.phase_timeouts(phases);
+        builder.phase_overrides = Some(Box::new(phases));
     }
     if let Some(deadline) = deadline {
         builder.deadline = Some(deadline);
     }
     if let Some(params) = options.get("params") {
-        builder = builder.query(parse_params(&params)?);
+        builder.query.extend(parse_params(&params)?);
     }
     if let Some(allow) = options.bool("allowAbsoluteUrls")? {
-        builder = builder.allow_absolute_urls(allow);
+        builder.allow_absolute_urls = allow;
     }
     if let Some(names) = options.get("sensitiveHeaders") {
-        builder = builder.sensitive_headers(parse_header_names(&names)?);
+        builder.sensitive_headers = parse_header_names(&names)?;
     }
     if let Some(allow) = options.bool("allowInsecureRedirects")? {
-        builder = builder.allow_insecure_redirects(allow);
+        builder.allow_insecure_redirects = allow;
     }
     // `null` removes the client's limit for this request
     match options.raw("maxResponseBytes") {
-        value if value.is_null() => builder = builder.max_response_bytes(None),
+        value if value.is_null() => builder.max_response_bytes = None,
         value if !value.is_undefined() => {
-            builder = builder.max_response_bytes(Some(parse_max_response_bytes(&value)?));
+            builder.max_response_bytes = Some(parse_max_response_bytes(&value)?);
         }
         _ => {}
     }
     if let Some(retries) = options.get("retries") {
-        builder = builder.retry_config(parse_retries(&retries)?);
+        builder.retry_config = Some(parse_retries(&retries)?);
     }
     if let Some(timeout) = options.get("timeoutMs") {
-        builder = match parse_timeout(&timeout)? {
-            Some(timeout) => builder.timeout(timeout),
-            None => builder.no_timeout(),
-        };
+        builder.config.timeout = parse_timeout(&timeout)?;
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -2028,14 +2184,6 @@ pub(crate) fn request_builder(
         builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
         if let Some(allow) = options.bool("allowPrivateNetwork")? {
             builder.allow_private_network = allow;
-        }
-    }
-    if let Some(last_id) = options.get("__sse").and_then(|v| v.as_string()) {
-        if !own_accept {
-            builder.config.headers.set("accept", "text/event-stream");
-        }
-        if !last_id.is_empty() {
-            builder.config.headers.set("last-event-id", last_id);
         }
     }
     Ok((builder, body))
@@ -2104,7 +2252,7 @@ fn parse_fetch_options(
                 base.unwrap_or(&js_sys::Object::new()),
             )
         });
-        set(target, name, value)
+        put(target, name, value);
     };
     for (name, allowed) in CHOICES {
         if let Some(value) = options.get(name) {
@@ -2113,9 +2261,9 @@ fn parse_fetch_options(
                 .is_some_and(|v| allowed.contains(&v.as_str()))
             {
                 let choices = join_strs(allowed, "', '");
-                return Err(invalid(name, &format!("must be one of '{choices}'")));
+                return Err(invalid(name, &concat3("must be one of '", &choices, "'")));
             }
-            add(name, &value)?;
+            add(name, &value);
         }
     }
     for name in ["referrer", "integrity"] {
@@ -2123,33 +2271,16 @@ fn parse_fetch_options(
             if !value.is_string() {
                 return Err(invalid(name, "must be a string"));
             }
-            add(name, &value)?;
+            add(name, &value);
         }
     }
     if let Some(value) = options.get("keepalive") {
-        add("keepalive", &parse_bool(&value, "keepalive")?.into())?;
+        add("keepalive", &parse_bool(&value, "keepalive")?.into());
     }
     if transport::is_node() {
         return Ok(None);
     }
     Ok(merged.or_else(|| base.cloned()))
-}
-
-/// Report download progress to a JS callback (`{ loaded, total }`).
-/// Exceptions thrown by the callback are ignored.
-#[cfg(target_arch = "wasm32")]
-fn with_progress(builder: RequestBuilder, callback: js_sys::Function) -> RequestBuilder {
-    builder.on_download_progress(move |progress| {
-        let event = js_sys::Object::new();
-        #[allow(clippy::cast_precision_loss)]
-        let total = progress
-            .total
-            .map_or(JsValue::NULL, |t| JsValue::from_f64(t as f64));
-        #[allow(clippy::cast_precision_loss)]
-        let _ = set(&event, "loaded", &JsValue::from_f64(progress.loaded as f64));
-        let _ = set(&event, "total", &total);
-        let _ = callback.call1(&JsValue::UNDEFINED, &event);
-    })
 }
 
 /// JS callbacks can't be `Send`, which native progress callbacks require;
@@ -2159,31 +2290,107 @@ fn with_progress(builder: RequestBuilder, _callback: js_sys::Function) -> Reques
     builder
 }
 
-/// Attach a JS body to a request, choosing a Content-Type if none was set
-fn apply_body(
-    request: RequestBuilder,
+/// Attach a JS body to a request synchronously, returning a `Promise` only for
+/// async bodies (`Blob` / `FormData`) encoded by JS.
+#[cfg(target_arch = "wasm32")]
+#[inline(never)]
+fn apply_body_sync(
+    request: &mut RequestBuilder,
     body: BodyMode,
-) -> impl std::future::Future<Output = Result<RequestBuilder>> {
-    use futures_util::future::Either;
+) -> Result<Option<js_sys::Promise>> {
+    let (value, force_json) = match body {
+        BodyMode::Auto(value) => (value, false),
+        BodyMode::Json(value) => (value, true),
+    };
+    if !force_json {
+        if value.is_null() || value.is_undefined() {
+            return Ok(None);
+        }
+        if let Some(text) = value.as_string() {
+            request.config.body = Some(crate::types::WasmBody::Text(text));
+            return Ok(None);
+        }
+        if let Some(encode) = transport::encode_body_fn() {
+            let encoded = encode.call1(&JsValue::UNDEFINED, &value)?;
+            if !encoded.is_null() && !encoded.is_undefined() {
+                if !js_sys::Array::is_array(&encoded) {
+                    return Ok(Some(encoded.unchecked_into()));
+                }
+                apply_encoded_body(request, encoded);
+                return Ok(None);
+            }
+        }
+        if let Some(upload) = upload::Upload::from_value(&value)? {
+            if matches!(request.config.method, Method::Get | Method::Head) {
+                return Err(invalid("body", "GET and HEAD cannot have streaming bodies"));
+            }
+            set_default_content_type(request, "application/octet-stream");
+            upload.activate();
+            request.upload = Some(upload);
+            return Ok(None);
+        }
+    }
+
+    let json = js_sys::JSON::stringify(&value).map_err(|e| {
+        invalid(
+            "body",
+            &concat2("could not be serialized to JSON: ", &js_error_message(&e)),
+        )
+    })?;
+    let json = json
+        .as_string()
+        .ok_or_else(|| invalid("body", "could not be serialized to JSON"))?;
+    set_default_content_type(request, "application/json");
+    request.config.body = Some(crate::types::WasmBody::Text(json));
+    Ok(None)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline(never)]
+fn apply_encoded_body(request: &mut RequestBuilder, encoded: JsValue) {
+    let arr: js_sys::Array = encoded.unchecked_into();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let tag = arr.get(0).as_f64().unwrap_or(0.0) as u8;
+    let payload = arr.get(1);
+    let ct = arr.get(2).as_string().unwrap_or_default();
+    match tag {
+        0 => {
+            if !ct.is_empty() {
+                set_default_content_type(request, &ct);
+            }
+            request.config.body = Some(crate::types::WasmBody::JsBytes(payload.unchecked_into()));
+        }
+        1 => {
+            set_default_content_type(request, &ct);
+            request.config.body = Some(crate::types::WasmBody::Text(
+                payload.as_string().unwrap_or_default(),
+            ));
+        }
+        _ => {
+            request.config.headers.set("content-type", ct);
+            request.config.body = Some(crate::types::WasmBody::JsBytes(payload.unchecked_into()));
+        }
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+async fn apply_body(mut request: RequestBuilder, body: BodyMode) -> Result<RequestBuilder> {
+    if let Some(promise) = apply_body_sync(&mut request, body)? {
+        let encoded = wasm_bindgen_futures::JsFuture::from(promise).await?;
+        apply_encoded_body(&mut request, encoded);
+    }
+    Ok(request)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn apply_body_native(request: RequestBuilder, body: BodyMode) -> Result<RequestBuilder> {
     let (value, force_json) = match body {
         BodyMode::Auto(value) => (value, false),
         BodyMode::Json(value) => (value, true),
     };
     if !force_json && (value.is_null() || value.is_undefined()) {
-        return Either::Left(std::future::ready(Ok(request)));
+        return Ok(request);
     }
-    // Type erasure keeps multipart/blob/upload preparation out of the
-    // ordinary request's poll function. Only requests with a body allocate.
-    let body: std::pin::Pin<Box<dyn std::future::Future<Output = Result<RequestBuilder>>>> =
-        Box::pin(apply_nonempty_body(request, value, force_json));
-    Either::Right(body)
-}
-
-async fn apply_nonempty_body(
-    request: RequestBuilder,
-    value: JsValue,
-    force_json: bool,
-) -> Result<RequestBuilder> {
     if !force_json {
         if let Some(text) = value.as_string() {
             return Ok(request.text(text));
@@ -2208,22 +2415,12 @@ async fn apply_nonempty_body(
             let bytes = blob_bytes(&value).await?;
             return Ok(with_default_content_type(request, &content_type).bytes(bytes));
         }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(upload) = upload::Upload::from_value(&value)? {
-            if matches!(request.config.method, Method::Get | Method::Head) {
-                return Err(invalid("body", "GET and HEAD cannot have streaming bodies"));
-            }
-            let mut request = with_default_content_type(request, "application/octet-stream");
-            upload.activate();
-            request.upload = Some(upload);
-            return Ok(request);
-        }
     }
 
     let json = js_sys::JSON::stringify(&value).map_err(|e| {
         invalid(
             "body",
-            &format!("could not be serialized to JSON: {}", js_error_message(&e)),
+            &concat2("could not be serialized to JSON: ", &js_error_message(&e)),
         )
     })?;
     let json = json
@@ -2233,6 +2430,7 @@ async fn apply_nonempty_body(
 }
 
 /// Encode a `FormData` (strings and files) as `multipart/form-data`
+#[cfg(not(target_arch = "wasm32"))]
 async fn form_data_to_multipart(form_data: &JsValue) -> Result<Multipart> {
     let mut form = Multipart::new();
     let entries: Vec<JsValue> = js_sys::try_iter(form_data)?
@@ -2258,6 +2456,7 @@ async fn form_data_to_multipart(form_data: &JsValue) -> Result<Multipart> {
 }
 
 /// A Blob's MIME type, if it has one
+#[cfg(not(target_arch = "wasm32"))]
 fn blob_type(blob: &JsValue) -> Option<String> {
     js_sys::Reflect::get(blob, &"type".into())
         .ok()
@@ -2266,6 +2465,7 @@ fn blob_type(blob: &JsValue) -> Option<String> {
 }
 
 /// Read a Blob's contents
+#[cfg(not(target_arch = "wasm32"))]
 async fn blob_bytes(blob: &JsValue) -> Result<Vec<u8>> {
     let array_buffer: js_sys::Function =
         js_sys::Reflect::get(blob, &"arrayBuffer".into())?.unchecked_into();
@@ -2274,6 +2474,15 @@ async fn blob_bytes(blob: &JsValue) -> Result<Vec<u8>> {
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
+#[cfg(target_arch = "wasm32")]
+#[inline(never)]
+fn set_default_content_type(request: &mut RequestBuilder, content_type: &str) {
+    if !request.config.headers.contains("content-type") {
+        request.config.headers.set("content-type", content_type);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn with_default_content_type(mut request: RequestBuilder, content_type: &str) -> RequestBuilder {
     if !request.config.headers.contains("content-type") {
         request.config.headers.set("content-type", content_type);
@@ -2282,6 +2491,7 @@ fn with_default_content_type(mut request: RequestBuilder, content_type: &str) ->
 }
 
 /// Copy the bytes out of an `ArrayBuffer` or any `ArrayBufferView`
+#[cfg(not(target_arch = "wasm32"))]
 fn js_bytes(value: &JsValue) -> Option<Vec<u8>> {
     if value.is_instance_of::<js_sys::ArrayBuffer>() {
         return Some(js_sys::Uint8Array::new(value).to_vec());
@@ -2303,6 +2513,7 @@ fn js_bytes(value: &JsValue) -> Option<Vec<u8>> {
 }
 
 /// The response fields other than `body`
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn response_head_to_js(
     status: u16,
     status_text: &str,
@@ -2310,13 +2521,13 @@ fn response_head_to_js(
     response_headers: &Headers,
 ) -> Result<js_sys::Object> {
     let obj = js_sys::Object::new();
-    set_f64(&obj, "status", f64::from(status))?;
-    set_str(&obj, "statusText", status_text)?;
-    set_bool(&obj, "ok", (200..300).contains(&status))?;
-    set_str(&obj, "url", url)?;
+    put_f64(&obj, "status", f64::from(status));
+    put_str(&obj, "statusText", status_text);
+    put_bool(&obj, "ok", (200..300).contains(&status));
+    put_str(&obj, "url", url);
 
     let headers = headers_to_js(response_headers)?;
-    set(&obj, "headers", &headers)?;
+    put(&obj, "headers", &headers);
     Ok(obj)
 }
 
@@ -2342,144 +2553,12 @@ fn response_to_js(response: crate::types::Response, body_type: BodyType) -> Resu
         ResponseBody::Json(json) => serde_json::to_vec(&json)?,
         ResponseBody::Empty => Vec::new(),
     };
-    set(
+    put(
         &obj,
         "body",
         &decode_js_body(bytes, &content_type, body_type)?,
-    )?;
+    );
     Ok(obj.into())
-}
-
-/// Type-erase cold streaming pipelines so `streaming_response_to_js` and
-/// `ndjson_response_to_js` share one `ReadableStream::from_stream` instantiation.
-fn into_js_stream(
-    stream: std::pin::Pin<
-        Box<dyn futures_util::Stream<Item = std::result::Result<JsValue, JsValue>>>,
-    >,
-) -> web_sys::ReadableStream {
-    stream::from_stream(stream)
-}
-
-/// Convert a streaming response; its body becomes a `ReadableStream<Uint8Array>`
-fn streaming_response_to_js(
-    response: StreamingResponse,
-    signal: Option<web_sys::AbortSignal>,
-) -> Result<JsValue> {
-    let obj = response_head_to_js(
-        response.status,
-        &response.status_text,
-        &response.url,
-        &response.headers,
-    )?;
-    // Without progress or a size limit the core doesn't need the bytes, so
-    // each chunk of the transport's stream passes through as an opaque JS
-    // value: no copy into WebAssembly and back. The signal, typed errors and
-    // backpressure (read only as the caller reads) work as on the copying path.
-    #[cfg(target_arch = "wasm32")]
-    let response = match response.into_raw() {
-        Ok((raw, controller)) => {
-            let chunks = raw.map(|raw| {
-                stream::read_stream(raw).map(|chunk| {
-                    chunk
-                        .map(own_chunk)
-                        .map_err(|error| transport::body_error(&error))
-                })
-            });
-            let chunks = transport::body_with_abort(
-                futures_util::stream::iter(chunks).flatten(),
-                controller,
-            );
-            let abort = signal.clone();
-            let chunks = AbortableStream::new(chunks, signal)
-                .map(move |chunk| chunk.map_err(|error| cancelled_by(error, abort.as_ref())));
-            let stream = into_js_stream(Box::pin(chunks));
-            set(&obj, "body", &stream)?;
-            return Ok(obj.into());
-        }
-        Err(response) => response,
-    };
-    let abort = signal.clone();
-    let chunks = AbortableStream::new(response.into_stream(), signal).map(move |chunk| {
-        chunk
-            .map(|bytes| js_sys::Uint8Array::from(bytes.as_slice()).into())
-            .map_err(|error| cancelled_by(error, abort.as_ref()))
-    });
-    let stream = into_js_stream(Box::pin(chunks));
-    set(&obj, "body", &stream)?;
-    Ok(obj.into())
-}
-
-/// A chunk that owns its whole buffer, as the copying path's do: a view into
-/// a larger buffer (which could hold other data) is copied
-#[cfg(target_arch = "wasm32")]
-fn own_chunk(chunk: JsValue) -> JsValue {
-    match chunk.dyn_ref::<js_sys::Uint8Array>() {
-        Some(view)
-            if view.byte_offset() != 0 || view.byte_length() != view.buffer().byte_length() =>
-        {
-            view.slice(0, view.length()).into()
-        }
-        _ => chunk,
-    }
-}
-
-/// A newline-delimited JSON response: `body` is a `ReadableStream` of parsed
-/// values. A line that isn't JSON errors the stream with a `ParseError`.
-fn ndjson_response_to_js(
-    response: StreamingResponse,
-    signal: Option<web_sys::AbortSignal>,
-    max_line_bytes: Option<usize>,
-) -> Result<JsValue> {
-    let obj = response_head_to_js(
-        response.status,
-        &response.status_text,
-        &response.url,
-        &response.headers,
-    )?;
-    let mut lines = crate::lines::Lines::with_limit(max_line_bytes);
-    let abort = signal.clone();
-    // Each chunk, then a final None to flush a last line without a newline
-    let chunks = AbortableStream::new(response.into_stream(), signal)
-        .map(Some)
-        .chain(futures_util::stream::once(async { None }));
-    let parsed = chunks.flat_map(move |chunk| {
-        let lines: Vec<std::result::Result<crate::lines::Line, Error>> = match chunk {
-            Some(Ok(bytes)) => {
-                let (lines, error) = lines.feed(&bytes);
-                lines.into_iter().map(Ok).chain(error.map(Err)).collect()
-            }
-            Some(Err(error)) => vec![Err(error)],
-            None => lines.finish().into_iter().map(Ok).collect(),
-        };
-        let abort = abort.clone();
-        futures_util::stream::iter(lines.into_iter().map(move |line| {
-            let line = line.map_err(|error| cancelled_by(error, abort.as_ref()))?;
-            parse_json_line(&line).map_err(JsValue::from)
-        }))
-    });
-    let stream = into_js_stream(Box::pin(parsed));
-    set(&obj, "body", &stream)?;
-    Ok(obj.into())
-}
-
-/// Parse one NDJSON line with the JS engine's `JSON.parse`
-fn parse_json_line(line: &crate::lines::Line) -> Result<JsValue> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        transport::parse_native_json(&JsValue::from_str(&line.text)).map_err(|error| Error::Parse {
-            message: format!(
-                "Failed to parse line {} as JSON: {}",
-                line.number,
-                js_error_message(&error)
-            ),
-            source: None,
-        })
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = line;
-        Ok(JsValue::UNDEFINED)
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -2535,13 +2614,10 @@ pub(crate) fn parse_method(method: &str) -> Result<Method> {
         // The Fetch standard forbids these, so browsers and Node.js reject them
         Some(Method::Connect | Method::Trace) => Err(invalid(
             "method",
-            &format!(
-                "{} is not supported by fetch()",
-                method.to_ascii_uppercase()
-            ),
+            &concat2(&method.to_ascii_uppercase(), " is not supported by fetch()"),
         )),
         Some(method) => Ok(method),
-        None => Err(invalid("method", &format!("Invalid HTTP method: {method}"))),
+        None => Err(invalid("method", &concat2("Invalid HTTP method: ", method))),
     }
 }
 
@@ -2552,39 +2628,39 @@ pub(crate) fn parse_headers(value: &JsValue) -> Result<Headers> {
 
 #[inline(never)]
 fn parse_params(value: &JsValue) -> Result<Vec<(String, String)>> {
-    let entries: Vec<JsValue> = if is_instance_of_global(value, "URLSearchParams") {
-        js_sys::try_iter(value)?
-            .ok_or_else(|| invalid("params", "URLSearchParams is not iterable"))?
-            .collect::<std::result::Result<_, _>>()?
+    let entries: js_sys::Array = if is_instance_of_global(value, "URLSearchParams") {
+        try_array_from(value)?
     } else if value.is_object() {
         js_sys::Object::entries(value.unchecked_ref())
-            .iter()
-            .collect()
     } else {
         return Err(invalid("params", "must be an object or URLSearchParams"));
     };
 
     let mut params = Vec::new();
-    for entry in entries {
-        let entry = js_sys::Array::from(&entry);
+    for i in 0..entries.length() {
+        let entry = js_sys::Array::from(&entries.get(i));
         let key = entry.get(0).as_string().unwrap_or_default();
         let value = entry.get(1);
-        let values: Vec<JsValue> = if js_sys::Array::is_array(&value) {
-            js_sys::Array::from(&value).iter().collect()
-        } else {
-            vec![value]
-        };
-        for value in values {
-            if value.is_null() || value.is_undefined() {
-                continue;
+        let push = |params: &mut Vec<(String, String)>, v: &JsValue| -> Result<()> {
+            if v.is_null() || v.is_undefined() {
+                return Ok(());
             }
-            let value = scalar_to_string(&value).ok_or_else(|| {
+            let s = scalar_to_string(v).ok_or_else(|| {
                 invalid(
                     "params",
-                    &format!("'{key}' must be a string, number or boolean"),
+                    &concat3("'", &key, "' must be a string, number or boolean"),
                 )
             })?;
-            params.push((key.clone(), value));
+            params.push((key.clone(), s));
+            Ok(())
+        };
+        if js_sys::Array::is_array(&value) {
+            let arr = value.unchecked_ref::<js_sys::Array>();
+            for j in 0..arr.length() {
+                push(&mut params, &arr.get(j))?;
+            }
+        } else {
+            push(&mut params, &value)?;
         }
     }
     Ok(params)
@@ -2594,7 +2670,7 @@ fn parse_params(value: &JsValue) -> Result<Vec<(String, String)>> {
 fn parse_timeout(value: &JsValue) -> Result<Option<Duration>> {
     match value.as_f64() {
         Some(ms) if ms == 0.0 => Ok(None),
-        Some(ms) if ms.is_finite() && ms > 0.0 => Ok(Some(Duration::from_secs_f64(ms / 1000.0))),
+        Some(ms) if ms.is_finite() && ms > 0.0 => Ok(Some(crate::runtime::duration_from_ms(ms))),
         _ => Err(invalid(
             "timeoutMs",
             "must be a non-negative number of milliseconds",
@@ -2669,21 +2745,24 @@ fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
                 "must be an array of status codes",
             ));
         }
-        config.retry_on_status = js_sys::Array::from(&v)
-            .iter()
-            .map(|status| {
-                status
-                    .as_f64()
-                    .filter(|s| s.fract() == 0.0 && (100.0..=599.0).contains(s))
-                    .map(|s| s as u16)
-                    .ok_or_else(|| {
-                        invalid(
-                            "retries.retryOn",
-                            "must contain HTTP status codes (100-599)",
-                        )
-                    })
-            })
-            .collect::<Result<_>>()?;
+        let arr = v.unchecked_ref::<js_sys::Array>();
+        let mut codes = Vec::with_capacity(arr.length() as usize);
+        for i in 0..arr.length() {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let code = arr
+                .get(i)
+                .as_f64()
+                .filter(|s| s.fract() == 0.0 && (100.0..=599.0).contains(s))
+                .map(|s| s as u16)
+                .ok_or_else(|| {
+                    invalid(
+                        "retries.retryOn",
+                        "must contain HTTP status codes (100-599)",
+                    )
+                })?;
+            codes.push(code);
+        }
+        config.retry_on_status = codes;
     }
     if let Some(v) = prop(value, "retryOnNetworkError") {
         config.retry_on_network_error = parse_bool(&v, "retries.retryOnNetworkError")?;
@@ -2745,21 +2824,25 @@ fn parse_max_pending_requests(value: &JsValue) -> Result<usize> {
     positive_u32(value, "maxPendingRequests")
 }
 
-/// `sensitiveHeaders`: an array of valid header names
+/// `sensitiveHeaders`: an array of valid header names, normalized to lowercase
 #[inline(never)]
 fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
     let invalid_names = || invalid("sensitiveHeaders", "must be an array of header names");
     if !js_sys::Array::is_array(value) {
         return Err(invalid_names());
     }
-    js_sys::Array::from(value)
-        .iter()
-        .map(|name| {
-            name.as_string()
-                .filter(|name| crate::types::validate_header_name(name).is_ok())
-                .ok_or_else(invalid_names)
-        })
-        .collect()
+    let arr = value.unchecked_ref::<js_sys::Array>();
+    let mut out = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        let mut name = arr
+            .get(i)
+            .as_string()
+            .filter(|name| crate::types::validate_header_name(name).is_ok())
+            .ok_or_else(invalid_names)?;
+        name.make_ascii_lowercase();
+        out.push(name);
+    }
+    Ok(out)
 }
 
 /// A stream limit (`maxLineBytes`, `maxEventBytes`) for a request or an event
@@ -2816,7 +2899,7 @@ fn parse_delay(value: &JsValue, parameter: &str) -> Result<Duration> {
     value
         .as_f64()
         .filter(|ms| ms.is_finite() && *ms >= 0.0)
-        .map(|ms| Duration::from_secs_f64(ms / 1000.0))
+        .map(crate::runtime::duration_from_ms)
         .ok_or_else(|| invalid(parameter, "must be a non-negative number of milliseconds"))
 }
 
@@ -2878,12 +2961,6 @@ pub(crate) fn get_str(target: &JsValue, name: &str) -> Option<String> {
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn get_f64(target: &JsValue, name: &str) -> Option<f64> {
     get_prop(target, name).as_f64()
-}
-
-#[inline(never)]
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) fn get_bool(target: &JsValue, name: &str) -> Option<bool> {
-    get_prop(target, name).as_bool()
 }
 
 #[inline(never)]
@@ -2997,41 +3074,57 @@ fn headers_to_js(headers: &Headers) -> Result<js_sys::Object> {
 }
 
 #[inline(never)]
-fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {
-    js_sys::Reflect::set(target, &name.into(), value)?;
-    Ok(())
+pub(crate) fn put(target: &JsValue, name: &str, value: &JsValue) {
+    let _ = js_sys::Reflect::set(target, &name.into(), value);
 }
 
 #[inline(never)]
-pub(crate) fn set_str(target: &js_sys::Object, name: &str, value: &str) -> Result<()> {
-    set(target, name, &JsValue::from_str(value))
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-#[inline(never)]
-pub(crate) fn set_bool(target: &js_sys::Object, name: &str, value: bool) -> Result<()> {
-    set(target, name, &JsValue::from_bool(value))
+pub(crate) fn put_str(target: &JsValue, name: &str, value: &str) {
+    put(target, name, &JsValue::from_str(value));
 }
 
 #[inline(never)]
-pub(crate) fn set_f64(target: &js_sys::Object, name: &str, value: f64) -> Result<()> {
-    set(target, name, &JsValue::from_f64(value))
+pub(crate) fn put_bool(target: &JsValue, name: &str, value: bool) {
+    put(target, name, &JsValue::from_bool(value));
 }
 
 #[inline(never)]
-fn put_str(target: &JsValue, name: &str, value: &str) {
-    let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_str(value));
-}
-
-#[inline(never)]
-fn put_f64(target: &JsValue, name: &str, value: f64) {
-    let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_f64(value));
+pub(crate) fn put_f64(target: &JsValue, name: &str, value: f64) {
+    put(target, name, &JsValue::from_f64(value));
 }
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(catch, js_name = String)]
     fn js_to_string(value: &JsValue) -> std::result::Result<String, JsValue>;
+
+    #[wasm_bindgen(catch, js_namespace = Array, js_name = from)]
+    fn try_array_from(value: &JsValue) -> std::result::Result<js_sys::Array, JsValue>;
+
+    #[wasm_bindgen(thread_local_v2, js_name = globalThis)]
+    static GLOBAL_THIS: JsValue;
+}
+
+#[inline(never)]
+pub(crate) fn global_this() -> JsValue {
+    GLOBAL_THIS.with(Clone::clone)
+}
+
+#[inline(never)]
+pub(crate) fn concat2(a: &str, b: &str) -> String {
+    let mut out = String::with_capacity(a.len() + b.len());
+    out.push_str(a);
+    out.push_str(b);
+    out
+}
+
+#[inline(never)]
+pub(crate) fn concat3(a: &str, b: &str, c: &str) -> String {
+    let mut out = String::with_capacity(a.len() + b.len() + c.len());
+    out.push_str(a);
+    out.push_str(b);
+    out.push_str(c);
+    out
 }
 
 /// Format an arbitrary `JsValue` as `JsValue(<string>)` without pulling
@@ -3039,7 +3132,7 @@ extern "C" {
 #[inline(never)]
 fn js_value_label(value: &JsValue) -> String {
     let text = js_to_string(value).unwrap_or_else(|_| "[object Object]".to_string());
-    format!("JsValue({text})")
+    concat3("JsValue(", &text, ")")
 }
 
 /// `value instanceof globalThis[name]`, false if that global doesn't exist
@@ -3048,7 +3141,7 @@ fn is_instance_of_global(value: &JsValue, name: &str) -> bool {
     if !value.is_object() {
         return false;
     }
-    js_sys::Reflect::get(&js_sys::global(), &name.into())
+    js_sys::Reflect::get(&global_this(), &name.into())
         .ok()
         .filter(JsValue::is_function)
         .and_then(|ctor| js_sys::Reflect::get(&ctor, &"prototype".into()).ok())
@@ -3111,20 +3204,21 @@ impl Headers {
 
         // Iterables (Headers, Map, arrays) yield [name, value] pairs; plain
         // objects are read through Object.entries.
-        let pairs: Vec<JsValue> = match js_sys::try_iter(value)? {
-            Some(iter) => iter.collect::<std::result::Result<_, _>>()?,
-            None => js_sys::Object::entries(value.unchecked_ref())
-                .iter()
-                .collect(),
+        let iter_fn = js_sys::Reflect::get(value, &js_sys::Symbol::iterator())?;
+        let pairs: js_sys::Array = if iter_fn.is_function() {
+            try_array_from(value)?
+        } else {
+            js_sys::Object::entries(value.unchecked_ref())
         };
 
-        for pair in pairs {
+        for i in 0..pairs.length() {
+            let pair = pairs.get(i);
             if !js_sys::Array::is_array(&pair) {
                 return Err(JsValue::from_str(
                     "headers must contain [name, value] pairs",
                 ));
             }
-            let pair = js_sys::Array::from(&pair);
+            let pair = pair.unchecked_ref::<js_sys::Array>();
             let name = pair
                 .get(0)
                 .as_string()
@@ -3134,8 +3228,10 @@ impl Headers {
                 continue;
             }
             let value = scalar_to_string(&value).ok_or_else(|| {
-                JsValue::from_str(&format!(
-                    "header '{name}' must be a string, number or boolean"
+                JsValue::from_str(&concat3(
+                    "header '",
+                    &name,
+                    "' must be a string, number or boolean",
                 ))
             })?;
             headers.insert(name, value);
@@ -3165,11 +3261,6 @@ pub(crate) fn with_abort_reason(error: JsValue, signal: Option<&JsValue>) -> JsV
         }
     }
     error
-}
-
-/// `error` as a JS error, with the abort reason if `signal` cancelled it
-fn cancelled_by(error: Error, signal: Option<&web_sys::AbortSignal>) -> JsValue {
-    with_abort_reason(JsValue::from(error), signal.map(AsRef::as_ref))
 }
 
 /// Convert Error to JsValue for WASM boundary
@@ -3256,7 +3347,7 @@ impl From<JsValue> for Error {
     #[inline(never)]
     fn from(value: JsValue) -> Self {
         Error::JsInterop {
-            message: format!("JavaScript error: {}", js_value_label(&value)),
+            message: concat2("JavaScript error: ", &js_value_label(&value)),
         }
     }
 }

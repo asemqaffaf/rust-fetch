@@ -54,6 +54,7 @@ pub(crate) async fn timeout<T>(
 /// [`timeout_phase`] when `duration` is set; otherwise just `fut`, as one
 /// future type so that `fut` is compiled into a single poll function.
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 pub(crate) fn timeout_phase_optional<
     T,
     E: From<Error>,
@@ -130,6 +131,24 @@ pub(crate) fn random() -> f64 {
     }
 }
 
+/// Convert milliseconds to [`Duration`] without pulling `Duration::from_secs_f64`
+/// (and its formatting/panic strings) into Wasm. Non-positive or NaN inputs return
+/// `Duration::ZERO`; values past `u64::MAX` seconds saturate to `Duration::MAX`.
+pub(crate) fn duration_from_ms(ms: f64) -> Duration {
+    if !(ms > 0.0) {
+        return Duration::ZERO;
+    }
+    let secs_f = (ms / 1000.0).floor();
+    if secs_f >= 18_446_744_073_709_551_616.0 {
+        return Duration::MAX;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let secs = secs_f as u64;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let nanos = ((ms - secs_f * 1000.0) * 1_000_000.0).round() as u32;
+    Duration::new(secs, 0).saturating_add(Duration::from_nanos(u64::from(nanos)))
+}
+
 /// A phase timeout preserves errors returned by the operation itself.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn timeout_phase<T, E: From<Error>, F: Future<Output = std::result::Result<T, E>>>(
@@ -148,5 +167,21 @@ pub(crate) fn timeout_phase<T, E: From<Error>, F: Future<Output = std::result::R
     #[cfg(target_arch = "wasm32")]
     {
         crate::wasm::futures::Deadline::new(fut, duration, phase, configured)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duration_from_ms_handles_edges() {
+        assert_eq!(duration_from_ms(0.0), Duration::ZERO);
+        assert_eq!(duration_from_ms(-5.0), Duration::ZERO);
+        assert_eq!(duration_from_ms(f64::NAN), Duration::ZERO);
+        assert_eq!(duration_from_ms(0.5), Duration::from_micros(500));
+        assert_eq!(duration_from_ms(1500.0), Duration::from_millis(1500));
+        assert_eq!(duration_from_ms(f64::INFINITY), Duration::MAX);
+        assert_eq!(duration_from_ms(1e30), Duration::MAX);
     }
 }
