@@ -1,12 +1,12 @@
 // client.extend(overrides) (#69): a new client with the parent's options and interceptors, and the overrides on top.
 (() => {
-  const Base = WasmClient, saved = new WeakMap();
+  const saved = new WeakMap();
   const merge = (parent, child) => {
     const headers = new Map();
     for (const [name, value] of [...headerEntries(parent), ...headerEntries(child)]) headers.set(String(name).toLowerCase(), [name, value]);
     return Object.fromEntries(headers.values());
   };
-  class ExtendableClient extends Base {
+  class ExtendableClient extends WasmClient {
     constructor(options) {
       super(options);
       saved.set(this, { options: Object.assign({ __proto__: null }, options), request: [], response: [] });
@@ -46,6 +46,5 @@
       return child;
     }
   }
-  setFnName(ExtendableClient, 'WasmClient');
-  WasmClient = ExtendableClient;
+  wrapClient(ExtendableClient);
 })();

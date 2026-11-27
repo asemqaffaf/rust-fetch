@@ -10,10 +10,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// The source of an [`Error::Network`] when a response body is larger than
 /// the request allows (`max_response_bytes`, `maxResponseBytes` in JavaScript)
-#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub struct ResponseTooLarge {
     /// The limit, in bytes, of the decompressed body
     pub limit: u64,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for ResponseTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for ResponseTooLarge {
@@ -26,10 +33,17 @@ impl std::error::Error for ResponseTooLarge {}
 
 /// The source of an [`Error::Network`] when a line of a streamed format
 /// (NDJSON, Server-Sent Events) is longer than `maxLineBytes` allows
-#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub(crate) struct LineTooLong {
     /// The limit, in bytes, of one line without its line break
     pub(crate) limit: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for LineTooLong {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for LineTooLong {
@@ -42,10 +56,17 @@ impl std::error::Error for LineTooLong {}
 
 /// The source of an [`Error::Network`] when a Server-Sent Event's data is
 /// larger than `maxEventBytes` allows
-#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub(crate) struct EventTooLarge {
     /// The limit, in bytes, of an event's data (its `data:` lines joined)
     pub(crate) limit: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for EventTooLarge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for EventTooLarge {
@@ -58,11 +79,18 @@ impl std::error::Error for EventTooLarge {}
 
 /// The source of an [`Error::Network`] when a WebSocket's queue of messages
 /// sent before it opened is full (`maxQueuedMessages` or `maxQueuedBytes`)
-#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub(crate) struct QueueFull {
     /// The option that was reached
     pub(crate) option: &'static str,
     pub(crate) limit: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for QueueFull {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for QueueFull {
@@ -76,10 +104,17 @@ impl std::error::Error for QueueFull {}
 /// The source of an [`Error::Network`] when a client already has as many
 /// requests pending as it allows (`max_pending_requests`,
 /// `maxPendingRequests` in JavaScript)
-#[derive(Debug)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub struct TooManyPendingRequests {
     /// The client's limit
     pub limit: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl fmt::Debug for TooManyPendingRequests {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 impl fmt::Display for TooManyPendingRequests {
@@ -349,12 +384,20 @@ impl fmt::Display for Error {
                 body,
             } => {
                 write!(f, "HTTP error {}: {}", status, status_text)?;
-                if let Some(body) = body.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+                if let Some(body) = body
+                    .as_deref()
+                    .map(str::trim_ascii)
+                    .filter(|b| !b.is_empty())
+                {
                     // Keep messages readable when the server returns a full HTML page;
                     // the complete body stays available on the error itself.
                     const MAX_CHARS: usize = 200;
-                    match body.char_indices().nth(MAX_CHARS) {
-                        Some((end, _)) => write!(f, " - {}…", &body[..end])?,
+                    match body
+                        .char_indices()
+                        .nth(MAX_CHARS)
+                        .and_then(|(end, _)| body.get(..end))
+                    {
+                        Some(prefix) => write!(f, " - {}…", prefix)?,
                         None => write!(f, " - {}", body)?,
                     }
                 }

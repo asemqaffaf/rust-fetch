@@ -1,7 +1,6 @@
 // The `resume` option (#51): a streamed GET that continues with a Range request when the connection breaks mid-body.
 (() => {
-  const Base = WasmClient;
-  class ResumingClient extends Base {
+  class ResumingClient extends WasmClient {
     get(url, options) {
       const resume = options?.resume;
       if (resume === undefined || resume === false) return super.get(url, options);
@@ -20,7 +19,7 @@
     // Only a plain 200 with byte ranges, a validator to check the file hasn't changed, and no content coding (ranges count encoded bytes)
     if (response.status !== 200 || headers['accept-ranges'] !== 'bytes' || !validator || (headers['content-encoding'] && headers['content-encoding'] !== 'identity')) return response;
     let reader = response.body.getReader(), received = 0, resumes = 0;
-    const body = new ReadableStream({
+    const body = safeStream({
       async pull(controller) {
         for (;;) {
           try {
@@ -32,10 +31,9 @@
             if ((error?.kind !== 'NetworkError' && error?.kind !== 'TimeoutError') || resumes >= maxResumes) return controller.error(error);
             resumes++;
             try {
-              const asked = { ...rest, headers: { ...Object.fromEntries(headerEntries(rest.headers).map(([name, v]) => [String(name).toLowerCase(), v])), range: `bytes=${received}-`, 'if-range': validator } };
-              const next = await client.get(url, asked);
+              const next = await client.get(url, { ...rest, headers: { ...lowerHeaders(rest.headers), range: `bytes=${received}-`, 'if-range': validator } });
               // 200 means the file changed (If-Range failed); anything but the bytes from `received` on is no continuation
-              if (next.status !== 206 || !new RegExp(`^bytes ${received}-`).test(next.headers['content-range'] ?? '')) {
+              if (next.status !== 206 || !String(next.headers['content-range'] ?? '').startsWith(`bytes ${received}-`)) {
                 next.body.cancel().catch(() => {});
                 return controller.error(Object.assign(error, { cause: error.cause ?? new Error('The download could not be resumed: the server did not continue from the same byte, or the file changed') }));
               }
@@ -50,6 +48,5 @@
     });
     return Object.defineProperty({ ...response, body }, 'resumes', { __proto__: null, get: () => resumes, enumerable: true });
   }
-  setFnName(ResumingClient, 'WasmClient');
-  WasmClient = ResumingClient;
+  wrapClient(ResumingClient);
 })();

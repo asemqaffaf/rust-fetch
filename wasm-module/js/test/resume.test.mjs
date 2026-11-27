@@ -95,6 +95,15 @@ describe('resume', () => {
     const response = await c.get('/file', { responseType: 'stream', resume: true, headers: { 'X-Trace': 'abc' } });
     await read(response.body);
     assert.deepEqual(headers, ['abc', 'abc']);
+    // An undefined/null header is left out of the continuation too, never sent as the text "undefined"
+    headers.length = 0;
+    log = [];
+    plan = [10_000];
+    const seen = [];
+    const d = client();
+    d.addRequestInterceptor((request) => { seen.push(Object.keys(request.headers).filter((k) => k === 'authorization' || k === 'x-none')); });
+    await read((await d.get('/file', { responseType: 'stream', resume: true, headers: { authorization: undefined, 'x-none': null } })).body);
+    assert.deepEqual(seen, [[], []]);
     log = [];
     plan = [];
     const second = await c.get('/file', { responseType: 'stream', resume: true });
@@ -104,7 +113,7 @@ describe('resume', () => {
   });
 
   it('validates the option', async () => {
-    for (const [resume, options, parameter] of [['yes', {}, 'resume'], [{ maxResumes: 0 }, {}, 'resume'], [{ other: 1 }, {}, 'resume'], [true, { responseType: 'json' }, 'resume']]) {
+    for (const [resume, options, parameter] of [['yes', {}, 'resume'], [null, {}, 'resume'], [0, {}, 'resume'], ['', {}, 'resume'], [{ maxResumes: 0 }, {}, 'resume'], [{ other: 1 }, {}, 'resume'], [true, { responseType: 'json' }, 'resume']]) {
       const error = await rejection(client().get('/file', { resume, responseType: 'stream', ...options }));
       assert.deepEqual([error.kind, error.parameter], ['InvalidInputError', parameter], JSON.stringify(resume));
     }

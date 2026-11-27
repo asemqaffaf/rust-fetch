@@ -4,13 +4,16 @@
 //! retries, timeouts, and various configuration options.
 
 use crate::budget::{Budget, RetryBudget};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::types::{is_redirect_status, Body, RequestConfig};
+#[cfg(target_arch = "wasm32")]
+use crate::types::{WasmBody, WasmRequestConfig};
 use crate::{
     error::{Error, Result},
     runtime,
     types::{
-        is_json_content_type, is_redirect_status, is_text_content_type, Body, Headers, Method,
-        Multipart, Progress, Redirect, RequestConfig, Response, ResponseBody, ResponseFormat,
-        RetryConfig, DEFAULT_MAX_REDIRECTS,
+        is_json_content_type, is_text_content_type, Headers, Method, Multipart, Progress, Redirect,
+        Response, ResponseBody, ResponseFormat, RetryConfig, DEFAULT_MAX_REDIRECTS,
     },
 };
 use futures_util::{Stream, StreamExt};
@@ -23,6 +26,7 @@ pub use crate::wasm::WasmClient;
 /// HTTP client for making requests
 #[derive(Clone)]
 pub struct Client {
+    #[cfg(not(target_arch = "wasm32"))]
     inner: reqwest::Client,
     pub(crate) config: Arc<ClientConfig>,
     /// Requests started and not yet settled, shared by clones (counted only
@@ -101,6 +105,7 @@ struct RetryPolicy<'a> {
 
 /// A response from one attempt: either fully read, or (for successful
 /// streaming requests) with the body left unread in `stream`
+#[cfg(not(target_arch = "wasm32"))]
 struct RawResponse {
     status: u16,
     status_text: String,
@@ -108,8 +113,6 @@ struct RawResponse {
     headers: Headers,
     body: Vec<u8>,
     permit: Option<crate::limiter::Ticket>,
-    // In JavaScript runtimes, streamed requests are sent with fetch() instead
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     stream: Option<reqwest::Response>,
 }
 
@@ -335,7 +338,18 @@ impl Client {
         let (follow_redirects, limit) = redirect.config(max_redirects);
         RequestBuilder {
             client: self.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
             config: RequestConfig {
+                method,
+                headers: self.config.default_headers.clone(),
+                body: None,
+                timeout: self.config.timeout,
+                follow_redirects,
+                max_redirects: limit,
+                response_format: ResponseFormat::Auto,
+            },
+            #[cfg(target_arch = "wasm32")]
+            config: WasmRequestConfig {
                 method,
                 headers: self.config.default_headers.clone(),
                 body: None,
@@ -347,6 +361,7 @@ impl Client {
             url,
             query: Vec::new(),
             progress: None,
+            #[cfg(not(target_arch = "wasm32"))]
             upload_progress: None,
             retry_config: None,
             #[cfg(target_arch = "wasm32")]
@@ -415,22 +430,10 @@ impl Client {
         Ok(client)
     }
 
-    /// In browsers `fetch()` follows redirects; the bindings send requests
-    /// with other redirect settings through their own transports
-    #[cfg(target_arch = "wasm32")]
-    #[allow(clippy::unnecessary_wraps)]
-    fn http_client(
-        &self,
-        _config: &RequestConfig,
-        _guards: RedirectGuards,
-        _connect: Option<Duration>,
-    ) -> Result<reqwest::Client> {
-        Ok(self.inner.clone())
-    }
-
     /// Execute a request with its retry policy, falling back to the client's.
     ///
     /// With `stream`, a successful response's body is left unread.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn execute(
         &self,
         url: &str,
@@ -506,14 +509,6 @@ impl Client {
         };
         let _pending = self.admit()?;
         let budget = self.config.retry_budget.as_deref();
-        // The budget is checked before waiting to retry and spent once the
-        // retry is sent; either way, a refusal returns the attempt's error
-        let refuse = |error| {
-            if let Some(refused) = refused {
-                refused.store(true, Ordering::Relaxed);
-            }
-            Err(error)
-        };
         let gate = self
             .config
             .limiter
@@ -554,7 +549,7 @@ impl Client {
             }
             if let Some(error) = retry_error.take() {
                 if budget.is_some_and(|budget| !budget.spend(runtime::now_ms())) {
-                    return refuse(error);
+                    return Self::refuse_retry(error, refused);
                 }
             }
             #[cfg(target_arch = "wasm32")]
@@ -607,31 +602,61 @@ impl Client {
             };
 
             drop(permit);
-            if matches!(error, Error::Http { status: 429, .. }) {
-                if let (Some(gate), Some(delay)) = (&gate, retry_after) {
-                    gate.pause(delay);
-                }
-            }
-            match Self::retry_delay(
-                retry.config,
-                attempt,
-                retry.replay_safe,
-                &error,
+            let delay = Self::plan_retry(
+                error,
                 retry_after,
-            ) {
-                Some(delay) => {
-                    if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
-                        return refuse(error);
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    observe_retry(retry.observer, delay, &error, retry_after);
-                    attempt += 1;
-                    runtime::sleep(delay).await;
-                    retry_error = Some(error);
-                }
-                None => return Err(error),
+                attempt,
+                retry,
+                budget,
+                refused,
+                gate.as_deref(),
+            )?;
+            let (delay, error) = delay;
+            attempt += 1;
+            runtime::sleep(delay).await;
+            retry_error = Some(error);
+        }
+    }
+
+    #[inline(never)]
+    fn plan_retry(
+        error: Error,
+        retry_after: Option<Duration>,
+        attempt: u32,
+        retry: RetryPolicy<'_>,
+        budget: Option<&Budget>,
+        refused: Option<&AtomicBool>,
+        gate: Option<&crate::limiter::Gate>,
+    ) -> Result<(Duration, Error)> {
+        if matches!(error, Error::Http { status: 429, .. }) {
+            if let (Some(gate), Some(delay)) = (gate, retry_after) {
+                gate.pause(delay);
             }
         }
+        let Some(delay) = Self::retry_delay(
+            retry.config,
+            attempt,
+            retry.replay_safe,
+            &error,
+            retry_after,
+        ) else {
+            return Err(error);
+        };
+        if budget.is_some_and(|budget| !budget.can_retry(runtime::now_ms())) {
+            return Self::refuse_retry(error, refused);
+        }
+        #[cfg(target_arch = "wasm32")]
+        observe_retry(retry.observer, delay, &error, retry_after);
+        Ok((delay, error))
+    }
+
+    // The budget is checked before waiting to retry and spent once the
+    // retry is sent; either way, a refusal returns the attempt's error.
+    fn refuse_retry<T>(error: Error, refused: Option<&AtomicBool>) -> Result<T> {
+        if let Some(refused) = refused {
+            refused.store(true, Ordering::Relaxed);
+        }
+        Err(error)
     }
 
     /// Retries the retry budget has refused so far (0 without a budget)
@@ -691,6 +716,7 @@ impl Client {
     }
 
     /// Send a single request attempt and read its body (unless streaming a success)
+    #[cfg(not(target_arch = "wasm32"))]
     async fn execute_once(
         &self,
         url: &reqwest::Url,
@@ -786,27 +812,27 @@ impl Client {
 
 /// Whether a response is returned rather than rejected: a 2xx, or with
 /// `follow_redirects: false`, a redirect
+#[cfg(not(target_arch = "wasm32"))]
 fn is_success(status: u16, config: &RequestConfig) -> bool {
     (200..300).contains(&status) || !config.follow_redirects && is_redirect_status(status)
 }
 
 /// A reqwest client following redirects as configured
 /// Errors for refused redirects, the same on every transport
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const INSECURE_REDIRECT: &str =
     "Insecure redirect refused (allowInsecureRedirects is false): https: to";
 #[cfg(not(target_arch = "wasm32"))]
 const CROSS_ORIGIN_REDIRECT: &str = "Redirect to another origin refused: the request has a header listed in sensitiveHeaders, which this transport can't drop";
 
 /// The settings a reqwest client's redirect policy is built from
+#[cfg(not(target_arch = "wasm32"))]
 type RedirectKey = (bool, u32, RedirectGuards, Option<Duration>);
 
+#[cfg(not(target_arch = "wasm32"))]
 fn http_client((follow, max_redirects, guards, connect): RedirectKey) -> Result<reqwest::Client> {
-    let builder = reqwest::Client::builder();
-    #[cfg(not(target_arch = "wasm32"))]
-    let builder = builder.redirect(redirect_policy(follow, max_redirects, guards));
-    #[cfg(target_arch = "wasm32")]
-    let _ = (follow, max_redirects, guards, connect);
-    #[cfg(not(target_arch = "wasm32"))]
+    let builder =
+        reqwest::Client::builder().redirect(redirect_policy(follow, max_redirects, guards));
     let builder = match connect {
         Some(timeout) => builder.connect_timeout(timeout),
         None => builder,
@@ -930,6 +956,7 @@ fn upload_body(bytes: Vec<u8>, progress: ProgressFn) -> reqwest::Body {
 }
 
 /// Read a whole body chunk by chunk, reporting progress after each chunk
+#[cfg(not(target_arch = "wasm32"))]
 async fn read_body(
     response: reqwest::Response,
     progress: Option<&ProgressFn>,
@@ -1000,7 +1027,11 @@ pub(crate) fn page_url() -> Option<crate::url::Url> {
 
 /// Parse a `Retry-After` header given in seconds
 pub(crate) fn parse_retry_after(value: &str) -> Option<Duration> {
-    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+    value
+        .trim_ascii()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
 }
 
 /// Decode a response body according to the requested format
@@ -1067,6 +1098,7 @@ where
 
 /// Redirect rules beyond following and counting, for transports that can
 /// only refuse a redirect (reqwest's policy can't change the headers)
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RedirectGuards {
     /// Follow `https:` → `http:` redirects (`allowInsecureRedirects`)
@@ -1076,9 +1108,9 @@ pub(crate) struct RedirectGuards {
     pub(crate) same_origin_only: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RedirectGuards {
     /// Why a redirect from `from` to `to` is refused, if it is
-    #[cfg(not(target_arch = "wasm32"))]
     fn refuse(self, from: &reqwest::Url, to: &reqwest::Url) -> Option<String> {
         if !self.allow_insecure && from.scheme() == "https" && to.scheme() == "http" {
             return Some(format!(
@@ -1093,6 +1125,7 @@ impl RedirectGuards {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for RedirectGuards {
     fn default() -> Self {
         Self {
@@ -1423,10 +1456,13 @@ impl ClientBuilder {
             None => None,
         };
 
+        #[cfg(not(target_arch = "wasm32"))]
         let (follow, max) = self.redirect.config(self.max_redirects);
+        #[cfg(not(target_arch = "wasm32"))]
         let inner = http_client((follow, max, RedirectGuards::default(), self.phases.connect))?;
 
         Ok(Client {
+            #[cfg(not(target_arch = "wasm32"))]
             inner,
             config: Arc::new(ClientConfig {
                 breaker,
@@ -1476,11 +1512,15 @@ impl Default for ClientBuilder {
 /// Request builder for configuring individual requests
 pub struct RequestBuilder {
     client: Client,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) config: RequestConfig,
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) config: WasmRequestConfig,
     url: String,
     query: Vec<(String, String)>,
     progress: Option<ProgressFn>,
     /// Native targets: reports the request body as the connection takes it
+    #[cfg(not(target_arch = "wasm32"))]
     upload_progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
     retry_config: Option<RetryConfig>,
@@ -1641,7 +1681,7 @@ impl RequestBuilder {
             self.config
                 .headers
                 .get_first(name)
-                .is_some_and(|key| !key.trim().is_empty())
+                .is_some_and(|key| !key.trim_ascii().is_empty())
         });
         let config = self
             .retry_config
@@ -1710,13 +1750,13 @@ impl RequestBuilder {
         #[cfg(target_arch = "wasm32")]
         {
             // Encode directly to bytes so wasm32 `send_streaming()` handles JSON
-            // bodies via `Body::Binary` without forcing `Body::to_bytes()` (and
-            // `serde_json::to_value` + float formatting) into `WasmClient`.
+            // bodies via `WasmBody::Binary` without pulling `serde_json::Value`
+            // (`BTreeMap`) or `Body::to_bytes()` into `WasmClient`.
             let bytes = serde_json::to_vec(json)?;
             if !self.config.headers.contains("content-type") {
                 self.config.headers.set("content-type", "application/json");
             }
-            self.config.body = Some(Body::Binary(bytes));
+            self.config.body = Some(WasmBody::Binary(bytes));
             Ok(self)
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1729,13 +1769,27 @@ impl RequestBuilder {
 
     /// Set request body as text
     pub fn text(mut self, text: impl Into<String>) -> Self {
-        self.config.body = Some(Body::Text(text.into()));
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.config.body = Some(WasmBody::Text(text.into()));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.config.body = Some(Body::Text(text.into()));
+        }
         self
     }
 
     /// Set request body as bytes
     pub fn bytes(mut self, bytes: Vec<u8>) -> Self {
-        self.config.body = Some(Body::Binary(bytes));
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.config.body = Some(WasmBody::Binary(bytes));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.config.body = Some(Body::Binary(bytes));
+        }
         self
     }
 
@@ -1750,7 +1804,7 @@ impl RequestBuilder {
                     .headers
                     .set("content-type", "application/x-www-form-urlencoded");
             }
-            self.config.body = Some(Body::Text(encoded));
+            self.config.body = Some(WasmBody::Text(encoded));
             self
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1763,7 +1817,14 @@ impl RequestBuilder {
     /// Set request body as `multipart/form-data` (replaces any Content-Type header)
     pub fn multipart(mut self, form: &Multipart) -> Self {
         self.config.headers.set("content-type", form.content_type());
-        self.config.body = Some(Body::Binary(form.to_bytes()));
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.config.body = Some(WasmBody::Binary(form.to_bytes()));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.config.body = Some(Body::Binary(form.to_bytes()));
+        }
         self
     }
 
@@ -1855,12 +1916,6 @@ impl RequestBuilder {
         }
     }
 
-    /// In WebAssembly, the transports apply the rules themselves
-    #[cfg(target_arch = "wasm32")]
-    fn redirect_guards(&self) -> RedirectGuards {
-        RedirectGuards::default()
-    }
-
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn transport_options(&self) -> crate::wasm::transport::TransportOptions<'_> {
         crate::wasm::transport::TransportOptions {
@@ -1893,6 +1948,7 @@ impl RequestBuilder {
     }
 
     /// Execute the request and read the whole response
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn send(self) -> Result<Response> {
         self.check_absolute_url()?;
         let raw = crate::timeouts::with_deadline(
@@ -1919,6 +1975,83 @@ impl RequestBuilder {
             headers: raw.headers,
             body,
             url: raw.url,
+        })
+    }
+
+    /// Execute the request and read the whole response incrementally via `fetch()`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn send(self) -> Result<Response> {
+        self.check_absolute_url()?;
+        let url = resolve_url(
+            self.client.config.base_url.as_deref(),
+            page_url(),
+            &self.url,
+            &self.query,
+        )?;
+        let request = crate::wasm::transport::StreamingRequest::new(
+            url.as_str(),
+            &self.config,
+            &self.transport_options(),
+        )?;
+        let deadline = self.effective_deadline();
+        let idle = self.phase_options().idle;
+        let limit = self.max_response_bytes;
+        let progress = self.progress.as_ref();
+        let ((status, headers, final_url, bytes), _permit) = crate::timeouts::with_deadline(
+            deadline,
+            self.client.execute_retrying(
+                url.as_str(),
+                self.config.timeout,
+                self.retry_policy(),
+                self.retry_refused.as_deref().map(|state| &state.refused),
+                || async {
+                    match request.send().await? {
+                        Attempt::HttpError(error, retry_after) => {
+                            Ok(Attempt::HttpError(error, retry_after))
+                        }
+                        Attempt::Success(response) => {
+                            let total = response.body.content_length();
+                            if let (Some(limit), Some(total)) = (limit, total) {
+                                if total > limit {
+                                    return Err(Error::too_large(limit));
+                                }
+                            }
+                            let mut body = Vec::new();
+                            let mut chunks =
+                                std::pin::pin!(crate::timeouts::idle(response.body.chunks(), idle));
+                            while let Some(chunk) = chunks.next().await {
+                                let chunk = chunk?;
+                                body.extend_from_slice(&chunk);
+                                if let Some(limit) = limit.filter(|l| body.len() as u64 > *l) {
+                                    return Err(Error::too_large(limit));
+                                }
+                                if let Some(progress) = progress {
+                                    progress(Progress {
+                                        loaded: body.len() as u64,
+                                        total,
+                                    });
+                                }
+                            }
+                            Ok(Attempt::Success((
+                                response.status,
+                                response.headers,
+                                response.url,
+                                body,
+                            )))
+                        }
+                    }
+                },
+            ),
+        )
+        .await?;
+        let content_type = headers.get_first("content-type").unwrap_or("");
+        let body = decode_body(bytes, content_type, self.config.response_format)?;
+        Ok(Response {
+            status,
+            status_text: crate::types::status_text(status).to_string(),
+            headers,
+            body,
+            url: final_url,
         })
     }
 
@@ -2021,6 +2154,7 @@ impl RequestBuilder {
 }
 
 /// Building the underlying client only fails if TLS can't be initialized
+#[cfg(not(target_arch = "wasm32"))]
 fn client_init_error(error: reqwest::Error) -> Error {
     Error::network("Failed to create HTTP client", error)
 }
@@ -2289,6 +2423,7 @@ mod tests {
         assert_eq!(client.config.retry_config.as_ref().unwrap().max_retries, 3);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_client_init_error() {
         let source = reqwest::Client::new().get("not a url").build().unwrap_err();
@@ -2393,6 +2528,7 @@ mod tests {
         assert_eq!(request.no_timeout().config.timeout, None);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_request_builder_bodies() {
         let client = Client::new().unwrap();

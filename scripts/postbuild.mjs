@@ -26,6 +26,49 @@ if (types.includes('Symbol.dispose') && !types.startsWith(disposable)) {
   types = disposable + types;
 }
 
+// Compatibility declarations for the unconstructible classes previously
+// emitted by wasm-streams (kept so the public TypeScript snapshot stays exact).
+if (!types.includes('export type ReadableStreamType')) {
+  types = types.replace(
+    '/* eslint-disable */\n\n/** Headers as a plain object,',
+    `/* eslint-disable */
+/**
+ * The \`ReadableStreamType\` enum.
+ *
+ * *This API requires the following crate features to be activated: \`ReadableStreamType\`*
+ */
+
+export type ReadableStreamType = "bytes";
+
+/** Headers as a plain object,`,
+  );
+}
+if (!types.includes('export class IntoUnderlyingByteSource')) {
+  types = types.replace(
+    'export class IntoUnderlyingSource {\n',
+    `export class IntoUnderlyingByteSource {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    cancel(): void;
+    pull(controller: ReadableByteStreamController): Promise<any>;
+    start(controller: ReadableByteStreamController): void;
+    readonly autoAllocateChunkSize: number;
+    readonly type: ReadableStreamType;
+}
+
+export class IntoUnderlyingSink {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    abort(reason: any): Promise<any>;
+    close(): Promise<any>;
+    write(chunk: any): Promise<any>;
+}
+
+export class IntoUnderlyingSource {\n`,
+  );
+}
 // Client verb shortcuts and standalone functions live in js/methods.js; restore
 // their exact TypeScript declarations on WasmClient and at module top level.
 types = types.replace(
@@ -194,26 +237,23 @@ if (!glue.includes('export class EventStream')) {
 if (!glue.includes(iterable)) {
   writeFileSync(glueUrl, `${glue}\n// Added by scripts/postbuild.mjs\n${iterable}\n`);
 }
-// wasm-streams builds its ReadableStream from a source object and a strategy that
-// inherit from Object.prototype, and the constructor reads `type`, `start`,
-// `autoAllocateChunkSize` and `size` from them by inheritance: with one of those
-// names polluted, every call returning a stream threw. The source gets them as own
-// properties and the strategy becomes a prototype-free copy.
-const construct = 'new ReadableStream(IntoUnderlyingSource.__wrap(arg0), arg1)';
+// ReadableStream builds from our IntoUnderlyingSource, which inherits from
+// Object.prototype; the constructor reads `type`, `start`,
+// `autoAllocateChunkSize` and `size` by inheritance: with one of those names
+// polluted, every call returning a stream threw. Own-define them and pass a
+// CountQueuingStrategy with highWaterMark 0.
+const construct = 'new ReadableStream(IntoUnderlyingSource.__wrap(arg0))';
 const glueNow = readFileSync(glueUrl, 'utf8');
 if (glueNow.split(construct).length !== 2) {
-  throw new Error('postbuild: expected exactly one ReadableStream construction from wasm-streams in rust_fetch.js');
+  throw new Error('postbuild: expected exactly one ReadableStream construction in rust_fetch.js');
 }
 writeFileSync(
   glueUrl,
-  `${glueNow.replace(construct, 'new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), streamStrategy(arg1))')}
+  `${glueNow.replace(construct, 'new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), new CountQueuingStrategy({ highWaterMark: 0 }))')}
 // Added by scripts/postbuild.mjs
 function streamSource(source) {
   for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { __proto__: null, value: undefined });
   return source;
-}
-function streamStrategy(strategy) {
-  return new CountQueuingStrategy({ highWaterMark: strategy.highWaterMark });
 }
 `,
 );
@@ -242,7 +282,7 @@ const exportedFunctionNames = [
   'fetch_json', 'fetch_text', 'fetch_with_options',
   'isRustFetchError', 'isHttpError', 'isTimeoutError', 'isNetworkError', 'isParseError', 'isInvalidInputError', 'isCancelledError', 'isCircuitOpenError', 'isJsInteropError', 'isValidationError',
 ];
-const restoreFunctionNames = `setFnName(__wbg_init, '__wbg_init');\n${exportedFunctionNames.map((name) => `setFnName(${name}, '${name}');`).join('')}`;
+const restoreFunctionNames = `for (const [k, v] of Object.entries({ __wbg_init, ${exportedFunctionNames.join(', ')} })) setFnName(v, k);`;
 const combinedGlue = `${readFileSync(glueUrl, 'utf8')}
 ${clientHelpers.trimEnd()}
 ${methods.trimEnd()}
@@ -262,6 +302,7 @@ ${restoreFunctionNames}
 `;
 const minifiedGlue = transformSync(combinedGlue, {
   minify: true,
+  treeShaking: true,
   loader: 'js',
   format: 'esm',
   target: 'es2022',

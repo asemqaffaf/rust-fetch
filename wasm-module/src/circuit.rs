@@ -7,7 +7,6 @@ use crate::{
     runtime,
 };
 use std::{
-    collections::HashMap,
     fmt,
     sync::{Arc, Mutex},
     time::Duration,
@@ -85,10 +84,18 @@ pub struct CircuitOpenError {
 
 impl fmt::Debug for CircuitOpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CircuitOpenError")
-            .field("origin", &self.origin)
-            .field("retry_after_ms", &self.retry_after.as_millis())
-            .finish()
+        #[cfg(target_arch = "wasm32")]
+        {
+            fmt::Display::fmt(self, f)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let retry_after_ms = u64::try_from(self.retry_after.as_millis()).unwrap_or(u64::MAX);
+            f.debug_struct("CircuitOpenError")
+                .field("origin", &self.origin)
+                .field("retry_after_ms", &retry_after_ms)
+                .finish()
+        }
     }
 }
 
@@ -120,8 +127,13 @@ impl Default for State {
 
 pub(crate) struct Breaker {
     config: CircuitBreaker,
-    states: Mutex<HashMap<String, State>>,
+    /// Sorted by origin for O(log n) lookup without pulling `hashbrown` into Wasm.
+    states: Mutex<Vec<(String, State)>>,
     hook: Option<Arc<dyn CircuitCallback>>,
+}
+
+fn find_origin(states: &[(String, State)], origin: &str) -> std::result::Result<usize, usize> {
+    states.binary_search_by(|(key, _)| key.as_str().cmp(origin))
 }
 
 impl Breaker {
@@ -149,7 +161,8 @@ impl Breaker {
             .states
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(state) = states.get(&origin) {
+        if let Ok(index) = find_origin(&states, &origin) {
+            let state = &states[index].1;
             if state.phase == CircuitState::HalfOpen
                 || state.phase == CircuitState::Open && now < state.until
             {
@@ -182,12 +195,22 @@ impl Breaker {
             .states
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !states.contains_key(&origin) && states.len().is_multiple_of(128) {
-            states.retain(|_, state| {
-                state.phase != CircuitState::Closed || state.failures != 0 || state.active != 0
-            });
-        }
-        let state = states.entry(origin.clone()).or_default();
+        let index = match find_origin(&states, &origin) {
+            Ok(index) => index,
+            Err(mut insert_at) => {
+                if states.len().is_multiple_of(128) {
+                    states.retain(|(_, state)| {
+                        state.phase != CircuitState::Closed
+                            || state.failures != 0
+                            || state.active != 0
+                    });
+                    insert_at = find_origin(&states, &origin).unwrap_or_else(|i| i);
+                }
+                states.insert(insert_at, (origin.clone(), State::default()));
+                insert_at
+            }
+        };
+        let state = &mut states[index].1;
         let change = if state.phase == CircuitState::Open && now >= state.until {
             state.phase = CircuitState::HalfOpen;
             state.epoch = state.epoch.wrapping_add(1);
@@ -242,7 +265,10 @@ impl Probe {
             .states
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let state = states.get_mut(&self.origin).expect("active origin exists");
+        let index = find_origin(&states, &self.origin)
+            .ok()
+            .expect("active origin exists");
+        let state = &mut states[index].1;
         state.active -= 1;
         self.settled = true;
         if state.epoch != self.epoch {
@@ -287,7 +313,10 @@ impl Drop for Probe {
             .states
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let state = states.get_mut(&self.origin).expect("active origin exists");
+        let index = find_origin(&states, &self.origin)
+            .ok()
+            .expect("active origin exists");
+        let state = &mut states[index].1;
         state.active -= 1;
         if !self.half_open || state.epoch != self.epoch {
             return;

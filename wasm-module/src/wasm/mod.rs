@@ -11,6 +11,7 @@ mod events;
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod idempotency;
+pub(crate) mod stream;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod transport;
 pub(crate) mod upload;
@@ -1402,13 +1403,7 @@ async fn send_prepared(
         Some(value) => parse_body_type(&value)?,
         None => BodyType::Auto,
     };
-    let signal = match options.get("signal") {
-        Some(signal) if js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) => {
-            Some(signal.unchecked_into::<web_sys::AbortSignal>())
-        }
-        Some(_) => return Err(invalid("signal", "must be an AbortSignal")),
-        None => None,
-    };
+    let signal = parse_signal(options.get("signal"))?;
     let progress = options.callback("onDownloadProgress")?;
     if let Some(callback) = &progress {
         builder = with_progress(builder, callback.clone());
@@ -1666,6 +1661,7 @@ fn rare_client_options(
     Ok(builder)
 }
 
+#[inline(never)]
 fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Function>> {
     prop(options, name)
         .map(|callback| {
@@ -1674,6 +1670,26 @@ fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Funct
                 .map_err(|_| invalid(name, "must be a function"))
         })
         .transpose()
+}
+
+#[inline(never)]
+pub(crate) fn parse_callbacks_5(
+    options: &JsValue,
+    names: [&str; 5],
+) -> Result<[Option<js_sys::Function>; 5]> {
+    let mut out = [const { None }; 5];
+    for (slot, name) in out.iter_mut().zip(names) {
+        *slot = callback_option(options, name)?;
+    }
+    Ok(out)
+}
+
+#[inline(never)]
+pub(crate) fn parse_opt_bool(options: &JsValue, name: &str, default: bool) -> Result<bool> {
+    match prop(options, name) {
+        Some(value) => parse_bool(&value, name),
+        None => Ok(default),
+    }
 }
 
 /// A request's method, URL, headers, query parameters and timeout; the body
@@ -1813,7 +1829,7 @@ fn parse_fetch_options(
                 .as_string()
                 .is_some_and(|v| allowed.contains(&v.as_str()))
             {
-                let choices = allowed.join("', '");
+                let choices = join_strs(allowed, "', '");
                 return Err(invalid(name, &format!("must be one of '{choices}'")));
             }
             add(name, &value)?;
@@ -2058,7 +2074,7 @@ fn into_js_stream(
         Box<dyn futures_util::Stream<Item = std::result::Result<JsValue, JsValue>>>,
     >,
 ) -> web_sys::ReadableStream {
-    wasm_streams::ReadableStream::from_stream(stream).into_raw()
+    stream::from_stream(stream)
 }
 
 /// Convert a streaming response; its body becomes a `ReadableStream<Uint8Array>`
@@ -2080,13 +2096,11 @@ fn streaming_response_to_js(
     let response = match response.into_raw() {
         Ok((raw, controller)) => {
             let chunks = raw.map(|raw| {
-                wasm_streams::ReadableStream::from_raw(raw)
-                    .into_stream()
-                    .map(|chunk| {
-                        chunk
-                            .map(own_chunk)
-                            .map_err(|error| transport::body_error(&error))
-                    })
+                stream::read_stream(raw).map(|chunk| {
+                    chunk
+                        .map(own_chunk)
+                        .map_err(|error| transport::body_error(&error))
+                })
             });
             let chunks = transport::body_with_abort(
                 futures_util::stream::iter(chunks).flatten(),
@@ -2232,6 +2246,7 @@ fn parse_json(text: &str) -> Result<JsValue> {
     })
 }
 
+#[inline(never)]
 pub(crate) fn parse_method(method: &str) -> Result<Method> {
     match Method::from_str(method) {
         // The Fetch standard forbids these, so browsers and Node.js reject them
@@ -2247,10 +2262,12 @@ pub(crate) fn parse_method(method: &str) -> Result<Method> {
     }
 }
 
+#[inline(never)]
 pub(crate) fn parse_headers(value: &JsValue) -> Result<Headers> {
     Headers::from_js(value).map_err(|e| invalid("headers", &js_error_message(&e)))
 }
 
+#[inline(never)]
 fn parse_params(value: &JsValue) -> Result<Vec<(String, String)>> {
     let entries: Vec<JsValue> = if is_instance_of_global(value, "URLSearchParams") {
         js_sys::try_iter(value)?
@@ -2290,6 +2307,7 @@ fn parse_params(value: &JsValue) -> Result<Vec<(String, String)>> {
     Ok(params)
 }
 
+#[inline(never)]
 fn parse_timeout(value: &JsValue) -> Result<Option<Duration>> {
     match value.as_f64() {
         Some(ms) if ms == 0.0 => Ok(None),
@@ -2302,6 +2320,7 @@ fn parse_timeout(value: &JsValue) -> Result<Option<Duration>> {
 }
 
 /// `true` for the defaults, `false` for none, or `RetryBudgetOptions`
+#[inline(never)]
 fn parse_retry_budget(value: &JsValue) -> Result<Option<crate::RetryBudget>> {
     if let Some(on) = value.as_bool() {
         return Ok(on.then(crate::RetryBudget::new));
@@ -2334,6 +2353,7 @@ fn parse_retry_budget(value: &JsValue) -> Result<Option<crate::RetryBudget>> {
     Ok(Some(budget))
 }
 
+#[inline(never)]
 fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
     let mut config = RetryConfig::default();
 
@@ -2352,18 +2372,13 @@ fn parse_retries(value: &JsValue) -> Result<RetryConfig> {
         config.max_retries =
             non_negative_u32(v.as_f64().unwrap_or(f64::NAN), "retries.maxRetries")?;
     }
-    if let Some(v) = prop(value, "initialDelayMs") {
-        config.initial_delay = parse_delay(&v, "retries.initialDelayMs")?;
-    }
-    if let Some(v) = prop(value, "maxDelayMs") {
-        config.max_delay = parse_delay(&v, "retries.maxDelayMs")?;
-    }
-    if let Some(v) = prop(value, "multiplier") {
-        config.multiplier = v
-            .as_f64()
-            .filter(|m| m.is_finite() && *m >= 1.0)
-            .ok_or_else(|| invalid("retries.multiplier", "must be a number >= 1"))?;
-    }
+    parse_backoff_fields(
+        &mut config,
+        value,
+        "retries.initialDelayMs",
+        "retries.maxDelayMs",
+        "retries.multiplier",
+    )?;
     if let Some(v) = prop(value, "retryOn") {
         if !js_sys::Array::is_array(&v) {
             return Err(invalid(
@@ -2413,6 +2428,7 @@ fn parse_proxy(value: &JsValue) -> Result<String> {
     }
 }
 
+#[inline(never)]
 fn parse_max_response_bytes(value: &JsValue) -> Result<u64> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     value
@@ -2427,6 +2443,7 @@ fn parse_max_response_bytes(value: &JsValue) -> Result<u64> {
         })
 }
 
+#[inline(never)]
 fn parse_redirect(value: &JsValue) -> Result<Redirect> {
     match value.as_string().as_deref() {
         Some("follow") => Ok(Redirect::Follow),
@@ -2436,6 +2453,7 @@ fn parse_redirect(value: &JsValue) -> Result<Redirect> {
     }
 }
 
+#[inline(never)]
 fn parse_max_redirects(value: &JsValue) -> Result<u32> {
     non_negative_u32(value.as_f64().unwrap_or(f64::NAN), "maxRedirects")
 }
@@ -2445,6 +2463,7 @@ fn parse_max_pending_requests(value: &JsValue) -> Result<usize> {
 }
 
 /// `sensitiveHeaders`: an array of valid header names
+#[inline(never)]
 fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
     let invalid_names = || invalid("sensitiveHeaders", "must be an array of header names");
     if !js_sys::Array::is_array(value) {
@@ -2462,6 +2481,7 @@ fn parse_header_names(value: &JsValue) -> Result<Vec<String>> {
 
 /// A stream limit (`maxLineBytes`, `maxEventBytes`) for a request or an event
 /// stream: the client's unless set; `null` for none
+#[inline(never)]
 pub(crate) fn parse_stream_limit(
     value: &JsValue,
     client: Option<usize>,
@@ -2474,6 +2494,7 @@ pub(crate) fn parse_stream_limit(
     }
 }
 
+#[inline(never)]
 pub(crate) fn positive_u32(value: &JsValue, parameter: &str) -> Result<usize> {
     match non_negative_u32(value.as_f64().unwrap_or(f64::NAN), parameter) {
         Ok(0) | Err(_) => Err(invalid(parameter, "must be a positive integer")),
@@ -2481,6 +2502,7 @@ pub(crate) fn positive_u32(value: &JsValue, parameter: &str) -> Result<usize> {
     }
 }
 
+#[inline(never)]
 fn parse_body_type(value: &JsValue) -> Result<BodyType> {
     match value.as_string().as_deref() {
         Some("auto") => Ok(BodyType::Auto),
@@ -2496,6 +2518,7 @@ fn parse_body_type(value: &JsValue) -> Result<BodyType> {
     }
 }
 
+#[inline(never)]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn non_negative_u32(value: f64, parameter: &str) -> Result<u32> {
     if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= f64::from(u32::MAX) {
@@ -2505,6 +2528,7 @@ fn non_negative_u32(value: f64, parameter: &str) -> Result<u32> {
     }
 }
 
+#[inline(never)]
 fn parse_delay(value: &JsValue, parameter: &str) -> Result<Duration> {
     value
         .as_f64()
@@ -2513,12 +2537,14 @@ fn parse_delay(value: &JsValue, parameter: &str) -> Result<Duration> {
         .ok_or_else(|| invalid(parameter, "must be a non-negative number of milliseconds"))
 }
 
+#[inline(never)]
 fn parse_bool(value: &JsValue, parameter: &str) -> Result<bool> {
     value
         .as_bool()
         .ok_or_else(|| invalid(parameter, "must be a boolean"))
 }
 
+#[inline(never)]
 fn scalar_to_string(value: &JsValue) -> Option<String> {
     value
         .as_string()
@@ -2529,6 +2555,7 @@ fn scalar_to_string(value: &JsValue) -> Option<String> {
 /// Format a number the way JavaScript's `String(n)` does. If
 /// `Number.prototype.toString` throws, fall back to integer formatting for
 /// safe whole numbers instead of returning an empty string.
+#[inline(never)]
 fn js_number_to_string(n: f64) -> Option<String> {
     if let Ok(s) = js_sys::Number::from(n).to_string_with_radix(10) {
         return Some(String::from(s));
@@ -2547,12 +2574,78 @@ fn js_number_to_string(n: f64) -> Option<String> {
 /// none). Options on such objects never come from the prototype chain, so
 /// pollution of `Object.prototype` can't set them; objects with their own
 /// prototype may inherit options deliberately.
+#[inline(never)]
 fn is_plain_object(value: &JsValue) -> bool {
     let prototype: JsValue = js_sys::Object::get_prototype_of(value).into();
     prototype.is_null() || OBJECT_PROTOTYPE.with(|object| *object == prototype)
 }
 
+#[inline(never)]
+pub(crate) fn get_prop(target: &JsValue, name: &str) -> JsValue {
+    js_sys::Reflect::get(target, &name.into()).unwrap_or(JsValue::UNDEFINED)
+}
+
+#[inline(never)]
+pub(crate) fn get_str(target: &JsValue, name: &str) -> Option<String> {
+    get_prop(target, name).as_string()
+}
+
+#[inline(never)]
+pub(crate) fn get_f64(target: &JsValue, name: &str) -> Option<f64> {
+    get_prop(target, name).as_f64()
+}
+
+#[inline(never)]
+pub(crate) fn get_bool(target: &JsValue, name: &str) -> Option<bool> {
+    get_prop(target, name).as_bool()
+}
+
+#[inline(never)]
+pub(crate) fn parse_signal(value: Option<JsValue>) -> Result<Option<web_sys::AbortSignal>> {
+    match value {
+        Some(signal) if js_sys::Reflect::has(&signal, &"aborted".into()).unwrap_or(false) => {
+            Ok(Some(signal.unchecked_into::<web_sys::AbortSignal>()))
+        }
+        Some(_) => Err(invalid("signal", "must be an AbortSignal")),
+        None => Ok(None),
+    }
+}
+
+#[inline(never)]
+pub(crate) fn parse_message_type(options: &JsValue) -> Result<bool> {
+    match prop(options, "messageType").map(|value| value.as_string()) {
+        None => Ok(false),
+        Some(Some(name)) if name == "auto" => Ok(false),
+        Some(Some(name)) if name == "json" => Ok(true),
+        Some(_) => Err(invalid("messageType", "must be 'auto' or 'json'")),
+    }
+}
+
+#[inline(never)]
+pub(crate) fn parse_backoff_fields(
+    config: &mut RetryConfig,
+    value: &JsValue,
+    initial_param: &str,
+    max_param: &str,
+    mult_param: &str,
+) -> Result<()> {
+    if let Some(v) = prop(value, "initialDelayMs") {
+        config.initial_delay = parse_delay(&v, initial_param)?;
+    }
+    if let Some(v) = prop(value, "maxDelayMs") {
+        config.max_delay = parse_delay(&v, max_param)?;
+    }
+    if let Some(v) = prop(value, "multiplier") {
+        config.multiplier = v
+            .as_f64()
+            .filter(|m| m.is_finite() && *m >= 1.0)
+            .ok_or_else(|| invalid(mult_param, "must be a number >= 1"))?;
+    }
+    Ok(())
+}
+
 /// Read an object property, treating `undefined` and `null` as absent
+#[inline(never)]
 fn read(target: &JsValue, name: &str) -> Option<JsValue> {
     js_sys::Reflect::get(target, &name.into())
         .ok()
@@ -2561,6 +2654,7 @@ fn read(target: &JsValue, name: &str) -> Option<JsValue> {
 
 /// Read an option from an options object, treating `undefined` and `null` as
 /// absent. On a plain object only its own properties count.
+#[inline(never)]
 fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
     if !target.is_object() {
         return None;
@@ -2574,11 +2668,13 @@ fn prop(target: &JsValue, name: &str) -> Option<JsValue> {
 }
 
 /// Like `prop`, but `null` is a value (`undefined` when unset)
+#[inline(never)]
 pub(crate) fn raw_prop(target: &JsValue, name: &str) -> JsValue {
     try_raw_prop(target, name).unwrap_or(JsValue::UNDEFINED)
 }
 
 /// `raw_prop`, passing on an exception thrown by a getter
+#[inline(never)]
 fn try_raw_prop(target: &JsValue, name: &str) -> std::result::Result<JsValue, JsValue> {
     if !target.is_object()
         || (is_plain_object(target)
@@ -2589,40 +2685,85 @@ fn try_raw_prop(target: &JsValue, name: &str) -> std::result::Result<JsValue, Js
     js_sys::Reflect::get(target, &name.into())
 }
 
+#[inline(never)]
+fn join_iter<'a>(items: &mut dyn Iterator<Item = &'a str>, sep: &str) -> String {
+    let mut out = String::new();
+    for item in items {
+        if !out.is_empty() {
+            out.push_str(sep);
+        }
+        out.push_str(item);
+    }
+    out
+}
+
+#[cfg(target_arch = "wasm32")]
+fn join_strs(items: &[&str], sep: &str) -> String {
+    join_iter(&mut items.iter().copied(), sep)
+}
+
+pub(crate) fn join_strings(items: &[String], sep: &str) -> String {
+    join_iter(&mut items.iter().map(String::as_str), sep)
+}
+
 /// Own data properties, including `__proto__`, without invoking inherited
 /// setters or losing headers to non-writable prototype properties.
+#[inline(never)]
 fn headers_to_js(headers: &Headers) -> Result<js_sys::Object> {
-    let entries: js_sys::Array = headers
-        .iter()
-        .map(|(name, values)| js_sys::Array::of2(&name.as_str().into(), &values.join(", ").into()))
-        .collect();
+    let entries = js_sys::Array::new();
+    for (name, values) in headers.iter() {
+        let pair = js_sys::Array::new();
+        pair.push(&name.as_str().into());
+        pair.push(&join_strings(values, ", ").into());
+        entries.push(&pair);
+    }
     Ok(js_sys::Object::from_entries(&entries)?)
 }
 
+#[inline(never)]
 fn set(target: &js_sys::Object, name: &str, value: &JsValue) -> Result<()> {
     js_sys::Reflect::set(target, &name.into(), value)?;
     Ok(())
 }
 
+#[inline(never)]
 pub(crate) fn set_str(target: &js_sys::Object, name: &str, value: &str) -> Result<()> {
     set(target, name, &JsValue::from_str(value))
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[inline(never)]
 pub(crate) fn set_bool(target: &js_sys::Object, name: &str, value: bool) -> Result<()> {
     set(target, name, &JsValue::from_bool(value))
 }
 
+#[inline(never)]
 pub(crate) fn set_f64(target: &js_sys::Object, name: &str, value: f64) -> Result<()> {
     set(target, name, &JsValue::from_f64(value))
 }
 
+#[inline(never)]
 fn put_str(target: &JsValue, name: &str, value: &str) {
     let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_str(value));
 }
 
+#[inline(never)]
 fn put_f64(target: &JsValue, name: &str, value: f64) {
     let _ = js_sys::Reflect::set(target, &name.into(), &JsValue::from_f64(value));
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = String)]
+    fn js_to_string(value: &JsValue) -> std::result::Result<String, JsValue>;
+}
+
+/// Format an arbitrary `JsValue` as `JsValue(<string>)` without pulling
+/// wasm-bindgen's `debugString` runtime helper into the JS glue and Wasm.
+#[inline(never)]
+fn js_value_label(value: &JsValue) -> String {
+    let text = js_to_string(value).unwrap_or_else(|_| "[object Object]".to_string());
+    format!("JsValue({text})")
 }
 
 /// `value instanceof globalThis[name]`, false if that global doesn't exist
@@ -2649,7 +2790,7 @@ fn js_error_message(error: &JsValue) -> String {
         .ok()
         .and_then(|m| m.as_string())
         .or_else(|| error.as_string())
-        .unwrap_or_else(|| format!("{error:?}"))
+        .unwrap_or_else(|| js_value_label(error))
 }
 
 fn into_js<T: Into<JsValue>>(value: Option<T>) -> JsValue {
@@ -2733,6 +2874,7 @@ impl Headers {
 /// left alone: the abort is the only way a request is cancelled, and
 /// `controller.abort()` without an argument gives a `DOMException` named
 /// `AbortError`.
+#[inline(never)]
 pub(crate) fn with_abort_reason(error: JsValue, signal: Option<&JsValue>) -> JsValue {
     let cancelled = js_sys::Reflect::get(&error, &"kind".into())
         .is_ok_and(|kind| kind.as_string().as_deref() == Some("CancelledError"));
@@ -2835,9 +2977,10 @@ impl From<serde_wasm_bindgen::Error> for Error {
 
 /// Convert from JsValue for error propagation
 impl From<JsValue> for Error {
+    #[inline(never)]
     fn from(value: JsValue) -> Self {
         Error::JsInterop {
-            message: format!("JavaScript error: {:?}", value),
+            message: format!("JavaScript error: {}", js_value_label(&value)),
         }
     }
 }

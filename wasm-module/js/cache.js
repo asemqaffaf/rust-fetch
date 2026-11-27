@@ -1,10 +1,8 @@
 // The `httpCache` option (#45): an opt-in private cache for GET responses (RFC 9111): fresh responses from memory, stale ones revalidated.
 (() => {
-  const Base = WasmClient, caches = new WeakMap();
-  const lower = (headers) => Object.fromEntries(headerEntries(headers).map(([name, value]) => [String(name).toLowerCase(), String(value)]));
-  const directives = (value) => Object.fromEntries(String(value ?? '').toLowerCase().split(',').map((part) => part.trim().split('=')).filter(([name]) => name).map(([name, v]) => [name, v === undefined ? true : v.replace(/"/g, '')]));
+  const caches = new WeakMap(), STORABLE = new Set([200, 203, 204]), GET_LIKE = new Set(['get', 'fetch', 'request']);
+  const directives = (value) => Object.fromEntries(String(value ?? '').toLowerCase().split(',').map((p) => p.trim().split('=')).filter(([k]) => k).map(([k, v]) => [k, v === undefined ? true : v.replace(/"/g, '')]));
   const natural = (value) => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : undefined; };
-  const STORABLE = new Set([200, 203, 204]);
   const limits = (config) => {
     const { maxEntries = 100, maxBytes = 50_000_000, maxEntryBytes = 1_000_000, ...rest } = config === true ? {} : config;
     for (const [name, value] of Object.entries({ maxEntries, maxBytes, maxEntryBytes })) if (!Number.isInteger(value) || value < 1) throw invalidInput(`httpCache.${name}`, 'must be a positive integer');
@@ -15,24 +13,15 @@
     const { body } = response;
     return (typeof body === 'string' ? body.length * 2 : body?.byteLength ?? body?.size ?? natural(response.headers['content-length']) ?? 1024) + 512;
   };
-  const copy = (value) => value !== null && typeof value === 'object' ? structuredClone(value) : value;
   const age = (entry) => entry.initialAge + (Date.now() - entry.storedAt);
   const fresh = (entry) => !entry.noCache && entry.lifetime !== undefined && age(entry) < entry.lifetime;
-  class CachingClient extends Base {
-    constructor(options) {
-      const config = ownProp(options, 'httpCache');
-      if (config !== undefined && config !== true && config !== false && (config === null || typeof config !== 'object')) throw invalidInput('httpCache', 'must be true or an object');
-      super(options);
-      if (config) caches.set(this, { store: new Map(), bytes: 0, limits: limits(config), baseUrl: options.baseUrl });
-    }
-  }
   const keyOf = (state, url, params) => {
     try {
       const target = new URL(url, state.baseUrl);
       for (const [name, value] of headerEntries(params)) for (const one of [].concat(value)) if (one != null) target.searchParams.append(name, String(one));
       target.hash = '';
       return target.href;
-    } catch { return undefined; }
+    } catch {}
   };
   const forget = (state, key) => { const entry = state.store.get(key); if (entry) { state.store.delete(key); state.bytes -= entry.bytes; } };
   function store(state, key, response, request) {
@@ -45,7 +34,7 @@
     if (bytes > state.limits.maxEntryBytes) return forget(state, key);
     forget(state, key);
     state.store.set(key, {
-      response: { status: response.status, statusText: response.statusText, ok: response.ok, url: response.url, headers: { ...headers }, body: copy(response.body) },
+      response: { status: response.status, statusText: response.statusText, ok: response.ok, url: response.url, headers: { ...headers }, body: cloneValue(response.body) },
       storedAt: Date.now(), initialAge: (natural(headers.age) ?? 0) * 1000, lifetime: explicit === undefined ? undefined : explicit * 1000,
       noCache: Boolean(cc['no-cache']), etag: headers.etag, lastModified: headers['last-modified'],
       vary: String(headers.vary ?? '').split(',').map((name) => name.trim().toLowerCase()).filter(Boolean).map((name) => [name, request[name] ?? '']), bytes,
@@ -57,61 +46,58 @@
       forget(state, oldest);
     }
   }
-  const hit = (entry, revalidated) => ({ ...entry.response, headers: { ...entry.response.headers, age: String(Math.floor(age(entry) / 1000)) }, body: copy(entry.response.body), cached: true, revalidated });
-  const bypass = (options) => options == null || typeof options !== 'object' ? options : Object.assign({ __proto__: Object.getPrototypeOf(options) }, options, { httpCache: undefined });
-  const GET_LIKE = new Set(['get', 'fetch', 'request']);
-  for (const name of REQUEST_METHODS) {
-    const index = optionsArgIndex(name);
-    defineMethod(CachingClient.prototype, name, function (...args) {
-      const state = caches.get(this), raw = Base.prototype[name];
-      if (!state) return raw.apply(this, args);
-      const options = args[index];
-      if (options != null && options.httpCache !== undefined && typeof options.httpCache !== 'boolean') return Promise.reject(invalidInput('httpCache', 'must be a boolean'));
-      const method = name === 'request' ? String(args[0]).toUpperCase() : name === 'fetch' || name === 'post' || name === 'put' || name === 'patch' ? String(options?.method ?? (name === 'fetch' ? 'GET' : name.toUpperCase())).toUpperCase() : name.replace('_json', '').toUpperCase();
-      const url = name === 'request' ? args[1] : args[0];
-      const key = typeof url === 'string' ? keyOf(state, url, options?.params) : undefined;
-      if (key === undefined) return raw.apply(this, args);
-      if (method !== 'GET' || !GET_LIKE.has(name)) {
-        // An unsafe method that succeeds invalidates the cached response for its URL (RFC 9111 4.4)
-        const done = raw.apply(this, args);
-        if (method !== 'HEAD') done.then(() => forget(state, key), () => {});
-        return done;
+  const hit = (entry, revalidated) => ({ ...entry.response, headers: { ...entry.response.headers, age: String(Math.floor(age(entry) / 1000)) }, body: cloneValue(entry.response.body), cached: true, revalidated });
+  const bypass = (options) => options == null || typeof options !== 'object' ? options : cloneProto(options, { httpCache: undefined });
+  const bypassArgs = (args, index) => { const next = [...args]; next[index] = bypass(args[index]); return next; };
+  class CachingClient extends WasmClient {
+    constructor(options) {
+      const config = ownProp(options, 'httpCache');
+      if (config !== undefined && config !== true && config !== false && (config === null || typeof config !== 'object')) throw invalidInput('httpCache', 'must be true or an object');
+      super(options);
+      if (config) caches.set(this, { store: new Map(), bytes: 0, limits: limits(config), baseUrl: options.baseUrl });
+    }
+  }
+  wrapClient(CachingClient, (name, index, raw) => function (...args) {
+    const state = caches.get(this);
+    if (!state) return raw.apply(this, args);
+    const options = args[index];
+    if (options?.httpCache !== undefined && typeof options.httpCache !== 'boolean') return Promise.reject(invalidInput('httpCache', 'must be a boolean'));
+    const method = String(name === 'request' ? args[0] : name === 'fetch' || name === 'post' || name === 'put' || name === 'patch' ? options?.method ?? (name === 'fetch' ? 'GET' : name) : name.replace('_json', '')).toUpperCase();
+    const url = name === 'request' ? args[1] : args[0];
+    const key = typeof url === 'string' ? keyOf(state, url, options?.params) : undefined;
+    if (key === undefined) return raw.apply(this, args);
+    if (method !== 'GET' || !GET_LIKE.has(name)) {
+      // An unsafe method that succeeds invalidates the cached response for its URL (RFC 9111 4.4)
+      const done = raw.apply(this, args);
+      if (method !== 'HEAD') done.then(() => forget(state, key), () => {});
+      return done;
+    }
+    if (options?.httpCache === false || options?.responseType === 'stream' || options?.responseType === 'ndjson') return raw.apply(this, bypassArgs(args, index));
+    const headers = lowerHeaders(name === 'request' ? args[2] ?? options?.headers : options?.headers);
+    const requestCC = directives(headers['cache-control']);
+    if (requestCC['no-store'] || headers['if-none-match'] || headers['if-modified-since']) return raw.apply(this, bypassArgs(args, index));
+    let entry = state.store.get(key);
+    if (entry && !entry.vary.every(([header, value]) => (headers[header] ?? '') === value)) entry = undefined;
+    if (entry) { state.store.delete(key); state.store.set(key, entry); } // most recently used
+    if (entry && fresh(entry) && !requestCC['no-cache']) return Promise.resolve(hit(entry, false));
+    const send = (extra) => {
+      const next = [...args], base = bypass(options) ?? {};
+      if (name === 'request') { next[2] = { ...lowerHeaders(next[2]), ...extra }; next[index] = base; }
+      else next[index] = cloneProto(base, { headers: { ...lowerHeaders(base.headers), ...extra } });
+      return raw.apply(this, next);
+    };
+    const validators = entry?.etag ? { 'if-none-match': entry.etag } : entry?.lastModified ? { 'if-modified-since': entry.lastModified } : undefined;
+    return (validators ? send(validators) : raw.apply(this, args)).then((response) => {
+      store(state, key, response, headers);
+      return { ...response, cached: false, revalidated: false };
+    }, (error) => {
+      // 304: the stored response is still good. The error carries no headers, so it stays fresh for its original lifetime.
+      if (entry && validators && error?.kind === 'HttpError' && error.status === 304 && state.store.get(key) === entry) {
+        entry.storedAt = Date.now();
+        entry.initialAge = 0;
+        return hit(entry, true);
       }
-      if (options?.httpCache === false || options?.responseType === 'stream' || options?.responseType === 'ndjson') return raw.apply(this, bypassArgs(args, index));
-      const headers = lower(name === 'request' ? args[2] ?? options?.headers : options?.headers);
-      const requestCC = directives(headers['cache-control']);
-      if (requestCC['no-store'] || headers['if-none-match'] || headers['if-modified-since']) return raw.apply(this, bypassArgs(args, index));
-      let entry = state.store.get(key);
-      if (entry && !entry.vary.every(([header, value]) => (headers[header] ?? '') === value)) entry = undefined;
-      if (entry) { state.store.delete(key); state.store.set(key, entry); } // most recently used
-      if (entry && fresh(entry) && !requestCC['no-cache']) return Promise.resolve(hit(entry, false));
-      const send = (extra) => {
-        const next = [...args];
-        const base = bypass(options) ?? {};
-        const merged = { ...lower(base.headers), ...extra };
-        if (name === 'request') { next[2] = { ...lower(next[2]), ...extra }; next[index] = base; } else next[index] = Object.assign({ __proto__: Object.getPrototypeOf(base) }, base, { headers: merged });
-        return raw.apply(this, next);
-      };
-      const validators = entry && (entry.etag || entry.lastModified) ? { ...(entry.etag ? { 'if-none-match': entry.etag } : {}), ...(!entry.etag && entry.lastModified ? { 'if-modified-since': entry.lastModified } : {}) } : undefined;
-      return (validators ? send(validators) : raw.apply(this, args)).then((response) => {
-        store(state, key, response, headers);
-        return { ...response, cached: false, revalidated: false };
-      }, (error) => {
-        // 304: the stored response is still good. The error carries no headers, so it stays fresh for its original lifetime.
-        if (entry && validators && error?.kind === 'HttpError' && error.status === 304 && state.store.get(key) === entry) {
-          entry.storedAt = Date.now();
-          entry.initialAge = 0;
-          return hit(entry, true);
-        }
-        throw error;
-      });
+      throw error;
     });
-  }
-  function bypassArgs(args, index) {
-    const next = [...args];
-    next[index] = bypass(args[index]);
-    return next;
-  }
-  setFnName(CachingClient, 'WasmClient');
-  WasmClient = CachingClient;
+  });
 })();

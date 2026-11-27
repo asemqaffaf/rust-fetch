@@ -106,7 +106,7 @@ pub enum ResponseFormat {
 /// HTTP headers collection
 #[derive(Debug, Clone, Default)]
 pub struct Headers {
-    inner: HashMap<String, Vec<String>>,
+    inner: Vec<(String, Vec<String>)>,
 }
 
 impl Headers {
@@ -115,23 +115,37 @@ impl Headers {
         Self::default()
     }
 
+    fn position(&self, name: &str) -> Option<usize> {
+        self.inner
+            .iter()
+            .position(|(key, _)| key.eq_ignore_ascii_case(name))
+    }
+
     /// Add a header value
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        let name = name.into().to_ascii_lowercase();
+        let name = name.into();
         let value = value.into();
-        self.inner.entry(name).or_insert_with(Vec::new).push(value);
+        if let Some(index) = self.position(&name) {
+            self.inner[index].1.push(value);
+        } else {
+            self.inner.push((name.to_ascii_lowercase(), vec![value]));
+        }
     }
 
     /// Set a header value (replaces existing)
     pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        let name = name.into().to_ascii_lowercase();
+        let name = name.into();
         let value = value.into();
-        self.inner.insert(name, vec![value]);
+        if let Some(index) = self.position(&name) {
+            self.inner[index].1 = vec![value];
+        } else {
+            self.inner.push((name.to_ascii_lowercase(), vec![value]));
+        }
     }
 
     /// Get header values
     pub fn get(&self, name: &str) -> Option<&Vec<String>> {
-        self.inner.get(&name.to_ascii_lowercase())
+        self.position(name).map(|index| &self.inner[index].1)
     }
 
     /// Get the first header value
@@ -141,17 +155,17 @@ impl Headers {
 
     /// Remove a header
     pub fn remove(&mut self, name: &str) -> Option<Vec<String>> {
-        self.inner.remove(&name.to_ascii_lowercase())
+        self.position(name).map(|index| self.inner.remove(index).1)
     }
 
     /// Check if header exists
     pub fn contains(&self, name: &str) -> bool {
-        self.inner.contains_key(&name.to_ascii_lowercase())
+        self.position(name).is_some()
     }
 
     /// Iterate over all headers
     pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
-        self.inner.iter()
+        self.inner.iter().map(|(name, values)| (name, values))
     }
 }
 
@@ -295,7 +309,7 @@ fn mime_essence(content_type: &str) -> String {
         .split(';')
         .next()
         .unwrap_or("")
-        .trim()
+        .trim_ascii()
         .to_ascii_lowercase()
 }
 
@@ -377,6 +391,28 @@ pub enum Body {
     Binary(Vec<u8>),
     /// Form data
     Form(HashMap<String, String>),
+}
+
+/// Compact `wasm32` request body representation without `serde_json::Value` or
+/// `HashMap` drop glue (`BTreeMap` / `hashbrown`).
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone)]
+pub(crate) enum WasmBody {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+/// Compact `wasm32` request configuration held by `RequestBuilder`.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Clone)]
+pub(crate) struct WasmRequestConfig {
+    pub(crate) method: Method,
+    pub(crate) headers: Headers,
+    pub(crate) body: Option<WasmBody>,
+    pub(crate) timeout: Option<Duration>,
+    pub(crate) follow_redirects: bool,
+    pub(crate) max_redirects: u32,
+    pub(crate) response_format: ResponseFormat,
 }
 
 impl Body {

@@ -1,12 +1,8 @@
 // The `auth` client option (#70): bearer tokens with a single-flight refresh on 401, and Basic credentials. Only for the client's own origin(s).
 (() => {
   const Base = WasmClient, states = new WeakMap();
-  const originOf = (value, base) => { try { return new URL(value, base).origin; } catch { return undefined; } };
   const value = async (auth) => {
-    if (auth.basic) {
-      const bytes = new TextEncoder().encode(`${auth.basic.username}:${auth.basic.password}`);
-      return `Basic ${btoa(String.fromCharCode(...bytes))}`;
-    }
+    if (auth.basic) return `Basic ${btoa(String.fromCharCode(...new TextEncoder().encode(`${auth.basic.username}:${auth.basic.password}`)))}`;
     const token = typeof auth.bearer === 'function' ? await auth.bearer() : auth.bearer;
     return token == null || token === '' ? undefined : `Bearer ${token}`;
   };
@@ -34,8 +30,7 @@
   const replayable = (args) => typeof ReadableStream === 'undefined' || !args.some((arg) => arg instanceof ReadableStream || arg?.body instanceof ReadableStream);
   class AuthClient extends Base {
     constructor(options) {
-      const auth = ownProp(options, 'auth');
-      const baseUrl = options?.baseUrl;
+      const auth = ownProp(options, 'auth'), baseUrl = options?.baseUrl;
       const origins = auth === undefined ? undefined : validate(auth, baseUrl);
       super(options);
       if (auth !== undefined) {
@@ -50,27 +45,22 @@
       if (state) install(this, state);
     }
   }
-  for (const name of REQUEST_METHODS) {
-    const raw = Base.prototype[name];
-    defineMethod(AuthClient.prototype, name, function (...args) {
-      const state = states.get(this);
-      if (!state?.auth.refresh) return raw.apply(this, args);
-      const epoch = state.epoch;
-      return raw.apply(this, args).catch(async (error) => {
-        if (error?.kind !== 'HttpError' || error.status !== 401 || !state.origins.has(originOf(error.url, state.baseUrl)) || !replayable(args)) throw error;
-        // Requests failing together share one refresh. One that started before a refresh settled uses its outcome, so a failed refresh isn't run again for each.
-        if (state.epoch === epoch) {
-          state.refreshing ??= Promise.resolve().then(() => state.auth.refresh()).then(() => ({}), (cause) => ({ cause })).then((outcome) => { state.epoch++; state.outcome = outcome; state.refreshing = undefined; });
-          await state.refreshing;
-        }
-        if (state.outcome.cause !== undefined) {
-          if (error.cause === undefined) error.cause = state.outcome.cause;
-          throw error;
-        }
-        return raw.apply(this, args);
-      });
+  wrapClient(AuthClient, (_name, _index, raw) => function (...args) {
+    const state = states.get(this);
+    if (!state?.auth.refresh) return raw.apply(this, args);
+    const epoch = state.epoch;
+    return raw.apply(this, args).catch(async (error) => {
+      if (error?.kind !== 'HttpError' || error.status !== 401 || !state.origins.has(originOf(error.url, state.baseUrl)) || !replayable(args)) throw error;
+      // Requests failing together share one refresh. One that started before a refresh settled uses its outcome, so a failed refresh isn't run again for each.
+      if (state.epoch === epoch) {
+        state.refreshing ??= Promise.resolve().then(() => state.auth.refresh()).then(() => ({}), (cause) => ({ cause })).then((outcome) => { state.epoch++; state.outcome = outcome; state.refreshing = undefined; });
+        await state.refreshing;
+      }
+      if (state.outcome.cause !== undefined) {
+        error.cause ??= state.outcome.cause;
+        throw error;
+      }
+      return raw.apply(this, args);
     });
-  }
-  setFnName(AuthClient, 'WasmClient');
-  WasmClient = AuthClient;
+  });
 })();

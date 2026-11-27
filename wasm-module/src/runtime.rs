@@ -31,12 +31,11 @@ pub(crate) async fn timeout<T>(
     duration: Duration,
     fut: impl Future<Output = Result<T>>,
 ) -> Result<T> {
-    let timed_out = || Error::Timeout {
-        duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
-    };
-
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let timed_out = || Error::Timeout {
+            duration_ms: u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+        };
         tokio::time::timeout(duration, fut)
             .await
             .map_err(|_| timed_out())?
@@ -46,9 +45,8 @@ pub(crate) async fn timeout<T>(
     {
         // A future of its own, not `select` on a pinned local: that kept two
         // copies of `fut` in this function's state (see `Abortable`)
-        crate::wasm::futures::Deadline::new(fut, duration)
+        crate::wasm::futures::Deadline::new(fut, duration, crate::TimeoutPhase::Total, duration)
             .await
-            .unwrap_or_else(|()| Err(timed_out()))
     }
 }
 
@@ -65,10 +63,7 @@ pub(crate) fn timeout_phase_optional<
     configured: Duration,
     fut: F,
 ) -> impl Future<Output = std::result::Result<T, E>> {
-    use futures_util::FutureExt;
-    crate::wasm::futures::Deadline::optional(fut, duration).map(move |result| {
-        result.unwrap_or_else(|()| Err(Error::phase_timeout(phase, configured).into()))
-    })
+    crate::wasm::futures::Deadline::optional(fut, duration, phase, configured)
 }
 
 /// [`timeout`] when `duration` is set; otherwise just `fut`, as one future type.
@@ -86,15 +81,14 @@ pub(crate) async fn timeout_optional<T>(
 
     #[cfg(target_arch = "wasm32")]
     {
-        crate::wasm::futures::Deadline::optional(fut, duration)
-            .await
-            .unwrap_or_else(|()| {
-                Err(Error::Timeout {
-                    duration_ms: duration.map_or(u64::MAX, |d| {
-                        u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
-                    }),
-                })
-            })
+        let configured = duration.unwrap_or(Duration::MAX);
+        crate::wasm::futures::Deadline::optional(
+            fut,
+            duration,
+            crate::TimeoutPhase::Total,
+            configured,
+        )
+        .await
     }
 }
 
@@ -142,14 +136,15 @@ pub(crate) fn timeout_phase<T, E: From<Error>, F: Future<Output = std::result::R
     configured: Duration,
     fut: F,
 ) -> impl Future<Output = std::result::Result<T, E>> {
-    use futures_util::FutureExt;
     #[cfg(not(target_arch = "wasm32"))]
-    let timed = tokio::time::timeout(duration, fut);
+    {
+        use futures_util::FutureExt;
+        tokio::time::timeout(duration, fut).map(move |result| {
+            result.unwrap_or_else(|_| Err(Error::phase_timeout(phase, configured).into()))
+        })
+    }
     #[cfg(target_arch = "wasm32")]
-    let timed = crate::wasm::futures::Deadline::new(fut, duration);
-    // Hold the operation once: an async wrapper retained another copy of
-    // its state while moving it into the timer.
-    timed.map(move |result| {
-        result.unwrap_or_else(|_| Err(Error::phase_timeout(phase, configured).into()))
-    })
+    {
+        crate::wasm::futures::Deadline::new(fut, duration, phase, configured)
+    }
 }

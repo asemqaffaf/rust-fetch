@@ -7,7 +7,7 @@ use crate::{
 };
 use futures_util::{future::poll_fn, Stream};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::VecDeque,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
@@ -63,7 +63,8 @@ impl Config {
 #[derive(Debug)]
 pub(crate) struct Limiter {
     config: Config,
-    gates: Mutex<HashMap<String, Arc<Gate>>>,
+    /// Sorted by origin key for O(log n) lookup without pulling `hashbrown` into Wasm.
+    gates: Mutex<Vec<(String, Arc<Gate>)>>,
 }
 
 impl Limiter {
@@ -86,24 +87,30 @@ impl Limiter {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Forget idle origins whose buckets have completely refilled. Active
         // or rate-limited origins are retained, so quotas cannot be reset.
-        if let Some(gate) = gates.get(&key) {
-            return Arc::clone(gate);
+        match gates.binary_search_by(|(k, _)| k.as_str().cmp(key.as_str())) {
+            Ok(index) => Arc::clone(&gates[index].1),
+            Err(mut insert_at) => {
+                let now = runtime::now_ms();
+                if self.config.per_origin && gates.len().is_multiple_of(128) {
+                    gates.retain(|(_, gate)| Arc::strong_count(gate) > 1 || !gate.expired(now));
+                    insert_at = gates
+                        .binary_search_by(|(k, _)| k.as_str().cmp(key.as_str()))
+                        .unwrap_or_else(|i| i);
+                }
+                let gate = Arc::new(Gate::new(self.config.clone(), now));
+                gates.insert(insert_at, (key, Arc::clone(&gate)));
+                gate
+            }
         }
-        let now = runtime::now_ms();
-        if self.config.per_origin && gates.len().is_multiple_of(128) {
-            gates.retain(|_, gate| Arc::strong_count(gate) > 1 || !gate.expired(now));
-        }
-        Arc::clone(
-            gates
-                .entry(key)
-                .or_insert_with(|| Arc::new(Gate::new(self.config.clone(), now))),
-        )
     }
 }
 
 /// The URL has already been normalized/validated by the request builder.
 pub(crate) fn origin(url: &str) -> String {
-    let Some((scheme, rest)) = url.split_once("://") else {
+    let Some((scheme, rest)) = url
+        .split_once(':')
+        .and_then(|(scheme, rest)| rest.strip_prefix("//").map(|rest| (scheme, rest)))
+    else {
         return url.to_string();
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
@@ -114,10 +121,33 @@ pub(crate) fn origin(url: &str) -> String {
 }
 
 #[derive(Debug)]
+struct Waiter {
+    id: u64,
+    waker: Option<Waker>,
+    /// Dropped while queued; skipped once it reaches the front.
+    gone: bool,
+}
+
+/// Ids are handed out in order, so the queue stays sorted by id: find a
+/// waiter in O(log n) and tombstone cancelled ones instead of shifting.
+fn waiter(queue: &mut VecDeque<Waiter>, id: u64) -> Option<&mut Waiter> {
+    let index = queue.binary_search_by_key(&id, |w| w.id).ok()?;
+    queue.get_mut(index)
+}
+
+/// Pop cancelled waiters off the front and return the next waker to wake.
+fn next_waker(queue: &mut VecDeque<Waiter>) -> Option<Waker> {
+    while queue.front().is_some_and(|w| w.gone) {
+        queue.pop_front();
+    }
+    queue.front().and_then(|w| w.waker.clone())
+}
+
+#[derive(Debug)]
 struct State {
     active: usize,
     next: u64,
-    queue: BTreeMap<u64, Option<Waker>>,
+    queue: VecDeque<Waiter>,
     tokens: f64,
     updated: f64,
     paused: f64,
@@ -140,7 +170,7 @@ impl Gate {
             state: Mutex::new(State {
                 active: 0,
                 next: 0,
-                queue: BTreeMap::new(),
+                queue: VecDeque::new(),
                 tokens,
                 updated: now,
                 paused: 0.0,
@@ -171,7 +201,11 @@ impl Gate {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let id = state.next;
             state.next = state.next.wrapping_add(1);
-            state.queue.insert(id, None);
+            state.queue.push_back(Waiter {
+                id,
+                waker: None,
+                gone: false,
+            });
             Ticket {
                 gate: Arc::clone(self),
                 id,
@@ -213,13 +247,10 @@ impl Ticket {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        #[allow(
-            clippy::expect_used,
-            reason = "a ticket stays queued until it is dropped"
-        )]
-        let slot = state.queue.get_mut(&self.id).expect("queued ticket exists");
-        *slot = Some(cx.waker().clone());
-        if state.queue.first_key_value().map(|(id, _)| *id) != Some(self.id)
+        if let Some(slot) = waiter(&mut state.queue, self.id) {
+            slot.waker = Some(cx.waker().clone());
+        }
+        if state.queue.front().map(|w| w.id) != Some(self.id)
             || self
                 .gate
                 .config
@@ -246,13 +277,10 @@ impl Ticket {
         if self.gate.config.rate.is_some() {
             state.tokens -= 1.0;
         }
-        state.queue.remove(&self.id);
+        state.queue.pop_front();
         state.active += 1;
         self.admitted = true;
-        let wake = state
-            .queue
-            .first_key_value()
-            .and_then(|(_, waker)| waker.clone());
+        let wake = next_waker(&mut state.queue);
         drop(state);
         if let Some(wake) = wake {
             wake.wake();
@@ -270,13 +298,11 @@ impl Drop for Ticket {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.admitted {
             state.active -= 1;
-        } else {
-            state.queue.remove(&self.id);
+        } else if let Some(slot) = waiter(&mut state.queue, self.id) {
+            slot.gone = true;
+            slot.waker = None;
         }
-        let wake = state
-            .queue
-            .first_key_value()
-            .and_then(|(_, waker)| waker.clone());
+        let wake = next_waker(&mut state.queue);
         drop(state);
         if let Some(wake) = wake {
             wake.wake();
@@ -365,6 +391,32 @@ mod tests {
         let mut stream = PermitStream::new(empty, Some(gate.acquire().await));
         assert!(stream.next().await.is_none());
         assert_eq!(gate.state.lock().unwrap().active, 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiters_behind_the_front_are_skipped() {
+        let limiter = Limiter::new(Config {
+            concurrent: Some(1),
+            rate: None,
+            per_origin: false,
+        });
+        let gate = limiter.gate("http://a/");
+        let first = gate.acquire().await;
+        let mut front = Box::pin(gate.acquire());
+        let mut middle = Box::pin(gate.acquire());
+        let mut last = Box::pin(gate.acquire());
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(front.as_mut().poll(&mut cx).is_pending());
+        assert!(middle.as_mut().poll(&mut cx).is_pending());
+        assert!(last.as_mut().poll(&mut cx).is_pending());
+        drop(middle); // tombstoned in place, not shifted out
+        assert_eq!(gate.state.lock().unwrap().queue.len(), 3);
+        drop(first);
+        drop(front.await); // admitting `front` pops the tombstone behind it
+        assert_eq!(gate.state.lock().unwrap().queue.len(), 1);
+        drop(last.await);
+        assert!(gate.state.lock().unwrap().queue.is_empty());
     }
 
     #[test]
