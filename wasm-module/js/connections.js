@@ -47,6 +47,8 @@ export class EventStream {
     'headers', 'params', 'timeoutMs', 'connectTimeoutMs', 'responseTimeoutMs', 'idleTimeoutMs',
     'retries', 'idempotencyHeader', 'allowAbsoluteUrls', 'credentials', 'mode', 'cache',
     'keepalive', 'priority', 'referrer', 'referrerPolicy', 'integrity', '__trace',
+    // Per-request safety limits: dropping them would silently weaken SSRF and credential protection
+    'allowPrivateNetwork', 'sensitiveHeaders', 'allowInsecureRedirects', 'maxResponseBytes', 'redirect', 'maxRedirects',
   ];
 
   const inv = (p, r) => mkErr('InvalidInputError', `Invalid input for '${p}': ${r}`, { parameter: p });
@@ -119,10 +121,13 @@ export class EventStream {
     return out;
   };
   const resolveWsUrl = (base, input, params, allowAbs) => {
-    const isAbs = SCHEME_RE.test(input) || input.startsWith('//');
+    // Absolute only if it parses on its own, as for HTTP requests: `//host/x` joins the base URL
+    let abs;
+    if (SCHEME_RE.test(input)) { try { abs = new URL(input); } catch {} }
+    const isAbs = abs !== undefined;
     if (base && !allowAbs && isAbs) throw inv('url', 'absolute URLs are disabled when allowAbsoluteUrls is false');
     let u;
-    if (isAbs) { try { const p = new URL(input); if (p.protocol === 'ws:' || p.protocol === 'wss:') u = p; } catch {} }
+    if (abs && (abs.protocol === 'ws:' || abs.protocol === 'wss:')) u = abs;
     if (!u) {
       const target = base && !isAbs
         ? (!input || input[0] === '?' || input[0] === '#' ? `${base}${input}` : `${base.replace(/\/+$/, '')}/${input.replace(/^\/+/, '')}`)
@@ -420,6 +425,7 @@ export class EventStream {
           kind = (err?.kind === 'HttpError' && SSE_RETRY.has(err.status)) || err?.kind === 'NetworkError' || err?.kind === 'TimeoutError' ? 'dropped' : 'failed';
           endedErr = err;
         }
+        if (res && st === 'closed') { try { res.body?.cancel?.().catch(() => {}); } catch {} return; }
         if (res) {
           if (res.url) lastUrl = res.url;
           if (res.status === 204) { try { res.body?.cancel?.().catch(() => {}); } catch {} return finish(); }

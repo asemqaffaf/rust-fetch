@@ -1963,6 +1963,8 @@ pub(crate) fn request_builder(
         body,
         deadline,
     } = request;
+    // Only the request's own headers can opt out of SSE's Accept, as in EventSource
+    let own_accept = headers.contains("accept");
     let mut builder = client
         .request_owned(method, url)
         // Decode here rather than in Rust, so JSON is parsed by the JS engine
@@ -2013,11 +2015,11 @@ pub(crate) fn request_builder(
         }
     }
     if let Some(last_id) = options.get("__sse").and_then(|v| v.as_string()) {
-        if !builder.config.headers.contains("accept") {
-            builder.config.headers.insert("accept", "text/event-stream");
+        if !own_accept {
+            builder.config.headers.set("accept", "text/event-stream");
         }
         if !last_id.is_empty() {
-            builder.config.headers.insert("last-event-id", last_id);
+            builder.config.headers.set("last-event-id", last_id);
         }
     }
     Ok((builder, body))

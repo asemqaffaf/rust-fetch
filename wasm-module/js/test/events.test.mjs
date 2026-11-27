@@ -245,6 +245,36 @@ describe('events', () => {
     assert.equal(connections.get('llm').length, 1);
   });
 
+  it('keeps its Accept over a client default, replaces Last-Event-ID, and honours per-stream safety options', async () => {
+    // A client-wide Accept doesn't override the event stream's; the request's own does
+    const json = client({ headers: { accept: 'application/json' } }).events('/feed', { params: { id: 'accept-default' }, onEvent() {} });
+    await json.opened;
+    json.close();
+    await json.closed;
+    assert.equal(connections.get('accept-default')[0].headers.accept, 'text/event-stream');
+    const own = client().events('/feed', { params: { id: 'accept-own' }, headers: { accept: 'text/event-stream, */*' }, onEvent() {} });
+    await own.opened;
+    own.close();
+    await own.closed;
+    assert.equal(connections.get('accept-own')[0].headers.accept, 'text/event-stream, */*');
+
+    // A reconnect replaces a caller's Last-Event-ID instead of appending to it
+    const { all, onEvent } = collector(2);
+    const resumed = client({ headers: { 'last-event-id': '5' } }).events('/resume?id=resume-header', { onEvent });
+    await all;
+    resumed.close();
+    await resumed.closed;
+    assert.deepEqual(connections.get('resume-header').map((c) => c.headers['last-event-id']), ['5', '1']);
+
+    // allowPrivateNetwork: false on the stream itself refuses the loopback server
+    const before = connections.get('private')?.length ?? 0;
+    const refused = client({ retries: 0 }).events('/feed', { params: { id: 'private' }, allowPrivateNetwork: false, reconnect: false });
+    const error = await rejection(refused.opened);
+    assert.equal(error.kind, 'NetworkError');
+    assert.equal(connections.get('private')?.length ?? 0, before);
+    await refused.closed;
+  });
+
   it('reconnects with Last-Event-ID, after the delay the server asked for', async () => {
     const reconnects = [];
     const { events, all, onEvent } = collector(2);
