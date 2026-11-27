@@ -428,6 +428,7 @@ export class EventStream {
         if (res && st === 'closed') { try { res.body?.cancel?.().catch(() => {}); } catch {} return; }
         if (res) {
           if (res.url) lastUrl = res.url;
+          if (typeof res.__attempts === 'number') lastAtt = res.__attempts;
           if (res.status === 204) { try { res.body?.cancel?.().catch(() => {}); } catch {} return finish(); }
           const ct = res.headers?.['content-type'] ?? '';
           if (!ct.toLowerCase().startsWith('text/event-stream')) {

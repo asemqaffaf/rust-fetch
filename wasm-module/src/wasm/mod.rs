@@ -1631,25 +1631,41 @@ pub(crate) fn send<'a>(
     use futures_util::TryFutureExt;
     let refused = std::sync::Arc::new(RequestState::default());
     let method = request.method.as_str();
-    send_request(client, request, options, &refused, apply_deadline).map_err(move |error| {
-        let error = refused.with_cause(JsValue::from(error));
-        let error = with_abort_reason(
-            error,
-            js_sys::Reflect::get(options, &"signal".into())
-                .ok()
-                .as_ref(),
-        );
-        if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
-        }
-        let resolved = refused.url.borrow();
-        error_context(
-            error,
-            method,
-            resolved.as_deref().unwrap_or(original_url),
-            refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
-        )
-    })
+    // An SSE connection reads the attempt count off its raw response, for
+    // errors that end the stream after it opened (idle timeout, drop)
+    let sse_state = raw_prop(options, "__sse")
+        .is_string()
+        .then(|| std::sync::Arc::clone(&refused));
+    send_request(client, request, options, &refused, apply_deadline)
+        .map_ok(move |response| {
+            if let Some(state) = sse_state {
+                put_f64(
+                    &response,
+                    "__attempts",
+                    f64::from(state.attempts.load(std::sync::atomic::Ordering::Relaxed)),
+                );
+            }
+            response
+        })
+        .map_err(move |error| {
+            let error = refused.with_cause(JsValue::from(error));
+            let error = with_abort_reason(
+                error,
+                js_sys::Reflect::get(options, &"signal".into())
+                    .ok()
+                    .as_ref(),
+            );
+            if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
+            }
+            let resolved = refused.url.borrow();
+            error_context(
+                error,
+                method,
+                resolved.as_deref().unwrap_or(original_url),
+                refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        })
 }
 
 pub(crate) fn send_request<'a>(

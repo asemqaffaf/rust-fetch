@@ -147,6 +147,13 @@ describe('events', () => {
     assert.equal(connections.get('phase-idle').length, 2);
   });
 
+  it('reports the attempt count on an idle timeout after the stream opened', async () => {
+    const stream = client().events('/feed?id=idle-attempts', { idleTimeoutMs: 35, reconnect: false });
+    await stream.opened;
+    // The feed sends its events, then goes silent
+    await assert.rejects(async () => { for (;;) await stream.next(); }, { kind: 'TimeoutError', phase: 'idle', attempts: 1, method: 'GET' });
+  });
+
   it('reuses generated idempotency keys across SSE reconnections without changing caller options', async () => {
     const c = new WasmClient({ baseUrl: server.url('/v1'), idempotencyKey: true });
     const { all, onEvent } = collector(2);
