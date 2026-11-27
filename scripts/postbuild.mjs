@@ -43,7 +43,7 @@ export type ReadableStreamType = "bytes";
 /** Headers as a plain object,`,
   );
 }
-if (!types.includes('export class EventStream')) {
+if (!types.includes('export class IntoUnderlyingByteSource')) {
   types = types.replace(
     '/**\n * HTTP client for JavaScript\n */\nexport class WasmClient {\n',
     `/**
@@ -122,19 +122,34 @@ export class IntoUnderlyingSource {
 export class WasmClient {\n`,
   );
 }
-// Client verb shortcuts, EventStream/WebSocketConnection, and standalone functions
+// Client verb shortcuts, interceptors, EventStream/WebSocketConnection, and standalone functions
 // live in js/*.js; restore their exact TypeScript declarations on WasmClient and at module top level.
 types = types.replace(
-  '    clearInterceptors(): void;\n',
-  `    clearInterceptors(): void;
+  'export class WasmClient {\n    free(): void;\n    [Symbol.dispose](): void;\n',
+  `export class WasmClient {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Run \`interceptor\` on every request before it is sent; returns an id for \`ejectInterceptor\`
+     */
+    addRequestInterceptor(interceptor: RequestInterceptor): number;
+    /**
+     * Run handlers on every settled request, like \`promise.then(onFulfilled, onRejected)\`;
+     * returns an id for \`ejectInterceptor\`
+     */
+    addResponseInterceptor(on_fulfilled?: ResponseFulfilledInterceptor | null, on_rejected?: ResponseRejectedInterceptor | null): number;
+    /**
+     * Remove all interceptors
+     */
+    clearInterceptors(): void;
     /**
      * Make a DELETE request
      */
-    delete(url: string, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
-);
-types = types.replace(
-  '    ejectInterceptor(id: number): boolean;\n',
-  `    ejectInterceptor(id: number): boolean;
+    delete(url: string, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Remove an interceptor; returns whether it was registered
+     */
+    ejectInterceptor(id: number): boolean;
     /**
      * Open a Server-Sent Events stream. Relative URLs are resolved against the base URL.
      */
@@ -290,7 +305,11 @@ export function fetch_with_options(url: string, method: string, headers: any, bo
 export type InitInput =`,
 );
 for (const expected of [
+  'export class EventStream {',
+  '[Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;',
+  'export class WebSocketConnection {',
   'delete(url: string',
+  'events(url: string',
   'fetch(url: string',
   'get(url: string',
   'head(url: string',
@@ -301,6 +320,7 @@ for (const expected of [
   'put(url: string',
   'put_json(url: string',
   'request(method: string',
+  'websocket(url: string',
   'export function create_client(',
   'export function fetch_json(',
   'export function fetch_json_promise(',
@@ -335,23 +355,12 @@ if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
 }
 types = types.replace(generic, '$1<T = any>($2): Promise<HttpResponse<T>>;');
 const glueUrl = new URL('rust_fetch.js', pkgDir);
-// Stream plumbing stays in JavaScript, so upload chunks never take a round
-// trip through WebAssembly memory. Ship it inside the existing glue file.
-const methods = readFileSync(new URL('wasm-module/js/methods.js', root), 'utf8');
+// Stream plumbing and client middleware stay in JavaScript, shipped inside the existing glue file.
+const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
 const browserTransport = readFileSync(new URL('wasm-module/js/browser-transport.js', root), 'utf8');
 const connections = readFileSync(new URL('wasm-module/js/connections.js', root), 'utf8');
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
-const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
-const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
-const blob = readFileSync(new URL('wasm-module/js/blob.js', root), 'utf8');
-const transport = readFileSync(new URL('wasm-module/js/transport.js', root), 'utf8');
-const auth = readFileSync(new URL('wasm-module/js/auth.js', root), 'utf8');
-const dedupe = readFileSync(new URL('wasm-module/js/dedupe.js', root), 'utf8');
-const cache = readFileSync(new URL('wasm-module/js/cache.js', root), 'utf8');
-const schema = readFileSync(new URL('wasm-module/js/schema.js', root), 'utf8');
-const paginate = readFileSync(new URL('wasm-module/js/paginate.js', root), 'utf8');
-const resume = readFileSync(new URL('wasm-module/js/resume.js', root), 'utf8');
-const extend = readFileSync(new URL('wasm-module/js/extend.js', root), 'utf8');
+const client = readFileSync(new URL('wasm-module/js/client.js', root), 'utf8');
 const guards = readFileSync(new URL('wasm-module/js/guards.js', root), 'utf8');
 // Minifying renames the exported functions (`isHttpError.name` would be `"Et"`). Put
 // back the names 2.8.x reported, with the pollution-safe `setFnName`. The aliases
@@ -363,6 +372,8 @@ const exportedFunctionNames = [
   'isRustFetchError', 'isHttpError', 'isTimeoutError', 'isNetworkError', 'isParseError', 'isInvalidInputError', 'isCancelledError', 'isCircuitOpenError', 'isJsInteropError', 'isValidationError',
 ];
 const restoreFunctionNames = `for (const [k, v] of Object.entries({ __wbg_init, ${exportedFunctionNames.join(', ')} })) setFnName(v, k);`;
+// Bind the browser transport synchronously during Wasm initialization and keep
+// internal helpers (`__bindBrowserTransport`, `__SseParser`) module-private.
 let baseGlue = readFileSync(glueUrl, 'utf8');
 if (!baseGlue.includes('export function __bindBrowserTransport(')) {
   throw new Error('postbuild: __bindBrowserTransport not found in rust_fetch.js');
@@ -380,19 +391,9 @@ baseGlue = baseGlue.replace(startCall, `${startCall}\n    __bindBrowserTransport
 const combinedGlue = `${baseGlue}
 ${clientHelpers.trimEnd()}
 ${browserTransport.trimEnd()}
-${methods.trimEnd()}
-${upload.trimEnd()}
 ${connections.trimEnd()}
-${observability.trimEnd()}
-${blob.trimEnd()}
-${transport.trimEnd()}
-${auth.trimEnd()}
-${dedupe.trimEnd()}
-${cache.trimEnd()}
-${schema.trimEnd()}
-${resume.trimEnd()}
-${extend.trimEnd()}
-${paginate.trimEnd()}
+${upload.trimEnd()}
+${client.trimEnd()}
 ${guards.trimEnd()}
 ${restoreFunctionNames}
 `;
@@ -407,7 +408,7 @@ const minifiedGlue = transformSync(combinedGlue, {
 }).code;
 writeFileSync(glueUrl, minifiedGlue);
 
-// extend() is added in JavaScript (wasm-module/js/extend.js)
+// extend() and paginate() are added in JavaScript (wasm-module/js/client.js)
 types = types.replace(/(export class WasmClient \{\n)/, '$1    /** A new client with this client\'s options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */\n    extend(overrides?: ClientOptions | null): WasmClient;\n    /** Pages of a paginated API, or its items with `items`. Follows the `Link: rel="next"` header unless `next` says otherwise; each page is a normal GET. */\n    paginate<T>(url: string, options: PaginateOptions & { items: (response: HttpResponse) => Iterable<T> | Promise<Iterable<T>> }): AsyncGenerator<T, void, undefined>;\n    paginate(url: string, options?: PaginateOptions): AsyncGenerator<HttpResponse, void, undefined>;\n');
 if (!types.includes('extend(overrides?: ClientOptions | null): WasmClient;') || !types.includes('paginate<T>(')) {
   throw new Error('postbuild: could not declare WasmClient.extend and paginate');

@@ -1,12 +1,14 @@
 // WebSocketConnection and EventStream built on the Rust core's client config,
 // HTTP streaming pipeline, and fuzzed SSE parser (`__SseParser`).
-const connPrivateCtor = () => { throw new TypeError('Illegal constructor'); };
-export class IntoUnderlyingSource { constructor() { connPrivateCtor(); } }
+const privateCtor = () => { throw new TypeError('Illegal constructor'); };
+export class IntoUnderlyingByteSource { constructor() { privateCtor(); } }
+export class IntoUnderlyingSink { constructor() { privateCtor(); } }
+export class IntoUnderlyingSource { constructor() { privateCtor(); } }
 
 const CONN_TOKEN = Symbol(), _conn = new WeakMap();
 
 export class WebSocketConnection {
-  constructor(t, a) { if (t !== CONN_TOKEN) connPrivateCtor(); _conn.set(this, a); }
+  constructor(t, a) { if (t !== CONN_TOKEN) privateCtor(); _conn.set(this, a); }
   free() {}
   [Symbol.dispose]() {}
   get url() { return _conn.get(this)[0]; }
@@ -21,7 +23,7 @@ export class WebSocketConnection {
 }
 
 export class EventStream {
-  constructor(t, a) { if (t !== CONN_TOKEN) connPrivateCtor(); _conn.set(this, a); }
+  constructor(t, a) { if (t !== CONN_TOKEN) privateCtor(); _conn.set(this, a); }
   free() {}
   [Symbol.dispose]() {}
   [Symbol.asyncIterator]() { return this; }
@@ -36,10 +38,7 @@ export class EventStream {
 }
 
 (() => {
-  setFnName(EventStream, 'EventStream');
-  setFnName(WebSocketConnection, 'WebSocketConnection');
-  setFnName(IntoUnderlyingSource, 'IntoUnderlyingSource');
-  const proto = WasmClient.prototype, getMeta = proto.__clientMeta, rawRequest = proto.request;
+  const proto = WasmClient.prototype, getMeta = proto.__clientMeta;
   delete proto.__clientMeta;
 
   const SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
@@ -335,7 +334,7 @@ export class EventStream {
 
     const [onOpen, onEvent, onError, onReconnect, onClose] = pCbs(options, ['onOpen', 'onEvent', 'onError', 'onReconnect', 'onClose']);
     const dlMs = meta.deadlineMs, maxLine = meta.maxLineBytes, maxEvt = meta.maxEventBytes;
-    const reqSnap = meta.sseInterceptors;
+    const reqSnap = _sseSnap(client);
 
     const baseOpts = { __proto__: null, responseType: 'stream', deadlineMs: 0 };
     for (const k of SSE_FWD) { const v = opt(options, k); if (v !== undefined) baseOpts[k] = v; }
@@ -419,7 +418,7 @@ export class EventStream {
       while (st !== 'closed') {
         let kind = 'dropped', endedErr, wasOpen = false, res;
         try {
-          res = await rawRequest.call(client, method, target, undefined, body, { __proto__: null, ...baseOpts, signal: closer.signal, __sse: lastId, __sseInterceptors: reqSnap });
+          res = await _sseSend(client, reqSnap, target, method, body, { __proto__: null, ...baseOpts, signal: closer.signal, __sse: lastId });
         } catch (err) {
           if (err?.url) lastUrl = err.url;
           if (typeof err?.attempts === 'number') lastAtt = err.attempts;
