@@ -212,7 +212,7 @@ const __browserTransport = (() => {
       if (redirected && redir === 'error') {
         const loc = headers.get('location');
         try { session?.cancel?.(); } catch {}
-        throw new Error(loc ? `Redirect not allowed: ${status} to ${loc}` : 'Redirect not allowed');
+        throw Object.assign(new Error(loc ? `Redirect not allowed: ${status} to ${loc}` : 'Redirect not allowed'), { url: response.url || '' });
       }
       const opaque = redirected || response.type === 'opaque', url = response.url || req.url;
 
@@ -225,7 +225,8 @@ const __browserTransport = (() => {
         return { status, ok: false, url: response.url || '', headers: responseHeadersObj(headers), body: decodeUtf8(buffer) };
       }
       if (req.stream) {
-        settled = true;
+        // `cancel` stays armed: Rust disarms it once it owns the body, and a
+        // dropped attempt must still abort a response it never took
         return { status, ok: status >= 200 && status < 300, url, headers: responseHeadersObj(headers), body: response.body, cancelBody: () => controller.abort() };
       }
 
@@ -380,8 +381,11 @@ const __browserTransport = (() => {
   }
 
   function encodeBody(value) {
-    if (value instanceof Uint8Array) return [0, value.byteOffset || value.byteLength !== value.buffer.byteLength ? value.slice() : value, ''];
-    if (value instanceof ArrayBuffer) return [0, new Uint8Array(value), ''];
+    // Always copy: the body is read when each attempt is sent, after queueing
+    // or retry delays, and the caller may reuse, transfer or share the buffer
+    // (`new Uint8Array(view)` copies even for a Buffer, whose slice() is a view)
+    if (value instanceof Uint8Array) return [0, new Uint8Array(value), ''];
+    if (value instanceof ArrayBuffer) return [0, new Uint8Array(value.slice(0)), ''];
     if (ArrayBuffer.isView(value)) return [0, new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice(), ''];
     if (typeof URLSearchParams === 'function' && value instanceof URLSearchParams) return [1, value.toString(), 'application/x-www-form-urlencoded;charset=UTF-8'];
     if (typeof Blob === 'function' && value instanceof Blob) return value.arrayBuffer().then((b) => [0, new Uint8Array(b), value.type || 'application/octet-stream']);

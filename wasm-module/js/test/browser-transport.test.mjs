@@ -11,6 +11,7 @@ import { WasmClient, initSync } from '../../pkg/rust_fetch.js';
 import { json, rejection, sleep, startServer, startWebSocketServer } from './helpers.mjs';
 
 initSync({ module: readFileSync(new URL('../../pkg/rust_fetch_bg.wasm', import.meta.url)) });
+const flaky = { hit: false, onFirst: undefined };
 
 class FakeXMLHttpRequest {
   static instances = [];
@@ -103,6 +104,16 @@ before(async () => {
         res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-twice': ['a', 'b'] });
         return res.end(body);
       }
+      case '/flaky-mirror':
+        // First attempt: let the test write to its buffer, then ask for a retry
+        if (!flaky.hit) {
+          flaky.hit = true;
+          flaky.onFirst?.();
+          res.writeHead(503, { 'retry-after': '0' });
+          return res.end();
+        }
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        return res.end(req.body);
       case '/busy':
         res.writeHead(429, { 'content-type': 'text/plain', 'retry-after': '0' });
         return res.end('slow down');
@@ -181,6 +192,18 @@ describe('upload progress without XMLHttpRequest (fetch())', () => {
 
 // Node's fetch() returns the redirect itself with redirect: 'manual';
 // browsers return an opaque redirect (browsers.test.mjs)
+describe('request bodies through fetch()', () => {
+  it('are copied once, so a retry sends the same bytes after the caller reuses its buffer', async () => {
+    const client = new WasmClient({ retries: 1 });
+    for (const body of [new Uint8Array([1, 2, 3, 4]), new Uint8Array([1, 2, 3, 4]).buffer, Buffer.from([1, 2, 3, 4])]) {
+      Object.assign(flaky, { hit: false, onFirst: () => (ArrayBuffer.isView(body) ? body : new Uint8Array(body)).fill(0) });
+      const res = await client.put(server.url('/flaky-mirror'), { body, responseType: 'binary' });
+      assert.equal(res.attempts ?? 2, 2);
+      assert.deepEqual([...new Uint8Array(res.body)], [1, 2, 3, 4]);
+    }
+  });
+});
+
 describe('redirect modes through fetch()', () => {
   it("returns the redirect with redirect: 'manual'", async () => {
     const res = await new WasmClient({ redirect: 'manual' }).get(server.url('/moved'));
@@ -197,6 +220,7 @@ describe('redirect modes through fetch()', () => {
     const error = await rejection(new WasmClient().get(server.url('/moved'), { redirect: 'error' }));
     assert.equal(error.kind, 'NetworkError');
     assert.match(error.message, /Redirect not allowed: 302 to \/echo/);
+    assert.equal(error.url, server.url('/moved'));
     const res = await new WasmClient({ redirect: 'error' }).get(server.url('/echo'));
     assert.equal(res.status, 200);
   });
