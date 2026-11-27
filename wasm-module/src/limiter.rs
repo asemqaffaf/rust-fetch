@@ -124,6 +124,23 @@ pub(crate) fn origin(url: &str) -> String {
 struct Waiter {
     id: u64,
     waker: Option<Waker>,
+    /// Dropped while queued; skipped once it reaches the front.
+    gone: bool,
+}
+
+/// Ids are handed out in order, so the queue stays sorted by id: find a
+/// waiter in O(log n) and tombstone cancelled ones instead of shifting.
+fn waiter(queue: &mut VecDeque<Waiter>, id: u64) -> Option<&mut Waiter> {
+    let index = queue.binary_search_by_key(&id, |w| w.id).ok()?;
+    queue.get_mut(index)
+}
+
+/// Pop cancelled waiters off the front and return the next waker to wake.
+fn next_waker(queue: &mut VecDeque<Waiter>) -> Option<Waker> {
+    while queue.front().is_some_and(|w| w.gone) {
+        queue.pop_front();
+    }
+    queue.front().and_then(|w| w.waker.clone())
 }
 
 #[derive(Debug)]
@@ -184,7 +201,11 @@ impl Gate {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let id = state.next;
             state.next = state.next.wrapping_add(1);
-            state.queue.push_back(Waiter { id, waker: None });
+            state.queue.push_back(Waiter {
+                id,
+                waker: None,
+                gone: false,
+            });
             Ticket {
                 gate: Arc::clone(self),
                 id,
@@ -226,7 +247,7 @@ impl Ticket {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(slot) = state.queue.iter_mut().find(|w| w.id == self.id) {
+        if let Some(slot) = waiter(&mut state.queue, self.id) {
             slot.waker = Some(cx.waker().clone());
         }
         if state.queue.front().map(|w| w.id) != Some(self.id)
@@ -259,7 +280,7 @@ impl Ticket {
         state.queue.pop_front();
         state.active += 1;
         self.admitted = true;
-        let wake = state.queue.front().and_then(|w| w.waker.clone());
+        let wake = next_waker(&mut state.queue);
         drop(state);
         if let Some(wake) = wake {
             wake.wake();
@@ -277,10 +298,11 @@ impl Drop for Ticket {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.admitted {
             state.active -= 1;
-        } else if let Some(pos) = state.queue.iter().position(|w| w.id == self.id) {
-            state.queue.remove(pos);
+        } else if let Some(slot) = waiter(&mut state.queue, self.id) {
+            slot.gone = true;
+            slot.waker = None;
         }
-        let wake = state.queue.front().and_then(|w| w.waker.clone());
+        let wake = next_waker(&mut state.queue);
         drop(state);
         if let Some(wake) = wake {
             wake.wake();
@@ -369,6 +391,32 @@ mod tests {
         let mut stream = PermitStream::new(empty, Some(gate.acquire().await));
         assert!(stream.next().await.is_none());
         assert_eq!(gate.state.lock().unwrap().active, 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiters_behind_the_front_are_skipped() {
+        let limiter = Limiter::new(Config {
+            concurrent: Some(1),
+            rate: None,
+            per_origin: false,
+        });
+        let gate = limiter.gate("http://a/");
+        let first = gate.acquire().await;
+        let mut front = Box::pin(gate.acquire());
+        let mut middle = Box::pin(gate.acquire());
+        let mut last = Box::pin(gate.acquire());
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(front.as_mut().poll(&mut cx).is_pending());
+        assert!(middle.as_mut().poll(&mut cx).is_pending());
+        assert!(last.as_mut().poll(&mut cx).is_pending());
+        drop(middle); // tombstoned in place, not shifted out
+        assert_eq!(gate.state.lock().unwrap().queue.len(), 3);
+        drop(first);
+        drop(front.await); // admitting `front` pops the tombstone behind it
+        assert_eq!(gate.state.lock().unwrap().queue.len(), 1);
+        drop(last.await);
+        assert!(gate.state.lock().unwrap().queue.is_empty());
     }
 
     #[test]

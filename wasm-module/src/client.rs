@@ -430,7 +430,6 @@ impl Client {
         Ok(client)
     }
 
-    /// In browsers `fetch()` follows redirects; the bindings send requests
     /// Execute a request with its retry policy, falling back to the client's.
     ///
     /// With `stream`, a successful response's body is left unread.
@@ -2424,7 +2423,6 @@ mod tests {
         assert_eq!(client.config.retry_config.as_ref().unwrap().max_retries, 3);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_client_init_error() {

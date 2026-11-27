@@ -5,7 +5,8 @@ const REQUEST_METHODS = ['get', 'head', 'delete', 'post', 'put', 'patch', 'post_
 const invalidInput = (parameter, message) => Object.assign(new TypeError(message), { kind: 'InvalidInputError', parameter });
 const ownProp = (o, k) => (o != null && Object.hasOwn(Object(o), k) ? o[k] : undefined);
 const headerEntries = (value) => (value == null ? [] : typeof value === 'object' && typeof value[Symbol.iterator] === 'function' ? [...value] : Object.entries(value));
-const lowerHeaders = (headers) => Object.fromEntries(headerEntries(headers).map(([k, v]) => [String(k).toLowerCase(), String(v)]));
+// Values stay as given (the core validates them); null/undefined entries are dropped, as the core skips them.
+const lowerHeaders = (headers) => Object.fromEntries(headerEntries(headers).filter(([, v]) => v != null).map(([k, v]) => [String(k).toLowerCase(), v]));
 const cloneProto = (o, extra) => ({ __proto__: o == null ? Object.prototype : Object.getPrototypeOf(o), ...o, ...extra });
 const cloneValue = (v) => (v !== null && typeof v === 'object' ? structuredClone(v) : v);
 const originOf = (value, base) => { try { return new URL(value, base).origin; } catch { return undefined; } };

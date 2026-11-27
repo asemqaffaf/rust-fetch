@@ -594,11 +594,12 @@ async fn send_fetch_head(
         let length = f64::from(body_length);
         report_progress(callback, length, Some(length));
     }
+    let failed = !(200..300).contains(&status);
+    if let (true, Some(state)) = (failed, request_state) {
+        *state.url.borrow_mut() = Some(response.url());
+    }
     let redirected = check_redirect(&response, &headers, redirect)?;
-    if !(200..300).contains(&status) && !redirected {
-        if let Some(state) = request_state {
-            *state.url.borrow_mut() = Some(response.url());
-        }
+    if failed && !redirected {
         check_declared_length(&headers, limit)?;
         let buffer = match (
             limit.is_some() || phases.is_some_and(|phases| phases.idle.is_some()),

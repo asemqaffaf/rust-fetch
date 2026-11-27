@@ -54,6 +54,21 @@ impl WakeState {
     }
 }
 
+/// `setTimeout` milliseconds for `duration`: rounded up, so a timer never
+/// fires before the duration has passed, and capped at `i32::MAX` (~24.8 days).
+#[inline(never)]
+fn timeout_ms(duration: Duration) -> i32 {
+    let chunk = duration.min(Duration::from_millis(i32::MAX as u64));
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "chunk <= i32::MAX ms (~24.8 days)"
+    )]
+    let rounded = chunk.as_secs() as u32 * 1000
+        + chunk.subsec_millis()
+        + u32::from(chunk.subsec_nanos() % 1_000_000 != 0);
+    i32::try_from(rounded).unwrap_or(i32::MAX)
+}
+
 /// A `setTimeout`-based delay that clears its timer and drops its closure
 /// synchronously when dropped, so a finished request never keeps a Node.js
 /// process alive or leaves unsettled `Promise`/`FinalizationRegistry` entries.
@@ -80,14 +95,7 @@ impl Delay {
         // Browser/Node timers clamp at i32::MAX ms. Chain long waits and
         // round sub-millisecond durations up rather than shortening them.
         let chunk = self.remaining.min(Duration::from_millis(i32::MAX as u64));
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "chunk <= i32::MAX ms (~24.8 days)"
-        )]
-        let rounded = chunk.as_secs() as u32 * 1000
-            + chunk.subsec_millis()
-            + u32::from(chunk.subsec_nanos() % 1_000_000 != 0);
-        let ms = i32::try_from(rounded).unwrap_or(i32::MAX);
+        let ms = timeout_ms(chunk);
         self.remaining = self.remaining.saturating_sub(chunk);
         self.state.fired.set(false);
 
@@ -133,8 +141,7 @@ pub(crate) struct Timer {
 impl Timer {
     pub(crate) fn new(delay: Duration, callback: impl FnMut() + 'static) -> Self {
         let callback = Closure::<dyn FnMut()>::new(callback);
-        let ms = i32::try_from(delay.as_millis()).unwrap_or(i32::MAX);
-        let handle = set_timeout(callback.as_ref().unchecked_ref(), ms);
+        let handle = set_timeout(callback.as_ref().unchecked_ref(), timeout_ms(delay));
         Self {
             handle,
             _callback: callback,

@@ -44,7 +44,7 @@
         const finish = (cb, value) => { if (!done) { done = true; signal?.removeEventListener('abort', onAbort); shared.callers--; cb(value); } };
         const onAbort = () => { if (!done) { done = true; reject(cancelled(signal)); if (--shared.callers === 0) { shared.controller.abort(signal?.reason); if (this.#inflight.get(key) === shared) this.#inflight.delete(key); } } };
         signal?.addEventListener('abort', onAbort, { once: true });
-        shared.promise.then((r) => finish(resolve, created ? r : clone(r)), (e) => finish(reject, e));
+        shared.promise.then((r) => { if (!done) finish(resolve, created ? r : clone(r)); }, (e) => finish(reject, e));
       });
     }
     get(url, options) { return this.#share('get', url, options); }

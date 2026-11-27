@@ -303,8 +303,12 @@ impl DeadlineStream {
         };
         #[cfg(target_arch = "wasm32")]
         let task = Task {
+            // `setTimeout` caps at ~24.8 days: ignore that early fire rather
+            // than expire a longer deadline (slack covers clock jitter).
             _timer: crate::wasm::futures::Timer::new(deadline.remaining(), move || {
-                trigger_expire(&weak);
+                if deadline.remaining() < Duration::from_secs(1) {
+                    trigger_expire(&weak);
+                }
             }),
         };
         Self {

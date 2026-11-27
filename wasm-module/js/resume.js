@@ -3,7 +3,7 @@
   class ResumingClient extends WasmClient {
     get(url, options) {
       const resume = options?.resume;
-      if (!resume) return super.get(url, options);
+      if (resume === undefined || resume === false) return super.get(url, options);
       const config = resume === true ? {} : resume;
       if (config === null || typeof config !== 'object') return Promise.reject(invalidInput('resume', 'must be true or { maxResumes }'));
       const { maxResumes = 3, ...unknown } = config;
