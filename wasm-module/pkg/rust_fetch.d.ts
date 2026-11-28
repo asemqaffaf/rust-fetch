@@ -1020,10 +1020,6 @@ export interface InitOutput {
     readonly __wbg_wasmclient_free: (a: number, b: number) => void;
     readonly wasmclient___clientMeta: (a: number, b: number, c: number, d: any) => [number, number, number];
     readonly wasmclient___dispatch: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number) => any;
-    readonly wasmclient_addRequestInterceptor: (a: number, b: any) => number;
-    readonly wasmclient_addResponseInterceptor: (a: number, b: number, c: number) => number;
-    readonly wasmclient_clearInterceptors: (a: number) => void;
-    readonly wasmclient_ejectInterceptor: (a: number, b: number) => number;
     readonly wasmclient_new: (a: number) => [number, number, number];
     readonly wasmclient_retries_refused: (a: number) => number;
     readonly wasm_bindgen_c34250237fa48709___convert__closures_____invoke___js_sys_4dcc71bc37948e1___Function_fn_wasm_bindgen_c34250237fa48709___JsValue_____wasm_bindgen_c34250237fa48709___sys__Undefined___js_sys_4dcc71bc37948e1___Function_fn_wasm_bindgen_c34250237fa48709___JsValue_____wasm_bindgen_c34250237fa48709___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;

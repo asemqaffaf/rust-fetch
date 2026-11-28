@@ -25,11 +25,6 @@ const defineMethod = (proto, name, fn) => {
   setFnName(fn, name);
   Object.defineProperty(proto, name, { __proto__: null, value: fn, writable: true, configurable: true });
 };
-const wrapClient = (Sub, wrap) => {
-  if (wrap) for (const name of REQUEST_METHODS) defineMethod(Sub.prototype, name, wrap(name, optionsArgIndex(name), Object.getPrototypeOf(Sub).prototype[name]));
-  setFnName(Sub, 'WasmClient');
-  WasmClient = Sub;
-};
 let _te, _td, _sseSnap, _sseSend;
 const encodeUtf8 = (s) => (_te ??= new TextEncoder()).encode(s);
 const decodeUtf8 = (b) => (_td ??= new TextDecoder()).decode(b);

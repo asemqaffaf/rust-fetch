@@ -58,6 +58,17 @@ describe('auth option', () => {
     assert.equal((await fixed.get(other.url('/x'))).body.auth, null);
   });
 
+  it('ignores a baseUrl inherited from a polluted Object.prototype', async () => {
+    Object.prototype.baseUrl = other.url('').replace(/\/$/, '');
+    try {
+      const c = new WasmClient({ auth: { bearer: 'secret', origins: [base()] } });
+      assert.equal((await c.get(other.url('/x'))).body.auth, null);
+      assert.equal((await c.get(server.url('/x'))).body.auth, 'Bearer secret');
+    } finally {
+      delete Object.prototype.baseUrl;
+    }
+  });
+
   it('keeps an Authorization header the request sets itself', async () => {
     const c = new WasmClient({ baseUrl: base(), auth: { bearer: 'default' } });
     assert.equal((await c.get('/a', { headers: { Authorization: 'Custom 1' } })).body.auth, 'Custom 1');

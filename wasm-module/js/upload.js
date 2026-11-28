@@ -1,148 +1,130 @@
 // Portable byte transport, appended to the generated browser/Node glue by
 // postbuild. Retry decisions stay in Rust; an owner only opens a body source.
 (() => {
-  const ignore = () => {};
-  const MAX_CHUNK = 64 * 1024;
-  const usedSources = new WeakSet();
-  let encoder;
+  const ignore = () => {}, MAX_CHUNK = 64 * 1024, usedSources = new WeakSet();
   let supported;
-  const invalid = (message) => Object.assign(new TypeError(message), {
-    kind: 'InvalidInputError', parameter: 'body', code: 'RUST_FETCH_UPLOAD_INPUT',
-  });
-  const isSource = (value) => value != null &&
-    (typeof value.getReader === 'function' || typeof value[Symbol.asyncIterator] === 'function');
-  const bytes = (value) => {
-    if (typeof value === 'string') return (encoder ??= new TextEncoder()).encode(value);
-    if (value instanceof Uint8Array) return value;
-    if (value instanceof ArrayBuffer) return new Uint8Array(value);
-    if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  const invalid = (m) => Object.assign(new TypeError(m), { kind: 'InvalidInputError', parameter: 'body', code: 'RUST_FETCH_UPLOAD_INPUT' });
+  const isSource = (v) => v != null && (typeof v.getReader === 'function' || typeof v[Symbol.asyncIterator] === 'function');
+  const bytes = (v) => {
+    if (typeof v === 'string') return encodeUtf8(v);
+    if (v instanceof Uint8Array) return v;
+    if (v instanceof ArrayBuffer) return new Uint8Array(v);
+    if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
     throw invalid('A streaming request body must produce byte arrays or strings');
   };
-  function cancel(record) {
-    if (record.cancelled) return;
-    record.cancelled = true;
-    const finished = record.done;
-    record.done = true;
-    if (record.source && !record.claimed && !finished) {
-      if (usedSources.has(record.source)) record.source = undefined;
-      else usedSources.add(record.source);
+  // Record array: [0:loaded, 1:done, 2:cancelled, 3:claimed, 4:web, 5:source, 6:reader, 7:pending, 8:failure]
+  const mkRec = (src) => [0, false, false, false, false, src, undefined, undefined, undefined];
+  function cancelRec(r) {
+    if (r[2]) return;
+    r[2] = true;
+    const fin = r[1];
+    r[1] = true;
+    if (r[5] && !r[3] && !fin) {
+      if (usedSources.has(r[5])) r[5] = undefined;
+      else usedSources.add(r[5]);
     }
     try {
-      if (record.reader && !finished) {
-        const pending = record.web ? record.reader.cancel() : record.reader.return?.();
-        Promise.resolve(pending).catch(ignore);
-        if (record.web) record.reader.releaseLock();
+      if (r[6] && !fin) {
+        Promise.resolve(r[4] ? r[6].cancel() : r[6].return?.()).catch(ignore);
+        if (r[4]) r[6].releaseLock();
       }
-      if (!finished && !record.reader && typeof record.source?.cancel === 'function') Promise.resolve(record.source.cancel()).catch(ignore);
-      if (!finished) record.source?.destroy?.(); // Node Readable: interrupt a pending read too.
-    } catch { /* Cancellation preserves the request's original error. */ }
-    record.pending = undefined;
+      if (!fin && !r[6] && typeof r[5]?.cancel === 'function') Promise.resolve(r[5].cancel()).catch(ignore);
+      if (!fin) r[5]?.destroy?.();
+    } catch {}
+    r[7] = undefined;
   }
   function open(owner, progress, length) {
-    if (length != null && (!/^(0|[1-9][0-9]*)$/.test(String(length)) || !Number.isSafeInteger(Number(length)))) throw invalid('Content-Length must be a nonnegative safe integer for a streaming body');
-    const total = length == null ? 0 : Number(length);
-    const expected = length == null ? undefined : total;
-    let record = { __proto__: null, loaded: 0, done: false, source: owner.factory ? undefined : owner.source };
-    const report = (current) => {
-      if (progress && !current.cancelled) try { progress({ loaded: current.loaded, total }); } catch {}
-    };
+    if (length != null && (!/^(0|[1-9][0-9]*)$/.test(String(length)) || !Number.isSafeInteger(Number(length)))) {
+      throw invalid('Content-Length must be a nonnegative safe integer for a streaming body');
+    }
+    const total = length == null ? 0 : Number(length), expected = length == null ? undefined : total;
+    let rec = mkRec(owner[1] ? undefined : owner[0]);
+    const report = (r) => { if (progress && !r[2]) try { progress({ loaded: r[0], total }); } catch {} };
     async function read() {
-      const current = record;
+      const r = rec;
       try {
-        if (current.done) return { __proto__: null, done: true };
-        if (!current.reader) {
-          const source = owner.factory ? await owner.factory() : owner.source;
-          if (!isSource(source)) throw invalid('A body factory must return a ReadableStream or async iterable');
-          if (usedSources.has(source)) throw invalid('A streaming request body can only be sent once; provide a body factory to replay it');
-          usedSources.add(source);
-          owner.used = true;
-          current.claimed = true;
-          current.source = source;
-          current.web = typeof source.getReader === 'function';
-          if (current.web && source.locked) throw invalid('The streaming body is already locked');
-          current.reader = current.web ? source.getReader() : source[Symbol.asyncIterator]();
-          if (current.done) { current.done = false; current.cancelled = false; cancel(current); return { __proto__: null, done: true }; }
+        if (r[1]) return { __proto__: null, done: true };
+        if (!r[6]) {
+          const src = owner[1] ? await owner[1]() : owner[0];
+          if (!isSource(src)) throw invalid('A body factory must return a ReadableStream or async iterable');
+          if (usedSources.has(src)) throw invalid('A streaming request body can only be sent once; provide a body factory to replay it');
+          usedSources.add(src);
+          owner[2] = true;
+          r[3] = true;
+          r[5] = src;
+          r[4] = typeof src.getReader === 'function';
+          if (r[4] && src.locked) throw invalid('The streaming body is already locked');
+          r[6] = r[4] ? src.getReader() : src[Symbol.asyncIterator]();
+          if (r[1]) { r[1] = r[2] = false; cancelRec(r); return { __proto__: null, done: true }; }
         }
-        let data = current.pending;
+        let data = r[7];
         while (!data?.byteLength) {
-          const step = await (current.web ? current.reader.read() : current.reader.next());
-          if (current.done) return { __proto__: null, done: true };
+          const step = await (r[4] ? r[6].read() : r[6].next());
+          if (r[1]) return { __proto__: null, done: true };
           if (step.done) {
-            if (expected !== undefined && current.loaded !== expected) throw invalid('Streaming body length does not match Content-Length');
-            current.done = true;
-            if (current.web) current.reader.releaseLock();
+            if (expected !== undefined && r[0] !== expected) throw invalid('Streaming body length does not match Content-Length');
+            r[1] = true;
+            if (r[4]) r[6].releaseLock();
             return { __proto__: null, done: true };
           }
           data = bytes(step.value);
         }
         let chunk = data.subarray(0, MAX_CHUNK);
-        current.pending = data.byteLength > MAX_CHUNK ? data.subarray(MAX_CHUNK) : undefined;
-        if (expected !== undefined && current.loaded + chunk.byteLength > expected) throw invalid('Streaming body exceeds Content-Length');
-        current.loaded += chunk.byteLength;
-        if (expected !== undefined && current.loaded === expected) {
-          if (current.pending?.byteLength) throw invalid('Streaming body exceeds Content-Length');
+        r[7] = data.byteLength > MAX_CHUNK ? data.subarray(MAX_CHUNK) : undefined;
+        if (expected !== undefined && r[0] + chunk.byteLength > expected) throw invalid('Streaming body exceeds Content-Length');
+        r[0] += chunk.byteLength;
+        if (expected !== undefined && r[0] === expected) {
+          if (r[7]?.byteLength) throw invalid('Streaming body exceeds Content-Length');
           chunk = chunk.slice();
           for (;;) {
-            const step = await (current.web ? current.reader.read() : current.reader.next());
-            if (current.cancelled) return { __proto__: null, done: true };
+            const step = await (r[4] ? r[6].read() : r[6].next());
+            if (r[2]) return { __proto__: null, done: true };
             if (step.done) break;
             if (bytes(step.value).byteLength) throw invalid('Streaming body exceeds Content-Length');
           }
-          current.done = true;
-          if (current.web) current.reader.releaseLock();
+          r[1] = true;
+          if (r[4]) r[6].releaseLock();
         }
-        return { __proto__: null, done: false, data: chunk, end: current.done };
+        return { __proto__: null, done: false, data: chunk, end: r[1] };
       } catch (cause) {
-        const cancelled = current.cancelled;
-        cancel(current);
-        if (cancelled) return { __proto__: null, done: true };
-        return current.failure = { __proto__: null, done: true, error: cause?.message ?? String(cause), invalidInput: cause?.code === 'RUST_FETCH_UPLOAD_INPUT', cause };
+        const wasCancelled = r[2];
+        cancelRec(r);
+        if (wasCancelled) return { __proto__: null, done: true };
+        return r[8] = { __proto__: null, done: true, error: errMsg(cause), invalidInput: cause?.code === 'RUST_FETCH_UPLOAD_INPUT', cause };
       }
     }
     const session = {
       __proto__: null,
       next: read,
-      failure: () => record.failure,
-      cancel: () => cancel(record),
-      async nativeNext() {
-        const step = await read();
-        if (step.data) {
-          // Native code consumes the result on another thread. Own a copy
-          // rather than racing a producer that reuses its original buffer.
-          step.data = step.data.slice();
-        }
-        return step;
-      },
-      report: (loaded) => { if (progress && !record.cancelled) try { progress({ loaded, total }); } catch {} },
+      failure: () => rec[8],
+      cancel: () => cancelRec(rec),
+      async nativeNext() { const step = await read(); if (step.data) step.data = step.data.slice(); return step; },
+      report: (loaded) => { if (progress && !rec[2]) try { progress({ loaded, total }); } catch {} },
       readable() {
-        // No prototype: the ReadableStream constructor reads `type`, `start` and `size` by inheritance
         return safeStream({
           async pull(controller) {
-            const current = record;
-            const step = await read();
-            if (current.cancelled && step.error === undefined) return;
-            if (step.error !== undefined) controller.error(Object.assign(new Error(step.error), {
-              code: step.invalidInput ? 'RUST_FETCH_UPLOAD_INPUT' : 'RUST_FETCH_UPLOAD_ERROR', cause: step.cause,
-            }));
+            const r = rec, step = await read();
+            if (r[2] && step.error === undefined) return;
+            if (step.error !== undefined) controller.error(Object.assign(new Error(step.error), { code: step.invalidInput ? 'RUST_FETCH_UPLOAD_INPUT' : 'RUST_FETCH_UPLOAD_ERROR', cause: step.cause }));
             else if (step.done) controller.close();
-            else { controller.enqueue(step.data); report(current); }
+            else { controller.enqueue(step.data); report(r); }
           },
-          cancel: () => cancel(record),
+          cancel: () => cancelRec(rec),
         }, 0);
       },
     };
-    if (owner.factory) session.restart = () => { cancel(record); record = { __proto__: null, loaded: 0, done: false }; };
+    if (owner[1]) session.restart = () => { cancelRec(rec); rec = mkRec(undefined); };
     return session;
   }
   function create(source) {
     const factory = typeof source === 'function' ? source : undefined;
     if (!factory && !isSource(source)) return undefined;
-    const owner = { __proto__: null, source, factory, used: false };
+    const owner = [source, factory, false];
     const result = {
       __proto__: null,
       replayable: !!factory,
       open: (progress, length) => open(owner, progress ?? result.progress, length),
-      cancel: () => { if (!owner.used && !factory) cancel({ __proto__: null, source, done: false }); },
+      cancel: () => { if (!owner[2] && !factory) cancelRec(mkRec(source)); },
     };
     return result;
   }
@@ -150,13 +132,12 @@
     if (supported !== undefined) return supported;
     let duplex = false;
     try {
-      const request = new Request('https://rust-fetch.invalid/', {
-        __proto__: null,
-        method: 'POST',
-        body: new ReadableStream({ __proto__: null, type: undefined, autoAllocateChunkSize: undefined, pull: undefined, cancel: undefined, start(c) { c.close(); } }),
+      const req = new Request('https://rust-fetch.invalid/', {
+        __proto__: null, method: 'POST',
+        body: safeStream({ start(c) { c.close(); }, pull: undefined, cancel: undefined }),
         get duplex() { duplex = true; return 'half'; },
       });
-      supported = duplex && !request.headers.has('Content-Type');
+      supported = duplex && !req.headers.has('Content-Type');
     } catch { supported = false; }
     return supported;
   };

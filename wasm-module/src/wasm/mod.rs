@@ -956,11 +956,6 @@ impl WasmClient {
             if let Some(n) = max_event {
                 put_f64(&obj, "maxEventBytes", n as f64);
             }
-            let req_snaps = js_sys::Array::new();
-            for (_, f) in &self.interceptors.borrow().request {
-                req_snaps.push(f.as_ref());
-            }
-            put(&obj, "sseInterceptors", req_snaps.as_ref());
             return Ok(obj.into());
         }
         if let Some(base) = &cfg.base_url {
@@ -1020,21 +1015,21 @@ impl WasmClient {
         const OP_REQUEST_JSON: u8 = 11;
 
         match op {
-            OP_GET => self.perform(
+            OP_GET => self.perform_direct(
                 Method::Get,
                 url,
                 JsValue::UNDEFINED,
                 BodyMode::Auto(JsValue::UNDEFINED),
                 a,
             ),
-            OP_HEAD => self.perform(
+            OP_HEAD => self.perform_direct(
                 Method::Head,
                 url,
                 JsValue::UNDEFINED,
                 BodyMode::Auto(JsValue::UNDEFINED),
                 a,
             ),
-            OP_DELETE => self.perform(
+            OP_DELETE => self.perform_direct(
                 Method::Delete,
                 url,
                 JsValue::UNDEFINED,
@@ -1048,7 +1043,7 @@ impl WasmClient {
                     _ => Method::Patch,
                 };
                 let body = prop(&a, "body").unwrap_or(JsValue::UNDEFINED);
-                self.perform(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
+                self.perform_direct(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
             }
             OP_POST_JSON | OP_PUT_JSON | OP_PATCH_JSON => {
                 let method = match op {
@@ -1056,7 +1051,7 @@ impl WasmClient {
                     OP_PUT_JSON => Method::Put,
                     _ => Method::Patch,
                 };
-                self.perform(
+                self.perform_direct(
                     method,
                     url,
                     JsValue::UNDEFINED,
@@ -1082,7 +1077,7 @@ impl WasmClient {
                     None => Method::Get,
                 };
                 let body = prop(&a, "body").unwrap_or(JsValue::UNDEFINED);
-                self.perform(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
+                self.perform_direct(method, url, JsValue::UNDEFINED, BodyMode::Auto(body), a)
             }
             OP_REQUEST | OP_REQUEST_JSON => {
                 let method_str = a.as_string().unwrap_or_default();
@@ -1096,7 +1091,7 @@ impl WasmClient {
                 } else {
                     BodyMode::Auto(body)
                 };
-                self.perform(
+                self.perform_direct(
                     method,
                     url,
                     b.unwrap_or(JsValue::UNDEFINED),
@@ -1107,9 +1102,10 @@ impl WasmClient {
             _ => reject_request(invalid("op", "unknown dispatch op"), "", &url),
         }
     }
+}
 
+impl WasmClient {
     /// Run `interceptor` on every request before it is sent; returns an id for `ejectInterceptor`
-    #[wasm_bindgen(js_name = addRequestInterceptor)]
     pub fn add_request_interceptor(&self, interceptor: RequestInterceptor) -> u32 {
         let mut interceptors = self.interceptors.borrow_mut();
         interceptors.next_id += 1;
@@ -1122,7 +1118,6 @@ impl WasmClient {
 
     /// Run handlers on every settled request, like `promise.then(onFulfilled, onRejected)`;
     /// returns an id for `ejectInterceptor`
-    #[wasm_bindgen(js_name = addResponseInterceptor)]
     pub fn add_response_interceptor(
         &self,
         on_fulfilled: Option<ResponseFulfilledInterceptor>,
@@ -1140,7 +1135,6 @@ impl WasmClient {
     }
 
     /// Remove an interceptor; returns whether it was registered
-    #[wasm_bindgen(js_name = ejectInterceptor)]
     pub fn eject_interceptor(&self, id: u32) -> bool {
         let mut interceptors = self.interceptors.borrow_mut();
         let before = interceptors.request.len() + interceptors.response.len();
@@ -1150,17 +1144,13 @@ impl WasmClient {
     }
 
     /// Remove all interceptors
-    #[wasm_bindgen(js_name = clearInterceptors)]
     pub fn clear_interceptors(&self) {
         let mut interceptors = self.interceptors.borrow_mut();
         interceptors.request.clear();
         interceptors.response.clear();
     }
-}
 
-impl WasmClient {
     /// Fast direct request dispatch used by JS (`js/client.js` runs interceptors in JS).
-    #[allow(dead_code)]
     fn perform_direct(
         &self,
         method: Method,
@@ -1379,8 +1369,8 @@ impl WasmClient {
         let refused = std::sync::Arc::new(RequestState::default());
         futures::promise(async move {
             let has_request_interceptors = !request_interceptors.is_empty();
-            let active_meta = std::rc::Rc::new(RefCell::new(None::<(&'static str, String)>));
-            let active_meta_inner = Rc::clone(&active_meta);
+            let active_url = std::rc::Rc::new(RefCell::new(None::<String>));
+            let active_url_inner = Rc::clone(&active_url);
             let refused_inner = std::sync::Arc::clone(&refused);
             let deadline_copy = deadline.as_deref().copied();
             let result = async {
@@ -1393,8 +1383,7 @@ impl WasmClient {
                 }
                 request.deadline = deadline;
                 if has_request_interceptors {
-                    *active_meta_inner.borrow_mut() =
-                        Some((request.method.as_str(), request.url.clone()));
+                    *active_url_inner.borrow_mut() = Some(request.url.clone());
                 }
                 Ok(Ok(send_prepared(
                     &client,
@@ -1409,17 +1398,13 @@ impl WasmClient {
                 match crate::timeouts::with_deadline(deadline_copy, Box::pin(result)).await {
                     Ok(Ok(response)) => Ok(response),
                     Ok(Err(interceptor_error)) => Err(interceptor_error),
-                    Err(error) => {
-                        let active = active_meta.borrow();
-                        let (err_method, err_url) = active
-                            .as_ref()
-                            .map_or((context_method, context_url.as_str()), |(m, u)| {
-                                (*m, u.as_str())
-                            });
-                        Err(enrich_request_error(
-                            error, &refused, &options, err_method, err_url,
-                        ))
-                    }
+                    Err(error) => Err(enrich_request_error(
+                        error,
+                        &refused,
+                        &options,
+                        context_method,
+                        active_url.borrow().as_deref().unwrap_or(&context_url),
+                    )),
                 };
 
             for (_, on_fulfilled, on_rejected) in &response_interceptors {
