@@ -220,97 +220,177 @@ pub(crate) fn validate_header_value(value: &str) -> std::result::Result<(), &'st
 /// Canonical HTTP status reason phrase matching `http::StatusCode::canonical_reason`.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn status_text(status: u16) -> &'static str {
-    match status {
-        100 => "Continue",
-        101 => "Switching Protocols",
-        102 => "Processing",
-        103 => "Early Hints",
-        200 => "OK",
-        201 => "Created",
-        202 => "Accepted",
-        203 => "Non Authoritative Information",
-        204 => "No Content",
-        205 => "Reset Content",
-        206 => "Partial Content",
-        207 => "Multi-Status",
-        208 => "Already Reported",
-        226 => "IM Used",
-        300 => "Multiple Choices",
-        301 => "Moved Permanently",
-        302 => "Found",
-        303 => "See Other",
-        304 => "Not Modified",
-        305 => "Use Proxy",
-        307 => "Temporary Redirect",
-        308 => "Permanent Redirect",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        402 => "Payment Required",
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        406 => "Not Acceptable",
-        407 => "Proxy Authentication Required",
-        408 => "Request Timeout",
-        409 => "Conflict",
-        410 => "Gone",
-        411 => "Length Required",
-        412 => "Precondition Failed",
-        413 => "Payload Too Large",
-        414 => "URI Too Long",
-        415 => "Unsupported Media Type",
-        416 => "Range Not Satisfiable",
-        417 => "Expectation Failed",
-        418 => "I'm a teapot",
-        421 => "Misdirected Request",
-        422 => "Unprocessable Entity",
-        423 => "Locked",
-        424 => "Failed Dependency",
-        425 => "Too Early",
-        426 => "Upgrade Required",
-        428 => "Precondition Required",
-        429 => "Too Many Requests",
-        431 => "Request Header Fields Too Large",
-        451 => "Unavailable For Legal Reasons",
-        500 => "Internal Server Error",
-        501 => "Not Implemented",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        504 => "Gateway Timeout",
-        505 => "HTTP Version Not Supported",
-        506 => "Variant Also Negotiates",
-        507 => "Insufficient Storage",
-        508 => "Loop Detected",
-        510 => "Not Extended",
-        511 => "Network Authentication Required",
-        _ => "",
+    // Packed reason phrases + sorted (code, start_offset) table with sentinel end.
+    // Replaces a 62-arm match (~1.2 kB Wasm) with a binary search (~150 B).
+    const TEXTS: &str = concat!(
+        "Continue",
+        "Switching Protocols",
+        "Processing",
+        "Early Hints",
+        "OK",
+        "Created",
+        "Accepted",
+        "Non Authoritative Information",
+        "No Content",
+        "Reset Content",
+        "Partial Content",
+        "Multi-Status",
+        "Already Reported",
+        "IM Used",
+        "Multiple Choices",
+        "Moved Permanently",
+        "Found",
+        "See Other",
+        "Not Modified",
+        "Use Proxy",
+        "Temporary Redirect",
+        "Permanent Redirect",
+        "Bad Request",
+        "Unauthorized",
+        "Payment Required",
+        "Forbidden",
+        "Not Found",
+        "Method Not Allowed",
+        "Not Acceptable",
+        "Proxy Authentication Required",
+        "Request Timeout",
+        "Conflict",
+        "Gone",
+        "Length Required",
+        "Precondition Failed",
+        "Payload Too Large",
+        "URI Too Long",
+        "Unsupported Media Type",
+        "Range Not Satisfiable",
+        "Expectation Failed",
+        "I'm a teapot",
+        "Misdirected Request",
+        "Unprocessable Entity",
+        "Locked",
+        "Failed Dependency",
+        "Too Early",
+        "Upgrade Required",
+        "Precondition Required",
+        "Too Many Requests",
+        "Request Header Fields Too Large",
+        "Unavailable For Legal Reasons",
+        "Internal Server Error",
+        "Not Implemented",
+        "Bad Gateway",
+        "Service Unavailable",
+        "Gateway Timeout",
+        "HTTP Version Not Supported",
+        "Variant Also Negotiates",
+        "Insufficient Storage",
+        "Loop Detected",
+        "Not Extended",
+        "Network Authentication Required",
+    );
+    const ENTRIES: &[(u16, u16)] = &[
+        (100, 0),
+        (101, 8),
+        (102, 27),
+        (103, 37),
+        (200, 48),
+        (201, 50),
+        (202, 57),
+        (203, 65),
+        (204, 94),
+        (205, 104),
+        (206, 117),
+        (207, 132),
+        (208, 144),
+        (226, 160),
+        (300, 167),
+        (301, 183),
+        (302, 200),
+        (303, 205),
+        (304, 214),
+        (305, 226),
+        (307, 235),
+        (308, 253),
+        (400, 271),
+        (401, 282),
+        (402, 294),
+        (403, 310),
+        (404, 319),
+        (405, 328),
+        (406, 346),
+        (407, 360),
+        (408, 389),
+        (409, 404),
+        (410, 412),
+        (411, 416),
+        (412, 431),
+        (413, 450),
+        (414, 467),
+        (415, 479),
+        (416, 501),
+        (417, 522),
+        (418, 540),
+        (421, 552),
+        (422, 571),
+        (423, 591),
+        (424, 597),
+        (425, 614),
+        (426, 623),
+        (428, 639),
+        (429, 660),
+        (431, 677),
+        (451, 708),
+        (500, 737),
+        (501, 758),
+        (502, 773),
+        (503, 784),
+        (504, 803),
+        (505, 818),
+        (506, 844),
+        (507, 867),
+        (508, 887),
+        (510, 900),
+        (511, 912),
+        (u16::MAX, TEXTS.len() as u16),
+    ];
+    match ENTRIES[..ENTRIES.len() - 1].binary_search_by_key(&status, |&(code, _)| code) {
+        Ok(i) => {
+            let start = usize::from(ENTRIES[i].1);
+            let end = usize::from(ENTRIES[i + 1].1);
+            TEXTS.get(start..end).unwrap_or("")
+        }
+        Err(_) => "",
     }
 }
 
 /// Whether a `Content-Type` denotes JSON (`application/json`, `application/problem+json`, ...)
 pub(crate) fn is_json_content_type(content_type: &str) -> bool {
     let essence = mime_essence(content_type);
-    essence == "application/json" || essence.ends_with("+json")
+    essence.eq_ignore_ascii_case("application/json") || ends_with_ascii_ci(essence, "+json")
 }
 
 /// Whether a `Content-Type` denotes human-readable text
 pub(crate) fn is_text_content_type(content_type: &str) -> bool {
     let essence = mime_essence(content_type);
-    essence.starts_with("text/")
-        || essence.ends_with("+xml")
-        || matches!(
-            essence.as_str(),
-            "application/xml" | "application/javascript" | "application/x-www-form-urlencoded"
-        )
+    starts_with_ascii_ci(essence, "text/")
+        || ends_with_ascii_ci(essence, "+xml")
+        || essence.eq_ignore_ascii_case("application/xml")
+        || essence.eq_ignore_ascii_case("application/javascript")
+        || essence.eq_ignore_ascii_case("application/x-www-form-urlencoded")
 }
 
-fn mime_essence(content_type: &str) -> String {
-    content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim_ascii()
-        .to_ascii_lowercase()
+fn mime_essence(content_type: &str) -> &str {
+    content_type.split(';').next().unwrap_or("").trim_ascii()
+}
+
+fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
+    s.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+}
+
+fn ends_with_ascii_ci(s: &str, suffix: &str) -> bool {
+    s.len()
+        .checked_sub(suffix.len())
+        .and_then(|start| s.get(start..))
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
 }
 
 /// Redirects followed by default: the limit browsers use
@@ -400,6 +480,8 @@ pub enum Body {
 pub(crate) enum WasmBody {
     Text(String),
     Binary(Vec<u8>),
+    /// Binary body already in JS as a `Uint8Array` (avoids copying through Wasm memory)
+    JsBytes(js_sys::Uint8Array),
 }
 
 /// Compact `wasm32` request configuration held by `RequestBuilder`.

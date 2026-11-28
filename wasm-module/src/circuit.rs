@@ -176,8 +176,7 @@ impl Breaker {
         let delay = if state.phase == CircuitState::HalfOpen {
             self.config.reset_after
         } else {
-            Duration::try_from_secs_f64((state.until - now).max(0.0) / 1000.0)
-                .unwrap_or(Duration::MAX)
+            runtime::duration_from_ms(state.until - now)
         };
         Error::network(
             "Circuit open",

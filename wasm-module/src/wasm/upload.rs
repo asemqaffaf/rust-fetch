@@ -26,7 +26,7 @@ impl Drop for Owner {
 
 fn creator() -> Option<js_sys::Function> {
     js_sys::Reflect::get(
-        &js_sys::global(),
+        &super::global_this(),
         &js_sys::Symbol::for_("rust-fetch.upload"),
     )
     .ok()?
@@ -63,30 +63,9 @@ impl Upload {
     pub(crate) fn value(&self) -> &JsValue {
         &self.0.value
     }
-    pub(crate) fn open(&self, progress: Option<&js_sys::Function>) -> Result<JsValue> {
-        let open: js_sys::Function = js_sys::Reflect::get(&self.0.value, &"open".into())
-            .map_err(crate::Error::from)?
-            .unchecked_into();
-        open.call1(
-            &self.0.value,
-            progress.map_or(&JsValue::UNDEFINED, |p| p.as_ref()),
-        )
-        .map_err(|error| invalid("body", &js_error_message(&error)))
-    }
     pub(crate) fn progress(&self, callback: &js_sys::Function) -> Result<()> {
         js_sys::Reflect::set(&self.0.value, &"progress".into(), callback)
             .map_err(crate::Error::from)?;
         Ok(())
-    }
-    pub(crate) fn supported() -> bool {
-        creator()
-            .and_then(|create| {
-                let check: js_sys::Function = js_sys::Reflect::get(&create, &"supported".into())
-                    .ok()?
-                    .dyn_into()
-                    .ok()?;
-                check.call0(&create).ok()?.as_bool()
-            })
-            .unwrap_or(false)
     }
 }

@@ -37,7 +37,23 @@ fn body_of(request: &RequestBuilder) -> Option<Vec<u8>> {
     request.config.body.as_ref().map(|b| match b {
         WasmBody::Text(s) => s.as_bytes().to_vec(),
         WasmBody::Binary(bytes) => bytes.clone(),
+        WasmBody::JsBytes(arr) => arr.to_vec(),
     })
+}
+
+fn ensure_browser_runtime() -> JsValue {
+    let bt = js_sys::eval(concat!(
+        "(() => { ",
+        include_str!("../../js/client-helpers.js"),
+        "\n",
+        include_str!("../../js/browser-transport.js"),
+        " return __browserTransport; })()"
+    ))
+    .unwrap();
+    let fin: js_sys::Function = get(&bt, "finalizeStream").unchecked_into();
+    let enc: js_sys::Function = get(&bt, "encodeBody").unchecked_into();
+    super::transport::bind_browser_transport(bt.clone().unchecked_into(), fin, enc);
+    bt
 }
 
 fn content_type(request: &RequestBuilder) -> Option<String> {
@@ -253,6 +269,7 @@ fn body_types_and_methods() {
 
 #[wasm_bindgen_test]
 async fn bodies_are_encoded_by_type() {
+    let _ = ensure_browser_runtime();
     let cases: [(&str, &[u8], Option<&str>); 7] = [
         (r#""plain text""#, b"plain text", None),
         ("new Uint8Array([1, 2, 3])", &[1, 2, 3], None),
@@ -300,7 +317,7 @@ async fn bodies_are_encoded_by_type() {
             .unwrap()
             .config
             .body,
-        Some(WasmBody::Binary(_))
+        Some(WasmBody::Binary(_) | WasmBody::JsBytes(_))
     ));
 }
 
@@ -364,6 +381,7 @@ async fn unsupported_bodies_are_rejected() {
 
 #[wasm_bindgen_test]
 async fn form_data_and_blobs_become_multipart_and_bytes() {
+    let _ = ensure_browser_runtime();
     let form = js(r#"(() => {
         const f = new FormData();
         f.append("title", "Report");
@@ -426,10 +444,18 @@ fn content_type_of(request: &RequestBuilder) -> String {
 
 #[wasm_bindgen_test]
 fn decoding_follows_body_type_and_content_type() {
-    let decode_bytes = |bytes: &[u8], content_type: &str, body_type| {
+    let bt = ensure_browser_runtime();
+    let decode_fn: js_sys::Function = get(&bt, "decodeBody").unchecked_into();
+    let decode_bytes = |bytes: &[u8], content_type: &str, body_type: BodyType| {
         let buffer: JsValue = js_sys::Uint8Array::from(bytes).buffer().into();
-        let length = u32::try_from(bytes.len()).unwrap();
-        transport::decode_body(&buffer, length, content_type, body_type)
+        let length = JsValue::from_f64(bytes.len() as f64);
+        let args = js_sys::Array::of4(
+            &buffer,
+            &length,
+            &JsValue::from_str(content_type),
+            &JsValue::from_f64(f64::from(body_type as u8)),
+        );
+        js_sys::Reflect::apply(&decode_fn, &JsValue::UNDEFINED, &args)
     };
     let decode = |bytes: &[u8], content_type: &str, body_type| {
         decode_bytes(bytes, content_type, body_type).unwrap()
@@ -483,8 +509,10 @@ fn decoding_follows_body_type_and_content_type() {
     );
 
     let error = decode_bytes(b"{", "", BodyType::Json).unwrap_err();
-    assert!(matches!(error, Error::Parse { .. }));
-    assert!(error.to_string().contains("Failed to parse JSON response"));
+    assert_eq!(
+        get(&error, "code").as_string().as_deref(),
+        Some("RUST_FETCH_PARSE")
+    );
 }
 
 #[wasm_bindgen_test]
@@ -603,7 +631,12 @@ fn helpers() {
     assert!(!is_instance_of_global(&js("{}"), "NoSuchGlobal"));
     assert!(!is_instance_of_global(&js("{}"), "Math"));
 
-    assert!(js_bytes(&js("{}")).is_none());
+    let _ = ensure_browser_runtime();
+    assert!(transport::encode_body_fn()
+        .unwrap()
+        .call1(&JsValue::UNDEFINED, &js("{}"))
+        .unwrap()
+        .is_null());
     assert!(into_js::<JsValue>(None).is_undefined());
     assert_eq!(non_negative_u32(4_294_967_296.0, "n").is_err(), true);
 }
@@ -1096,6 +1129,7 @@ async fn streaming_bodies_stay_lazy_and_expose_replay_policy() {
 
 #[wasm_bindgen_test]
 fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
+    let _ = ensure_browser_runtime();
     let client = Client::new().unwrap();
     let json_req = client
         .post("https://example.com/json")
@@ -1106,7 +1140,7 @@ fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
         Some("application/json")
     );
     assert!(matches!(json_req.config.body, Some(WasmBody::Binary(_))));
-    assert!(super::transport::StreamingRequest::new(
+    assert!(super::transport::PreparedRequest::new_streaming(
         "https://example.com/json",
         &json_req.config,
         &json_req.transport_options(),
@@ -1133,7 +1167,7 @@ fn streaming_request_accepts_json_and_form_builders_on_wasm32() {
         form_req.config.body.as_ref(),
         Some(WasmBody::Text(s)) if s == "k=a+b"
     ));
-    assert!(super::transport::StreamingRequest::new(
+    assert!(super::transport::PreparedRequest::new_streaming(
         "https://example.com/form",
         &form_req.config,
         &form_req.transport_options(),

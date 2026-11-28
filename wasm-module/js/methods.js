@@ -50,11 +50,9 @@ export class IntoUnderlyingSink {
   defineMethod(proto, 'request', function (method, url, headers, body, options) {
     return dispatch.call(this, OP_REQUEST, url, typeof method === 'string' ? method : String(method), headers, body, options);
   });
-  // Preserve exported class names after esbuild minification without keepNames' unsafe __name helper.
   for (const [ctor, name] of [
     [IntoUnderlyingByteSource, 'IntoUnderlyingByteSource'],
     [IntoUnderlyingSink, 'IntoUnderlyingSink'],
-    [IntoUnderlyingSource, 'IntoUnderlyingSource'],
   ]) setFnName(ctor, name);
 })();
 

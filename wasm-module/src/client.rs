@@ -235,34 +235,6 @@ impl StreamingResponse {
         crate::limiter::PermitStream::new(chunks, self.permit)
     }
 
-    /// The transport's stream as it is, when nothing needs to see the bytes
-    /// on their way (no download progress, no size limit); otherwise the
-    /// response back, to read through [`StreamingResponse::into_stream`]
-    #[cfg(target_arch = "wasm32")]
-    #[allow(
-        clippy::expect_used,
-        reason = "only guarded bodies drop the raw body, and those return early"
-    )]
-    pub(crate) fn into_raw(
-        self,
-    ) -> std::result::Result<
-        (
-            Option<web_sys::ReadableStream>,
-            Option<web_sys::AbortController>,
-        ),
-        Self,
-    > {
-        if self.progress.is_some()
-            || self.limit.is_some()
-            || self.permit.is_some()
-            || self.idle.is_some()
-            || self.guarded.is_some()
-        {
-            return Err(self);
-        }
-        Ok(self.inner.expect("raw body").into_raw())
-    }
-
     /// Read the remaining body into memory
     pub async fn bytes(self) -> Result<Vec<u8>> {
         let mut body = Vec::new();
@@ -1011,13 +983,11 @@ fn join_base_url(base: &str, path: &str) -> String {
 pub(crate) fn page_url() -> Option<crate::url::Url> {
     #[cfg(target_arch = "wasm32")]
     {
-        let location = js_sys::Reflect::get(&js_sys::global(), &"location".into()).ok()?;
+        let location = crate::wasm::get_prop(&crate::wasm::global_this(), "location");
         if location.is_undefined() || location.is_null() {
             return None;
         }
-        let href = js_sys::Reflect::get(&location, &"href".into())
-            .ok()?
-            .as_string()?;
+        let href = crate::wasm::get_str(&location, "href")?;
         crate::url::Url::parse(&href).ok()
     }
 
@@ -1147,34 +1117,34 @@ impl Drop for Pending {
 
 /// Builder for creating HTTP clients
 pub struct ClientBuilder {
-    headers: Headers,
-    timeout: Option<Duration>,
-    phases: crate::PhaseTimeouts,
-    retry_config: Option<RetryConfig>,
-    base_url: Option<String>,
-    redirect: Redirect,
-    max_redirects: u32,
-    allow_absolute_urls: bool,
-    max_response_bytes: Option<u64>,
-    sensitive_headers: Vec<String>,
-    allow_insecure_redirects: bool,
-    max_pending_requests: Option<usize>,
-    retry_budget: Option<RetryBudget>,
-    limits: crate::limiter::Config,
-    circuit: Option<crate::CircuitBreaker>,
+    pub(crate) headers: Headers,
+    pub(crate) timeout: Option<Duration>,
+    pub(crate) phases: crate::PhaseTimeouts,
+    pub(crate) retry_config: Option<RetryConfig>,
+    pub(crate) base_url: Option<String>,
+    pub(crate) redirect: Redirect,
+    pub(crate) max_redirects: u32,
+    pub(crate) allow_absolute_urls: bool,
+    pub(crate) max_response_bytes: Option<u64>,
+    pub(crate) sensitive_headers: Vec<String>,
+    pub(crate) allow_insecure_redirects: bool,
+    pub(crate) max_pending_requests: Option<usize>,
+    pub(crate) retry_budget: Option<RetryBudget>,
+    pub(crate) limits: crate::limiter::Config,
+    pub(crate) circuit: Option<crate::CircuitBreaker>,
     // The builder only stores this callback; it never invokes it. Preserve
     // its existing panic-safety traits without restricting application hooks.
-    circuit_hook: Option<std::panic::AssertUnwindSafe<Arc<dyn crate::CircuitCallback>>>,
-    max_line_bytes: Option<usize>,
-    max_event_bytes: Option<usize>,
+    pub(crate) circuit_hook: Option<std::panic::AssertUnwindSafe<Arc<dyn crate::CircuitCallback>>>,
+    pub(crate) max_line_bytes: Option<usize>,
+    pub(crate) max_event_bytes: Option<usize>,
     #[cfg(target_arch = "wasm32")]
-    fetch_options: Option<js_sys::Object>,
+    pub(crate) fetch_options: Option<js_sys::Object>,
     #[cfg(target_arch = "wasm32")]
-    proxy: Option<String>,
+    pub(crate) proxy: Option<String>,
     #[cfg(target_arch = "wasm32")]
-    allow_private_network: bool,
+    pub(crate) allow_private_network: bool,
     #[cfg(target_arch = "wasm32")]
-    idempotency: crate::wasm::idempotency::Defaults,
+    pub(crate) idempotency: crate::wasm::idempotency::Defaults,
 }
 
 impl ClientBuilder {
@@ -1208,33 +1178,6 @@ impl ClientBuilder {
             #[cfg(target_arch = "wasm32")]
             idempotency: crate::wasm::idempotency::Defaults::default(),
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn idempotency(mut self, defaults: crate::wasm::idempotency::Defaults) -> Self {
-        self.idempotency = defaults;
-        self
-    }
-
-    /// Node.js: whether requests may reach private and reserved addresses
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn allow_private_network(mut self, allow: bool) -> Self {
-        self.allow_private_network = allow;
-        self
-    }
-
-    /// Node.js: send requests through a proxy (`'env'` or a URL), validated by the bindings
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn proxy(mut self, proxy: Option<String>) -> Self {
-        self.proxy = proxy;
-        self
-    }
-
-    /// Browser `fetch()` options for every request, validated by the bindings
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn fetch_options(mut self, options: Option<js_sys::Object>) -> Self {
-        self.fetch_options = options;
-        self
     }
 
     /// What to do when the server redirects (default: [`Redirect::Follow`])
@@ -1297,12 +1240,14 @@ impl ClientBuilder {
     }
 
     /// JavaScript: the longest line allowed in NDJSON responses and event streams
+    #[allow(dead_code)]
     pub(crate) fn max_line_bytes(mut self, limit: usize) -> Self {
         self.max_line_bytes = Some(limit);
         self
     }
 
     /// JavaScript: the most data one Server-Sent Event can hold
+    #[allow(dead_code)]
     pub(crate) fn max_event_bytes(mut self, limit: usize) -> Self {
         self.max_event_bytes = Some(limit);
         self
@@ -1517,13 +1462,13 @@ pub struct RequestBuilder {
     #[cfg(target_arch = "wasm32")]
     pub(crate) config: WasmRequestConfig,
     url: String,
-    query: Vec<(String, String)>,
+    pub(crate) query: Vec<(String, String)>,
     progress: Option<ProgressFn>,
     /// Native targets: reports the request body as the connection takes it
     #[cfg(not(target_arch = "wasm32"))]
     upload_progress: Option<ProgressFn>,
     /// None inherits the client policy; a zero-retry config disables it.
-    retry_config: Option<RetryConfig>,
+    pub(crate) retry_config: Option<RetryConfig>,
     #[cfg(target_arch = "wasm32")]
     pub(crate) observer: Option<js_sys::Function>,
     /// The client's `transport` option: a function that answers requests
@@ -1531,15 +1476,15 @@ pub struct RequestBuilder {
     pub(crate) transport: Option<js_sys::Function>,
     #[cfg(target_arch = "wasm32")]
     pub(crate) upload: Option<crate::wasm::upload::Upload>,
-    phase_overrides: Option<Box<crate::PhaseTimeouts>>,
+    pub(crate) phase_overrides: Option<Box<crate::PhaseTimeouts>>,
     pub(crate) deadline: Option<Box<crate::timeouts::Deadline>>,
     idempotency_header: Option<String>,
-    redirect: Redirect,
-    max_redirects: u32,
-    allow_absolute_urls: bool,
+    pub(crate) redirect: Redirect,
+    pub(crate) max_redirects: u32,
+    pub(crate) allow_absolute_urls: bool,
     pub(crate) max_response_bytes: Option<u64>,
-    sensitive_headers: Vec<String>,
-    allow_insecure_redirects: bool,
+    pub(crate) sensitive_headers: Vec<String>,
+    pub(crate) allow_insecure_redirects: bool,
     /// Node.js: `allowPrivateNetwork`
     #[cfg(target_arch = "wasm32")]
     pub(crate) allow_private_network: bool,
@@ -1559,6 +1504,8 @@ impl RequestBuilder {
         self,
         body_type: crate::wasm::BodyType,
         progress: crate::wasm::transport::ProgressCallbacks,
+        signal: Option<web_sys::AbortSignal>,
+        max_line_bytes: Option<usize>,
     ) -> Result<wasm_bindgen::JsValue> {
         self.check_absolute_url()?;
         let url = resolve_url(
@@ -1567,13 +1514,30 @@ impl RequestBuilder {
             &self.url,
             &self.query,
         )?;
-        let request = crate::wasm::transport::PreparedRequest::new(
-            url.as_str(),
-            &self.config,
-            &self.transport_options(),
+        let streaming = matches!(
             body_type,
-            progress,
-        )?;
+            crate::wasm::BodyType::Stream | crate::wasm::BodyType::Ndjson
+        );
+        let download_progress = if streaming {
+            progress.download.clone()
+        } else {
+            None
+        };
+        let request = if streaming {
+            crate::wasm::transport::PreparedRequest::new_streaming(
+                url.as_str(),
+                &self.config,
+                &self.transport_options(),
+            )?
+        } else {
+            crate::wasm::transport::PreparedRequest::new(
+                url.as_str(),
+                &self.config,
+                &self.transport_options(),
+                body_type,
+                progress,
+            )?
+        };
         // The Node transport runs its own timer per attempt (cheaper than a
         // wasm-side timer); the policy and error are the same.
         let timeout = if request.enforces_timeout() {
@@ -1583,7 +1547,8 @@ impl RequestBuilder {
         };
         // `send_js` is always called from `send_prepared` under `send_request`'s
         // `with_deadline`, so a second deadline wrapper here would duplicate the timer.
-        self.client
+        let (response, permit) = self
+            .client
             .execute_retrying(
                 url.as_str(),
                 timeout,
@@ -1591,8 +1556,21 @@ impl RequestBuilder {
                 self.retry_refused.as_deref().map(|state| &state.refused),
                 || request.send(),
             )
-            .await
-            .map(|(response, _permit)| response)
+            .await?;
+        if streaming {
+            return crate::wasm::transport::finalize_stream_response(
+                response,
+                matches!(body_type, crate::wasm::BodyType::Ndjson),
+                max_line_bytes,
+                self.max_response_bytes,
+                self.phase_options().idle,
+                self.effective_deadline(),
+                signal,
+                download_progress,
+                permit,
+            );
+        }
+        Ok(response)
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1981,74 +1959,30 @@ impl RequestBuilder {
     /// Execute the request and read the whole response incrementally via `fetch()`.
     #[cfg(target_arch = "wasm32")]
     pub async fn send(self) -> Result<Response> {
-        self.check_absolute_url()?;
-        let url = resolve_url(
-            self.client.config.base_url.as_deref(),
-            page_url(),
-            &self.url,
-            &self.query,
-        )?;
-        let request = crate::wasm::transport::StreamingRequest::new(
-            url.as_str(),
-            &self.config,
-            &self.transport_options(),
-        )?;
-        let deadline = self.effective_deadline();
         let idle = self.phase_options().idle;
         let limit = self.max_response_bytes;
-        let progress = self.progress.as_ref();
-        let ((status, headers, final_url, bytes), _permit) = crate::timeouts::with_deadline(
-            deadline,
-            self.client.execute_retrying(
-                url.as_str(),
-                self.config.timeout,
-                self.retry_policy(),
-                self.retry_refused.as_deref().map(|state| &state.refused),
-                || async {
-                    match request.send().await? {
-                        Attempt::HttpError(error, retry_after) => {
-                            Ok(Attempt::HttpError(error, retry_after))
-                        }
-                        Attempt::Success(response) => {
-                            let total = response.body.content_length();
-                            if let (Some(limit), Some(total)) = (limit, total) {
-                                if total > limit {
-                                    return Err(Error::too_large(limit));
-                                }
-                            }
-                            let mut body = Vec::new();
-                            let mut chunks =
-                                std::pin::pin!(crate::timeouts::idle(response.body.chunks(), idle));
-                            while let Some(chunk) = chunks.next().await {
-                                let chunk = chunk?;
-                                body.extend_from_slice(&chunk);
-                                if let Some(limit) = limit.filter(|l| body.len() as u64 > *l) {
-                                    return Err(Error::too_large(limit));
-                                }
-                                if let Some(progress) = progress {
-                                    progress(Progress {
-                                        loaded: body.len() as u64,
-                                        total,
-                                    });
-                                }
-                            }
-                            Ok(Attempt::Success((
-                                response.status,
-                                response.headers,
-                                response.url,
-                                body,
-                            )))
-                        }
-                    }
-                },
-            ),
-        )
-        .await?;
+        let format = self.config.response_format;
+        let response = self.send_streaming().await?;
+        let status = response.status;
+        let status_text = response.status_text.clone();
+        let headers = response.headers.clone();
+        let final_url = response.url.clone();
+        let total = response.content_length();
+        if let (Some(limit), Some(total)) = (limit, total) {
+            if total > limit {
+                return Err(Error::too_large(limit));
+            }
+        }
+        let mut body = Vec::new();
+        let mut chunks = std::pin::pin!(crate::timeouts::idle(response.into_stream(), idle));
+        while let Some(chunk) = crate::wasm::futures::next_item(chunks.as_mut()).await {
+            body.extend_from_slice(&chunk?);
+        }
         let content_type = headers.get_first("content-type").unwrap_or("");
-        let body = decode_body(bytes, content_type, self.config.response_format)?;
+        let body = decode_body(body, content_type, format)?;
         Ok(Response {
             status,
-            status_text: crate::types::status_text(status).to_string(),
+            status_text,
             headers,
             body,
             url: final_url,
@@ -2069,7 +2003,7 @@ impl RequestBuilder {
             &self.url,
             &self.query,
         )?;
-        let request = crate::wasm::transport::StreamingRequest::new(
+        let request = crate::wasm::transport::PreparedRequest::new_streaming(
             url.as_str(),
             &self.config,
             &self.transport_options(),
@@ -2086,6 +2020,7 @@ impl RequestBuilder {
             ),
         )
         .await?;
+        let response = crate::wasm::transport::into_streamed_response(response)?;
         let length = response.body.content_length();
         Ok(StreamingResponse {
             status: response.status,
@@ -2163,10 +2098,10 @@ fn client_init_error(error: reqwest::Error) -> Error {
 pub(crate) fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Duration {
     let exponent = i32::try_from(attempt.saturating_sub(1)).unwrap_or(i32::MAX);
     let delay = config.initial_delay.as_secs_f64() * config.multiplier.powi(exponent);
-    let delay = delay.min(config.max_delay.as_secs_f64());
+    let max_secs = config.max_delay.as_secs_f64();
+    let delay = delay.min(max_secs);
     if delay > 0.0 {
-        // Float rounding near Duration::MAX can overflow; cap instead of panicking
-        Duration::try_from_secs_f64(delay).unwrap_or(config.max_delay)
+        runtime::duration_from_ms(delay * 1000.0).min(config.max_delay)
     } else {
         Duration::ZERO
     }
@@ -2175,8 +2110,8 @@ pub(crate) fn calculate_retry_delay(attempt: u32, config: &RetryConfig) -> Durat
 /// Randomize a delay to between 50% and 100% of its value, so many clients
 /// retrying at once don't hit a recovering server in lockstep
 pub(crate) fn with_jitter(delay: Duration) -> Duration {
-    Duration::try_from_secs_f64(delay.as_secs_f64() * (0.5 + runtime::random() * 0.5))
-        .unwrap_or(delay)
+    runtime::duration_from_ms(delay.as_secs_f64() * 1000.0 * (0.5 + runtime::random() * 0.5))
+        .min(delay)
 }
 
 #[cfg(test)]

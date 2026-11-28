@@ -45,7 +45,7 @@ export type ReadableStreamType = "bytes";
 }
 if (!types.includes('export class EventStream')) {
   types = types.replace(
-    'export class IntoUnderlyingSource {\n',
+    '/**\n * HTTP client for JavaScript\n */\nexport class WasmClient {\n',
     `/**
  * A Server-Sent Events stream created by \`WasmClient.events()\`; also an async iterator of events
  */
@@ -108,7 +108,18 @@ export class IntoUnderlyingSink {
     write(chunk: any): Promise<any>;
 }
 
-export class IntoUnderlyingSource {\n`,
+export class IntoUnderlyingSource {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    cancel(): void;
+    pull(controller: ReadableStreamDefaultController): Promise<any>;
+}
+
+/**
+ * HTTP client for JavaScript
+ */
+export class WasmClient {\n`,
   );
 }
 // Client verb shortcuts, EventStream/WebSocketConnection, and standalone functions
@@ -324,29 +335,10 @@ if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
 }
 types = types.replace(generic, '$1<T = any>($2): Promise<HttpResponse<T>>;');
 const glueUrl = new URL('rust_fetch.js', pkgDir);
-// ReadableStream builds from our IntoUnderlyingSource, which inherits from
-// Object.prototype; the constructor reads `type`, `start`,
-// `autoAllocateChunkSize` and `size` by inheritance: with one of those names
-// polluted, every call returning a stream threw. Own-define them and pass a
-// CountQueuingStrategy with highWaterMark 0.
-const construct = 'new ReadableStream(IntoUnderlyingSource.__wrap(arg0))';
-const glueNow = readFileSync(glueUrl, 'utf8');
-if (glueNow.split(construct).length !== 2) {
-  throw new Error('postbuild: expected exactly one ReadableStream construction in rust_fetch.js');
-}
-writeFileSync(
-  glueUrl,
-  `${glueNow.replace(construct, 'new ReadableStream(streamSource(IntoUnderlyingSource.__wrap(arg0)), new CountQueuingStrategy({ highWaterMark: 0 }))')}
-// Added by scripts/postbuild.mjs
-function streamSource(source) {
-  for (const name of ['type', 'autoAllocateChunkSize', 'start']) Object.defineProperty(source, name, { __proto__: null, value: undefined });
-  return source;
-}
-`,
-);
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const methods = readFileSync(new URL('wasm-module/js/methods.js', root), 'utf8');
+const browserTransport = readFileSync(new URL('wasm-module/js/browser-transport.js', root), 'utf8');
 const connections = readFileSync(new URL('wasm-module/js/connections.js', root), 'utf8');
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
@@ -372,12 +364,22 @@ const exportedFunctionNames = [
 ];
 const restoreFunctionNames = `for (const [k, v] of Object.entries({ __wbg_init, ${exportedFunctionNames.join(', ')} })) setFnName(v, k);`;
 let baseGlue = readFileSync(glueUrl, 'utf8');
+if (!baseGlue.includes('export function __bindBrowserTransport(')) {
+  throw new Error('postbuild: __bindBrowserTransport not found in rust_fetch.js');
+}
+baseGlue = baseGlue.replace('export function __bindBrowserTransport(', 'function __bindBrowserTransport(');
 if (!baseGlue.includes('export class __SseParser ')) {
   throw new Error('postbuild: __SseParser not found in rust_fetch.js');
 }
 baseGlue = baseGlue.replace('export class __SseParser ', 'class __SseParser ');
+const startCall = 'wasm.__wbindgen_start();';
+if (baseGlue.split(startCall).length !== 2) {
+  throw new Error('postbuild: expected exactly one __wbindgen_start() in rust_fetch.js');
+}
+baseGlue = baseGlue.replace(startCall, `${startCall}\n    __bindBrowserTransport(__browserTransport, __browserTransport.finalizeStream, __browserTransport.encodeBody);`);
 const combinedGlue = `${baseGlue}
 ${clientHelpers.trimEnd()}
+${browserTransport.trimEnd()}
 ${methods.trimEnd()}
 ${upload.trimEnd()}
 ${connections.trimEnd()}

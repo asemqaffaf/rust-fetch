@@ -7,7 +7,7 @@ use crate::{
     client::{Client, WasmClient},
     error::Result,
     types::Method,
-    wasm::{parse_method, send_request, BodyMode, JsRequest},
+    wasm::{parse_method, send_prepared, BodyMode, JsRequest},
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
@@ -44,8 +44,7 @@ async fn fetch_body(url: String, response_type: &str) -> Result<JsValue> {
     )?;
     let options = js_sys::Object::new();
     js_sys::Reflect::set(&options, &"responseType".into(), &response_type.into())?;
-    let response =
-        send_request(&client, request, &options, &std::sync::Arc::default(), true).await?;
+    let response = send_prepared(&client, request, &options, &std::sync::Arc::default()).await?;
     Ok(js_sys::Reflect::get(&response, &"body".into())?)
 }
 
@@ -65,12 +64,11 @@ pub async fn fetch_with_options(
     let body = BodyMode::Auto(body.map_or(JsValue::UNDEFINED, JsValue::from));
     let request = JsRequest::new(method, url, &headers, body, &JsValue::UNDEFINED)?;
     // A new client has no retry budget, so nothing to mark on its errors
-    send_request(
+    send_prepared(
         &client,
         request,
         &JsValue::UNDEFINED,
         &std::sync::Arc::default(),
-        true,
     )
     .await
 }

@@ -1012,14 +1012,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __bindBrowserTransport: (a: any, b: any, c: any) => void;
     readonly __bindNodeTransport: (a: any, b: any) => [number, number];
     readonly __sseparser_feed: (a: number, b: number, c: number) => any;
     readonly __sseparser_new: (a: number, b: number) => number;
     readonly __wbg___sseparser_free: (a: number, b: number) => void;
-    readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
     readonly __wbg_wasmclient_free: (a: number, b: number) => void;
-    readonly intounderlyingsource_cancel: (a: number) => void;
-    readonly intounderlyingsource_pull: (a: number, b: any) => any;
     readonly wasmclient___clientMeta: (a: number, b: number, c: number, d: any) => [number, number, number];
     readonly wasmclient___dispatch: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number) => any;
     readonly wasmclient_addRequestInterceptor: (a: number, b: any) => number;
@@ -1030,7 +1028,6 @@ export interface InitOutput {
     readonly wasmclient_retries_refused: (a: number) => number;
     readonly wasm_bindgen_c34250237fa48709___convert__closures_____invoke___js_sys_4dcc71bc37948e1___Function_fn_wasm_bindgen_c34250237fa48709___JsValue_____wasm_bindgen_c34250237fa48709___sys__Undefined___js_sys_4dcc71bc37948e1___Function_fn_wasm_bindgen_c34250237fa48709___JsValue_____wasm_bindgen_c34250237fa48709___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_c34250237fa48709___convert__closures_____invoke___wasm_bindgen_c34250237fa48709___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_c34250237fa48709___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_c34250237fa48709___convert__closures_____invoke___wasm_bindgen_c34250237fa48709___JsValue______true_: (a: number, b: number, c: any) => void;
     readonly wasm_bindgen_c34250237fa48709___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

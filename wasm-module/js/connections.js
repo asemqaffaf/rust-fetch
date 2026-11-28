@@ -1,6 +1,7 @@
 // WebSocketConnection and EventStream built on the Rust core's client config,
 // HTTP streaming pipeline, and fuzzed SSE parser (`__SseParser`).
 const connPrivateCtor = () => { throw new TypeError('Illegal constructor'); };
+export class IntoUnderlyingSource { constructor() { connPrivateCtor(); } }
 
 const CONN_TOKEN = Symbol(), _conn = new WeakMap();
 
@@ -37,6 +38,7 @@ export class EventStream {
 (() => {
   setFnName(EventStream, 'EventStream');
   setFnName(WebSocketConnection, 'WebSocketConnection');
+  setFnName(IntoUnderlyingSource, 'IntoUnderlyingSource');
   const proto = WasmClient.prototype, getMeta = proto.__clientMeta, rawRequest = proto.request;
   delete proto.__clientMeta;
 

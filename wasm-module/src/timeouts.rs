@@ -124,9 +124,12 @@ impl Deadline {
             duration,
         }
     }
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn with_end(end_ms: f64, duration: Duration) -> Self {
+        Self { end_ms, duration }
+    }
     pub(crate) fn remaining(self) -> Duration {
-        Duration::try_from_secs_f64((self.end_ms - runtime::now_ms()).max(0.0) / 1000.0)
-            .unwrap_or(Duration::MAX)
+        runtime::duration_from_ms(self.end_ms - runtime::now_ms())
     }
 }
 
