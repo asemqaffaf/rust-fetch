@@ -276,6 +276,7 @@ pin_project_lite::pin_project! {
 }
 
 impl<F> Deadline<F> {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn new(
         fut: F,
         duration: Duration,

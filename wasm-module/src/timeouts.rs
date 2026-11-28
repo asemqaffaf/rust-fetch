@@ -38,6 +38,7 @@ impl TimeoutPhase {
             Self::Total => "total",
         }
     }
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(crate) fn parse(value: &str) -> Self {
         match value {
             "connect" => Self::Connect,

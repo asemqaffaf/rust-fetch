@@ -62,6 +62,7 @@ impl Url {
 
     /// Change the scheme; like the `url` crate, only between special schemes
     /// (http, https, ws, wss…), where the runtime's `URL` allows it
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_scheme(&mut self, scheme: &str) -> Result<(), ()> {
         let url = self.js();
         url.set_protocol(&format!("{scheme}:"));

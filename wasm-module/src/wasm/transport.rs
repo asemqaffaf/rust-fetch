@@ -79,49 +79,8 @@ fn node_transport() -> Option<js_sys::Function> {
     NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.transport.clone()))
 }
 
-fn node_websocket_guard() -> Option<js_sys::Function> {
+pub(crate) fn node_websocket_guard() -> Option<js_sys::Function> {
     NODE_BINDINGS.with(|bindings| bindings.get().map(|node| node.websocket_guard.clone()))
-}
-
-/// Node.js: why the last WebSocket connection to `url`'s host was blocked,
-/// if it was (undici reports only a generic error)
-pub(crate) fn websocket_blocked(url: &str) -> Option<String> {
-    let guard = node_websocket_guard()?;
-    let blocked: js_sys::Function = js_sys::Reflect::get(&guard, &"blocked".into())
-        .ok()?
-        .dyn_into()
-        .ok()?;
-    blocked
-        .call1(&JsValue::UNDEFINED, &url.into())
-        .ok()?
-        .as_string()
-}
-
-/// Node.js: check a WebSocket URL for `allowPrivateNetwork: false` and return
-/// the dispatcher that checks where it connects
-pub(crate) fn websocket_guard(url: &str) -> Result<JsValue> {
-    let guard = node_websocket_guard().ok_or_else(|| {
-        super::invalid(
-            "allowPrivateNetwork",
-            "needs the package's Node.js entry point to check WebSocket connections",
-        )
-    })?;
-    guard
-        .call1(&JsValue::UNDEFINED, &url.into())
-        .map_err(|error| {
-            let message = super::js_error_message(&error);
-            let code = js_sys::Reflect::get(&error, &"code".into())
-                .ok()
-                .and_then(|code| code.as_string());
-            if code.as_deref() == Some("RUST_FETCH_BLOCKED") {
-                Error::Network {
-                    message,
-                    source: None,
-                }
-            } else {
-                super::invalid("allowPrivateNetwork", &message)
-            }
-        })
 }
 
 /// `onUploadProgress` and `onDownloadProgress` for a request sent here

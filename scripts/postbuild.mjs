@@ -43,10 +43,52 @@ export type ReadableStreamType = "bytes";
 /** Headers as a plain object,`,
   );
 }
-if (!types.includes('export class IntoUnderlyingByteSource')) {
+if (!types.includes('export class EventStream')) {
   types = types.replace(
     'export class IntoUnderlyingSource {\n',
-    `export class IntoUnderlyingByteSource {
+    `/**
+ * A Server-Sent Events stream created by \`WasmClient.events()\`; also an async iterator of events
+ */
+export class EventStream {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;
+    /**
+     * Close the stream and stop reconnecting
+     */
+    close(): void;
+    /**
+     * The next buffered event (async iterator protocol)
+     */
+    next(): Promise<IteratorResult<ServerSentEvent>>;
+    /**
+     * Stop iterating: closes the stream (async iterator protocol, e.g. \`break\`)
+     */
+    return(): Promise<IteratorResult<ServerSentEvent>>;
+    /**
+     * Resolves once the stream is closed for good
+     */
+    readonly closed: Promise<void>;
+    /**
+     * The last event ID received, sent as \`Last-Event-ID\` when reconnecting
+     */
+    readonly lastEventId: string;
+    /**
+     * Resolves when the first connection opens; rejects if it never does
+     */
+    readonly opened: Promise<void>;
+    /**
+     * \`connecting\`, \`open\`, \`reconnecting\` or \`closed\`
+     */
+    readonly state: EventStreamState;
+    /**
+     * The stream's URL, resolved against the client's base URL
+     */
+    readonly url: string;
+}
+
+export class IntoUnderlyingByteSource {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
@@ -69,8 +111,8 @@ export class IntoUnderlyingSink {
 export class IntoUnderlyingSource {\n`,
   );
 }
-// Client verb shortcuts and standalone functions live in js/methods.js; restore
-// their exact TypeScript declarations on WasmClient and at module top level.
+// Client verb shortcuts, EventStream/WebSocketConnection, and standalone functions
+// live in js/*.js; restore their exact TypeScript declarations on WasmClient and at module top level.
 types = types.replace(
   '    clearInterceptors(): void;\n',
   `    clearInterceptors(): void;
@@ -80,8 +122,12 @@ types = types.replace(
     delete(url: string, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
 );
 types = types.replace(
-  '    events(url: string, options?: EventStreamOptions | null): EventStream;\n',
-  `    events(url: string, options?: EventStreamOptions | null): EventStream;
+  '    ejectInterceptor(id: number): boolean;\n',
+  `    ejectInterceptor(id: number): boolean;
+    /**
+     * Open a Server-Sent Events stream. Relative URLs are resolved against the base URL.
+     */
+    events(url: string, options?: EventStreamOptions | null): EventStream;
     /**
      * Make a request described by a \`fetch\`-style init object
      */
@@ -125,11 +171,63 @@ types = types.replace(
     /**
      * Make a request with any method, headers and body
      */
-    request(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse>;\n`,
+    request(method: string, url: string, headers?: HeadersLike | null, body?: RequestBody | null, options?: RequestOptions | null): Promise<HttpResponse>;
+    /**
+     * Open a WebSocket connection. Relative URLs are resolved against the
+     * base URL, with \`http:\` and \`https:\` becoming \`ws:\` and \`wss:\`.
+     */
+    websocket(url: string, options?: WebSocketOptions | null): WebSocketConnection;\n`,
 );
 types = types.replace(
   '\nexport type InitInput =',
   `
+/**
+ * A WebSocket connection created by \`WasmClient.websocket()\`
+ */
+export class WebSocketConnection {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Close the connection and stop reconnecting. \`code\` is 1000 (the
+     * default) or 3000-4999; \`reason\` is at most 123 bytes of UTF-8.
+     */
+    close(code?: number | null, reason?: string | null): void;
+    /**
+     * Send a value as JSON text
+     */
+    sendJson(value: any): void;
+    /**
+     * Send a message. Before the connection opens (or while reconnecting),
+     * messages are queued and sent once it does.
+     */
+    send(data: WebSocketData): void;
+    /**
+     * Bytes queued by the socket but not yet sent
+     */
+    readonly bufferedAmount: number;
+    /**
+     * Resolves with the close code and reason once the connection is closed for good
+     */
+    readonly closed: Promise<WebSocketCloseInfo>;
+    /**
+     * Resolves when the first connection opens; rejects if it never does
+     */
+    readonly opened: Promise<void>;
+    /**
+     * The subprotocol the server selected, or \`""\`
+     */
+    readonly protocol: string;
+    /**
+     * \`connecting\`, \`open\`, \`reconnecting\`, \`closing\` or \`closed\`
+     */
+    readonly state: WebSocketState;
+    /**
+     * The connection URL (\`ws:\` or \`wss:\`)
+     */
+    readonly url: string;
+}
+
 /**
  * Create a configured HTTP client (exported for advanced use)
  */
@@ -225,18 +323,7 @@ if (typedMethods === 0 && !types.includes('Promise<HttpResponse<T>>')) {
   throw new Error('postbuild: no WasmClient request methods found to make generic');
 }
 types = types.replace(generic, '$1<T = any>($2): Promise<HttpResponse<T>>;');
-// EventStream is an async iterator: its next() and return() come from Rust,
-// but wasm-bindgen can't declare symbol-named methods, so add
-// [Symbol.asyncIterator] to the generated class and its declaration.
 const glueUrl = new URL('rust_fetch.js', pkgDir);
-const glue = readFileSync(glueUrl, 'utf8');
-const iterable = 'EventStream.prototype[Symbol.asyncIterator] = function () { return this; };';
-if (!glue.includes('export class EventStream')) {
-  throw new Error('postbuild: EventStream not found in rust_fetch.js');
-}
-if (!glue.includes(iterable)) {
-  writeFileSync(glueUrl, `${glue}\n// Added by scripts/postbuild.mjs\n${iterable}\n`);
-}
 // ReadableStream builds from our IntoUnderlyingSource, which inherits from
 // Object.prototype; the constructor reads `type`, `start`,
 // `autoAllocateChunkSize` and `size` by inheritance: with one of those names
@@ -260,6 +347,7 @@ function streamSource(source) {
 // Stream plumbing stays in JavaScript, so upload chunks never take a round
 // trip through WebAssembly memory. Ship it inside the existing glue file.
 const methods = readFileSync(new URL('wasm-module/js/methods.js', root), 'utf8');
+const connections = readFileSync(new URL('wasm-module/js/connections.js', root), 'utf8');
 const upload = readFileSync(new URL('wasm-module/js/upload.js', root), 'utf8');
 const clientHelpers = readFileSync(new URL('wasm-module/js/client-helpers.js', root), 'utf8');
 const observability = readFileSync(new URL('wasm-module/js/observability.js', root), 'utf8');
@@ -283,10 +371,16 @@ const exportedFunctionNames = [
   'isRustFetchError', 'isHttpError', 'isTimeoutError', 'isNetworkError', 'isParseError', 'isInvalidInputError', 'isCancelledError', 'isCircuitOpenError', 'isJsInteropError', 'isValidationError',
 ];
 const restoreFunctionNames = `for (const [k, v] of Object.entries({ __wbg_init, ${exportedFunctionNames.join(', ')} })) setFnName(v, k);`;
-const combinedGlue = `${readFileSync(glueUrl, 'utf8')}
+let baseGlue = readFileSync(glueUrl, 'utf8');
+if (!baseGlue.includes('export class __SseParser ')) {
+  throw new Error('postbuild: __SseParser not found in rust_fetch.js');
+}
+baseGlue = baseGlue.replace('export class __SseParser ', 'class __SseParser ');
+const combinedGlue = `${baseGlue}
 ${clientHelpers.trimEnd()}
 ${methods.trimEnd()}
 ${upload.trimEnd()}
+${connections.trimEnd()}
 ${observability.trimEnd()}
 ${blob.trimEnd()}
 ${transport.trimEnd()}
@@ -310,13 +404,6 @@ const minifiedGlue = transformSync(combinedGlue, {
   banner: '/* @ts-self-types="./rust_fetch.d.ts" */',
 }).code;
 writeFileSync(glueUrl, minifiedGlue);
-types = types.replace(
-  /(export class EventStream \{\n(?:.*\n)*?    \[Symbol\.dispose\]\(\): void;\n)/,
-  '$1    [Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;\n',
-);
-if (!types.includes('[Symbol.asyncIterator](): AsyncIterator<ServerSentEvent>;')) {
-  throw new Error('postbuild: could not declare EventStream as an async iterator');
-}
 
 // extend() is added in JavaScript (wasm-module/js/extend.js)
 types = types.replace(/(export class WasmClient \{\n)/, '$1    /** A new client with this client\'s options and interceptors, and `overrides` on top: headers are merged by name, every other option is replaced. Circuit breakers, rate limits, concurrency limits and retry budgets are not shared: the new client has its own. */\n    extend(overrides?: ClientOptions | null): WasmClient;\n    /** Pages of a paginated API, or its items with `items`. Follows the `Link: rel="next"` header unless `next` says otherwise; each page is a normal GET. */\n    paginate<T>(url: string, options: PaginateOptions & { items: (response: HttpResponse) => Iterable<T> | Promise<Iterable<T>> }): AsyncGenerator<T, void, undefined>;\n    paginate(url: string, options?: PaginateOptions): AsyncGenerator<HttpResponse, void, undefined>;\n');

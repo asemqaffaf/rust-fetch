@@ -476,6 +476,13 @@ describe('websocket', { skip: !supported && 'no global WebSocket (Node.js 20)' }
     const guarded = new WasmClient({ baseUrl: server.httpUrl('/v1'), allowAbsoluteUrls: false });
     invalid(() => guarded.websocket('ws://other.example/'), 'url');
     invalid(() => client.websocket(server.url(), { allowAbsoluteUrls: 'no' }), 'allowAbsoluteUrls');
+    // A protocol-relative path is not absolute: it joins the base URL, as for HTTP requests
+    const joined = guarded.websocket('//other.example/ws');
+    assert.equal(joined.url, server.url('/v1/other.example/ws'));
+    // Let the handshake finish so the close is clean and no half-open upgrade outlives the test
+    await joined.opened;
+    joined.close();
+    await joined.closed;
     const allowed = guarded.websocket(server.url('/allowed'), { allowAbsoluteUrls: true });
     allowed.close();
     await allowed.closed;

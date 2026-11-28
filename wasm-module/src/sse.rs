@@ -45,6 +45,7 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn new() -> Self {
         Self::default()
     }

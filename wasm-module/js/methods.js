@@ -52,8 +52,6 @@ export class IntoUnderlyingSink {
   });
   // Preserve exported class names after esbuild minification without keepNames' unsafe __name helper.
   for (const [ctor, name] of [
-    [EventStream, 'EventStream'],
-    [WebSocketConnection, 'WebSocketConnection'],
     [IntoUnderlyingByteSource, 'IntoUnderlyingByteSource'],
     [IntoUnderlyingSink, 'IntoUnderlyingSink'],
     [IntoUnderlyingSource, 'IntoUnderlyingSource'],

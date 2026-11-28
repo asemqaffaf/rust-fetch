@@ -6,8 +6,6 @@
 
 #[cfg(target_arch = "wasm32")]
 mod alloc;
-#[cfg(target_arch = "wasm32")]
-mod events;
 pub(crate) mod futures;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod idempotency;
@@ -17,8 +15,6 @@ pub(crate) mod transport;
 pub(crate) mod upload;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod url;
-#[cfg(target_arch = "wasm32")]
-mod websocket;
 
 use self::futures::{abortable, AbortableStream};
 use crate::{
@@ -609,6 +605,166 @@ export function isJsInteropError(value: unknown): value is RustFetchJsInteropErr
 export function isValidationError(value: unknown): value is RustFetchValidationError;
 "#;
 
+#[wasm_bindgen(typescript_custom_section)]
+const SSE_TYPESCRIPT_TYPES: &'static str = r#"
+/** One Server-Sent Event */
+export interface ServerSentEvent<T = any> {
+  /** The `event:` field; `'message'` when the server didn't set one */
+  event: string;
+  /** The `data:` lines joined with `\n`, or parsed JSON with `messageType: 'json'` */
+  data: T;
+  /** The last event ID (`id:` field) in effect, or `''` */
+  id: string;
+}
+
+export type EventStreamState = 'connecting' | 'open' | 'reconnecting' | 'closed';
+
+export interface EventStreamOptions extends BrowserRequestOptions {
+  /** HTTP method. Default: `GET` */
+  method?: string;
+  /** Request body, as for other requests; sent again on each reconnection */
+  body?: RequestBody;
+  headers?: HeadersLike;
+  params?: QueryParams;
+  /** Time allowed for each connection attempt until the response headers arrive, in ms. Default: the client's `timeoutMs` */
+  timeoutMs?: number;
+  /** Time until a connection is established, including TLS (Node.js); browsers cannot observe it. `0` disables. */
+  connectTimeoutMs?: number;
+  /** Time until final response headers arrive. `0` disables. */
+  responseTimeoutMs?: number;
+  /** Maximum wait for the next body chunk, including streams and SSE. `0` disables. */
+  idleTimeoutMs?: number;
+  /** Total logical-request deadline, including queueing, retries and reading the body. `0` disables. */
+  deadlineMs?: number;
+
+  /** Replaces the client's retry policy for each connection attempt; `0` disables retries. Omitted fields use standard defaults. Separate from `reconnect`. */
+  retries?: number | RetryOptions;
+  /** Overrides the client's key policy; generated keys are reused across retries and reconnections. Requires server deduplication. */
+  idempotencyKey?: boolean | string;
+  /** Overrides the client's idempotency header name */
+  idempotencyHeader?: string;
+  /**
+   * Reconnect after the stream ends or a connection fails, sending `Last-Event-ID` and honouring the
+   * server's `retry:` field. Default: on for `GET`, off for other methods (which would resend the body).
+   */
+  reconnect?: boolean | number | ReconnectOptions;
+  /** `auto` (default): `data` is a string. `json`: `data` is parsed JSON */
+  messageType?: 'auto' | 'json';
+  /** Close the stream normally when an event's raw `data` equals this. Default: `'[DONE]'` with `messageType: 'json'`, otherwise none */
+  end?: string | null;
+  /** Overrides the client's `allowAbsoluteUrls` */
+  allowAbsoluteUrls?: boolean;
+  /** Overrides the client's `maxLineBytes`; `null` removes the limit for this stream */
+  maxLineBytes?: number | null;
+  /** Overrides the client's `maxEventBytes`; `null` removes the limit for this stream */
+  maxEventBytes?: number | null;
+  /** Closes the stream and stops reconnecting when aborted */
+  signal?: AbortSignal;
+  /** Called each time a connection opens, including after reconnecting */
+  onOpen?: () => void;
+  /** Called for each event. Without it, events are buffered for `for await … of stream` */
+  onEvent?: (event: ServerSentEvent) => void;
+  /** Called on every failure: a failed attempt, a dropped stream, a `data` that isn't JSON */
+  onError?: (error: RustFetchError) => void;
+  /** Called before waiting to reconnect */
+  onReconnect?: (info: WebSocketReconnectInfo) => void;
+  /** Called once, when the stream is closed for good */
+  onClose?: () => void;
+}
+"#;
+
+#[wasm_bindgen(typescript_custom_section)]
+const WS_TYPESCRIPT_TYPES: &'static str = r#"
+/** Reconnection after a connection fails or drops, with jittered exponential backoff. */
+export interface ReconnectOptions {
+  /** Reconnection attempts in a row before giving up; reset once a connection opens. Default: unlimited */
+  maxRetries?: number;
+  /** Delay before the first attempt, in ms. Default: 1000 */
+  initialDelayMs?: number;
+  /** Upper bound for any delay, in ms. Default: 30000 */
+  maxDelayMs?: number;
+  /** Exponential backoff multiplier. Default: 2 */
+  multiplier?: number;
+}
+
+/** What `send()` accepts; use `sendJson()` for other values. */
+export type WebSocketData = string | ArrayBuffer | ArrayBufferView | Blob;
+
+export type WebSocketState = 'connecting' | 'open' | 'reconnecting' | 'closing' | 'closed';
+
+export interface WebSocketCloseInfo {
+  code: number;
+  reason: string;
+  wasClean: boolean;
+}
+
+export interface WebSocketReconnectInfo {
+  /** 1 for the first attempt after a failure */
+  attempt: number;
+  delayMs: number;
+  /** Why the previous connection failed or dropped */
+  error: RustFetchError;
+}
+
+export interface WebSocketOptions {
+  /** Maximum silence after open/between received messages. 0 disables; defaults to the client's idleTimeoutMs. No heartbeat messages are sent. */
+  idleTimeoutMs?: number;
+  /** Subprotocols to offer */
+  protocols?: string | string[];
+  params?: QueryParams;
+  /**
+   * Handshake headers, merged over the client's headers. Node.js only: browsers don't allow
+   * WebSocket headers, so there this rejects with an `InvalidInputError` (client headers are skipped).
+   */
+  headers?: HeadersLike;
+  /**
+   * Node.js only: an undici dispatcher for the connection, e.g. `new ProxyAgent('http://proxy:3128')` from
+   * the `undici` package to connect through a proxy. Node's WebSocket doesn't use the client's `proxy` option.
+   */
+  dispatcher?: object;
+  /** Time allowed for each connection attempt, in ms. `0` disables it. Default: the client's `timeoutMs` */
+  timeoutMs?: number;
+  /**
+   * Reconnect when a connection fails or drops unexpectedly (close codes 1001, 1006, 1011-1014):
+   * `true` for the defaults, a maximum number of attempts in a row, or options. Default: off
+   */
+  reconnect?: boolean | number | ReconnectOptions;
+  /** Overrides the client's `allowAbsoluteUrls` */
+  allowAbsoluteUrls?: boolean;
+  /**
+   * Node.js: overrides the client's `allowPrivateNetwork`. With `false`, an IP address that is private or reserved
+   * throws a `NetworkError` from `websocket()`, and a host name is checked on every connection, reconnections
+   * included (a blocked one fails the attempt with "Blocked: …"). Can't be combined with `dispatcher`, and fails
+   * while another undici global dispatcher is installed. Browsers have their own rules.
+   */
+  allowPrivateNetwork?: boolean;
+  /**
+   * The most messages `send()` queues while the connection isn't open yet (connecting or reconnecting). One more
+   * throws a `NetworkError` whose `maxQueuedMessages` is the limit, and isn't queued. Default: no limit
+   */
+  maxQueuedMessages?: number;
+  /**
+   * The most bytes (UTF-8 for text, `byteLength` or `size` otherwise) `send()` queues while the connection isn't
+   * open yet. A message that would go over throws a `NetworkError` whose `maxQueuedBytes` is the limit, and isn't
+   * queued. Once open, messages go to the runtime's socket: watch `bufferedAmount` there. Default: no limit
+   */
+  maxQueuedBytes?: number;
+  /** Closes the connection and stops reconnecting when aborted */
+  signal?: AbortSignal;
+  /** `auto` (default): text messages as strings, binary ones as `Uint8Array`. `json`: text messages parsed as JSON */
+  messageType?: 'auto' | 'json';
+  /** Called each time a connection opens, including after reconnecting */
+  onOpen?: () => void;
+  onMessage?: (data: any) => void;
+  /** Called on every failure: a failed or timed-out attempt, an unexpected drop, a message that isn't JSON */
+  onError?: (error: RustFetchError) => void;
+  /** Called before waiting to reconnect */
+  onReconnect?: (info: WebSocketReconnectInfo) => void;
+  /** Called once, when the connection is closed for good */
+  onClose?: (info: WebSocketCloseInfo) => void;
+}
+"#;
+
 #[wasm_bindgen]
 extern "C" {
     /// `ClientOptions` (see TypeScript definitions)
@@ -768,6 +924,122 @@ impl WasmClient {
         let mut interceptors = self.interceptors.borrow_mut();
         interceptors.request.clear();
         interceptors.response.clear();
+    }
+
+    /// Snapshot of client config for JS `websocket()` / `events()` wrappers
+    /// (and synchronous SSE option validation when `sse_url` is `Some`).
+    /// `js/connections.js` deletes `__clientMeta` from `WasmClient.prototype`.
+    #[doc(hidden)]
+    #[wasm_bindgen(js_name = __clientMeta, skip_typescript)]
+    pub fn client_meta(&self, sse_url: Option<String>, sse_opts: JsValue) -> Result<JsValue> {
+        let cfg = &self.inner.config;
+        let obj: js_sys::Object = js_sys::Object::create(JsValue::NULL.unchecked_ref());
+        if let Some(target) = sse_url {
+            let options = Options::new(&sse_opts);
+            #[cfg(target_arch = "wasm32")]
+            {
+                let resolved_idem = cfg.idempotency.resolve(&options)?;
+                if let Some(key) = resolved_idem.value()? {
+                    set_str(&obj, "idempotencyKey", &key)?;
+                } else if raw_prop(&sse_opts, "idempotencyKey").as_bool() == Some(false) {
+                    set_bool(&obj, "idempotencyKey", false)?;
+                }
+            }
+            let phases = parse_phase_options(&options, &cfg.phases)?.unwrap_or(cfg.phases);
+            let method = match options.get("method") {
+                Some(m) => {
+                    let s = m
+                        .as_string()
+                        .ok_or_else(|| invalid("method", "must be a string"))?;
+                    parse_method(&s)?
+                }
+                None => Method::Get,
+            };
+            let params = match options.get("params") {
+                Some(p) => parse_params(&p)?,
+                None => Vec::new(),
+            };
+            let allow_abs = options
+                .bool("allowAbsoluteUrls")?
+                .unwrap_or(cfg.allow_absolute_urls);
+            crate::client::check_absolute_url(cfg.base_url.as_deref(), &target, allow_abs)?;
+            let resolved = crate::client::resolve_url(
+                cfg.base_url.as_deref(),
+                crate::client::page_url(),
+                &target,
+                &params,
+            )?;
+            if let Some(h) = options.get("headers") {
+                for (name, values) in parse_headers(&h)?.iter() {
+                    crate::types::validate_header_name(name).map_err(|e| invalid("headers", e))?;
+                    for value in values {
+                        crate::types::validate_header_value(value)
+                            .map_err(|e| invalid("headers", e))?;
+                    }
+                }
+            }
+            if let Some(t) = options.get("timeoutMs") {
+                parse_timeout(&t)?;
+            }
+            if let Some(r) = options.get("retries") {
+                parse_retries(&r)?;
+            }
+            let max_line = parse_stream_limit(
+                &options.raw("maxLineBytes"),
+                cfg.max_line_bytes,
+                "maxLineBytes",
+            )?;
+            let max_event = parse_stream_limit(
+                &options.raw("maxEventBytes"),
+                cfg.max_event_bytes,
+                "maxEventBytes",
+            )?;
+            set_str(&obj, "url", resolved.as_str())?;
+            set_str(&obj, "method", method.as_str())?;
+            if let Some(dl) = phases.deadline {
+                set_f64(&obj, "deadlineMs", dl.as_secs_f64() * 1000.0)?;
+            }
+            #[allow(clippy::cast_precision_loss)]
+            if let Some(n) = max_line {
+                set_f64(&obj, "maxLineBytes", n as f64)?;
+            }
+            #[allow(clippy::cast_precision_loss)]
+            if let Some(n) = max_event {
+                set_f64(&obj, "maxEventBytes", n as f64)?;
+            }
+            let req_interceptors = js_sys::Array::new();
+            for (_, f) in &self.interceptors.borrow().request {
+                req_interceptors.push(f);
+            }
+            set(&obj, "sseInterceptors", req_interceptors.as_ref())?;
+            return Ok(obj.into());
+        }
+        if let Some(base) = &cfg.base_url {
+            set_str(&obj, "baseUrl", base)?;
+        }
+        if cfg.default_headers.iter().next().is_some() {
+            let hdrs = headers_to_js(&cfg.default_headers)?;
+            set(&obj, "headers", hdrs.as_ref())?;
+        }
+        if let Some(t) = cfg.timeout {
+            set_f64(&obj, "timeoutMs", t.as_secs_f64() * 1000.0)?;
+        }
+        if let Some(t) = cfg.phases.idle {
+            set_f64(&obj, "idleTimeoutMs", t.as_secs_f64() * 1000.0)?;
+        }
+        if let Some(t) = cfg.phases.deadline {
+            set_f64(&obj, "deadlineMs", t.as_secs_f64() * 1000.0)?;
+        }
+        set_bool(&obj, "allowAbsoluteUrls", cfg.allow_absolute_urls)?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            set_bool(&obj, "allowPrivateNetwork", cfg.allow_private_network)?;
+            set_bool(&obj, "isNode", transport::is_node())?;
+            if let Some(guard) = transport::node_websocket_guard() {
+                set(&obj, "wsGuard", &guard)?;
+            }
+        }
+        Ok(obj.into())
     }
 
     /// Single request dispatch entry exported to JS; verb shortcuts live on
@@ -1016,8 +1288,21 @@ impl WasmClient {
             Ok(deadline) => deadline.map(Box::new),
             Err(error) => return reject_request(error, context_method, &context_url),
         };
-        // Snapshot, so interceptors added while a request is in flight don't affect it
-        let (request_interceptors, response_interceptors) = {
+        // Snapshot, so interceptors added while a request is in flight don't affect it.
+        // SSE connections pass snapshotted request interceptors and skip response interceptors.
+        let is_sse = raw_prop(&options, "__sse").is_string();
+        let (request_interceptors, response_interceptors) = if is_sse {
+            let mut list = Vec::new();
+            if let Some(arr) = prop(&options, "__sseInterceptors") {
+                let arr = js_sys::Array::from(&arr);
+                for i in 0..arr.length() {
+                    if let Ok(f) = arr.get(i).dyn_into::<js_sys::Function>() {
+                        list.push((0u32, f));
+                    }
+                }
+            }
+            (list, Vec::new())
+        } else {
             let interceptors = self.interceptors.borrow();
             (interceptors.request.clone(), interceptors.response.clone())
         };
@@ -1240,6 +1525,7 @@ impl<'a> Options<'a> {
     /// The option if the object itself has it: nothing inherited counts. For
     /// options that can redirect requests, which `Object.prototype` must not supply.
     #[inline(never)]
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     fn own(&self, name: &str) -> Option<JsValue> {
         (self.value.is_object()
             && js_sys::Object::has_own(self.value.unchecked_ref::<js_sys::Object>(), &name.into()))
@@ -1286,6 +1572,7 @@ pub(crate) struct RequestState {
 }
 
 impl RequestState {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(crate) fn remember_cause(&self, error: &JsValue) {
         *self.cause.borrow_mut() = Some(error.clone());
     }
@@ -1298,6 +1585,7 @@ impl RequestState {
     }
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) struct DestinationGuard<'a> {
     pub(crate) state: Option<&'a RequestState>,
     pub(crate) url: &'a str,
@@ -1343,25 +1631,41 @@ pub(crate) fn send<'a>(
     use futures_util::TryFutureExt;
     let refused = std::sync::Arc::new(RequestState::default());
     let method = request.method.as_str();
-    send_request(client, request, options, &refused, apply_deadline).map_err(move |error| {
-        let error = refused.with_cause(JsValue::from(error));
-        let error = with_abort_reason(
-            error,
-            js_sys::Reflect::get(options, &"signal".into())
-                .ok()
-                .as_ref(),
-        );
-        if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
-        }
-        let resolved = refused.url.borrow();
-        error_context(
-            error,
-            method,
-            resolved.as_deref().unwrap_or(original_url),
-            refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
-        )
-    })
+    // An SSE connection reads the attempt count off its raw response, for
+    // errors that end the stream after it opened (idle timeout, drop)
+    let sse_state = raw_prop(options, "__sse")
+        .is_string()
+        .then(|| std::sync::Arc::clone(&refused));
+    send_request(client, request, options, &refused, apply_deadline)
+        .map_ok(move |response| {
+            if let Some(state) = sse_state {
+                put_f64(
+                    &response,
+                    "__attempts",
+                    f64::from(state.attempts.load(std::sync::atomic::Ordering::Relaxed)),
+                );
+            }
+            response
+        })
+        .map_err(move |error| {
+            let error = refused.with_cause(JsValue::from(error));
+            let error = with_abort_reason(
+                error,
+                js_sys::Reflect::get(options, &"signal".into())
+                    .ok()
+                    .as_ref(),
+            );
+            if refused.refused.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = js_sys::Reflect::set(&error, &"retryBudgetExhausted".into(), &true.into());
+            }
+            let resolved = refused.url.borrow();
+            error_context(
+                error,
+                method,
+                resolved.as_deref().unwrap_or(original_url),
+                refused.attempts.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        })
 }
 
 pub(crate) fn send_request<'a>(
@@ -1661,37 +1965,6 @@ fn rare_client_options(
     Ok(builder)
 }
 
-#[inline(never)]
-fn callback_option(options: &JsValue, name: &str) -> Result<Option<js_sys::Function>> {
-    prop(options, name)
-        .map(|callback| {
-            callback
-                .dyn_into()
-                .map_err(|_| invalid(name, "must be a function"))
-        })
-        .transpose()
-}
-
-#[inline(never)]
-pub(crate) fn parse_callbacks_5(
-    options: &JsValue,
-    names: [&str; 5],
-) -> Result<[Option<js_sys::Function>; 5]> {
-    let mut out = [const { None }; 5];
-    for (slot, name) in out.iter_mut().zip(names) {
-        *slot = callback_option(options, name)?;
-    }
-    Ok(out)
-}
-
-#[inline(never)]
-pub(crate) fn parse_opt_bool(options: &JsValue, name: &str, default: bool) -> Result<bool> {
-    match prop(options, name) {
-        Some(value) => parse_bool(&value, name),
-        None => Ok(default),
-    }
-}
-
 /// A request's method, URL, headers, query parameters and timeout; the body
 /// is returned separately, to attach once the other options are validated
 pub(crate) fn request_builder(
@@ -1706,6 +1979,8 @@ pub(crate) fn request_builder(
         body,
         deadline,
     } = request;
+    // Only the request's own headers can opt out of SSE's Accept, as in EventSource
+    let own_accept = headers.contains("accept");
     let mut builder = client
         .request_owned(method, url)
         // Decode here rather than in Rust, so JSON is parsed by the JS engine
@@ -1753,6 +2028,14 @@ pub(crate) fn request_builder(
         builder.fetch_options = parse_fetch_options(options, builder.fetch_options.as_ref())?;
         if let Some(allow) = options.bool("allowPrivateNetwork")? {
             builder.allow_private_network = allow;
+        }
+    }
+    if let Some(last_id) = options.get("__sse").and_then(|v| v.as_string()) {
+        if !own_accept {
+            builder.config.headers.set("accept", "text/event-stream");
+        }
+        if !last_id.is_empty() {
+            builder.config.headers.set("last-event-id", last_id);
         }
     }
     Ok((builder, body))
@@ -2586,16 +2869,19 @@ pub(crate) fn get_prop(target: &JsValue, name: &str) -> JsValue {
 }
 
 #[inline(never)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn get_str(target: &JsValue, name: &str) -> Option<String> {
     get_prop(target, name).as_string()
 }
 
 #[inline(never)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn get_f64(target: &JsValue, name: &str) -> Option<f64> {
     get_prop(target, name).as_f64()
 }
 
 #[inline(never)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn get_bool(target: &JsValue, name: &str) -> Option<bool> {
     get_prop(target, name).as_bool()
 }
@@ -2608,16 +2894,6 @@ pub(crate) fn parse_signal(value: Option<JsValue>) -> Result<Option<web_sys::Abo
         }
         Some(_) => Err(invalid("signal", "must be an AbortSignal")),
         None => Ok(None),
-    }
-}
-
-#[inline(never)]
-pub(crate) fn parse_message_type(options: &JsValue) -> Result<bool> {
-    match prop(options, "messageType").map(|value| value.as_string()) {
-        None => Ok(false),
-        Some(Some(name)) if name == "auto" => Ok(false),
-        Some(Some(name)) if name == "json" => Ok(true),
-        Some(_) => Err(invalid("messageType", "must be 'auto' or 'json'")),
     }
 }
 

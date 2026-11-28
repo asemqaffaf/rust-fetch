@@ -4,7 +4,7 @@
 //! UTF-8 character split between chunks is never broken. With a limit, a
 //! line longer than that many bytes (without its line break) is an error
 //! before it's buffered, so a line can't grow without bound.
-#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#![allow(dead_code)]
 
 use crate::error::{Error, Result};
 
